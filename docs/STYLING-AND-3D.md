@@ -4,7 +4,7 @@ Styling was introduced in prototype 007. Prototype 008 adds per-building height 
 
 ## Try it
 
-Open **Style**. Choose **Paper**, **Midnight** or **Blueprint**, change individual colors, adjust road/path/rail/waterway weight and label size. Export the result as a small `.style.json` and import it again. Appearance and scene settings persist in this browser and survive switching packages. Import validates the entire document before changing the map; unsupported versions, unknown fields, unsafe color strings and out-of-range values are rejected. The demo limits imported styles to 16 KB.
+Open **Style**. Choose **Paper**, **Midnight** or **Blueprint**, change individual colors, adjust road/footway/rail/waterway width and label size. Export the result as a small `.style.json` and import it again. Appearance and scene settings persist in this browser and survive switching packages. Import validates the entire document before changing the map; unsupported versions, unknown fields, unsafe color strings and out-of-range values are rejected. The demo limits imported styles to 16 KB.
 
 **Inspect in 3D** keeps the center, zooms to at least z17, and sets tilt to 52° / bearing to −25°. Right-drag (or Command/Ctrl + left-drag) changes bearing horizontally and tilt vertically. On a Mac trackpad, Command + two-finger scroll/drag uses horizontal and vertical wheel deltas for the same controls; ordinary wheel/pinch zoom remains available. Command/Ctrl/Shift + arrow keys provide a keyboard equivalent. Pitch is bounded to 0–65°. **Top-down**, always visible on the map, or **R** while the map is focused resets to north-up, flat 2D without moving the center or changing zoom. **Back to 2D** is the equivalent sidebar action. The compass and saved scene follow gestures.
 
@@ -51,7 +51,7 @@ map.resetView(); // Top-down and north-up; keep center and zoom.
 // Moving/tilting the camera can expose additional tiles; height also expands roof coverage.
 ```
 
-The typed source of truth is `packages/renderer/src/style.ts`. An exported document is a complete style, not a patch; the app's controls edit a copy and submit it. Road/path widths multiply zoom-dependent cartographic widths; rail/water widths multiply their fixed class widths; building-edge width is in CSS pixels. Both are compressed by tilt with the ground. View zoom and styles do not change routing geometry or source geometry precision.
+The typed source of truth is `packages/renderer/src/style.ts`. An exported document is a complete style, not a patch; the app's controls edit a copy and submit it. Road/path/rail/waterway widths multiply zoom-dependent cartographic widths; building-edge width is in CSS pixels. Stroke widths are compressed by tilt with the ground. View zoom and styles do not change routing geometry or source geometry precision.
 
 ## Next contract, without inventing a giant language
 
@@ -86,8 +86,24 @@ Style JSON keeps version 1 with `widths.buildingEdges`; older saved styles missi
 
 ## Road width and joins
 
-Roads widen continuously with fractional zoom instead of retaining a thin fixed screen width. At z16 the defaults are **6 CSS px for local roads**, **10 px for major roads**, and **1.2 px for paths**; at z20 they reach 20, 28 and 2.8 px. **Style → Road width** and **Path width** multiply those defaults and persist in the existing v1 style JSON. These are cartographic widths, not measured OSM road widths.
+Roads widen continuously with fractional zoom instead of retaining a thin fixed screen width. At z16 the defaults are **6 CSS px for local roads**, **10 px for major roads**, and **2.2 px for paths**; at z20 they reach 20, 28 and 7 px. **Style → Road width** and **Footway & path width** multiply those defaults and persist in the existing v1 style JSON. These are cartographic widths, not measured OSM road widths.
 
 Local and major roads gain a subtle darker border, increasing gradually from z11 to a 0.65 px margin at z16. Both road-class border passes precede both fill passes to keep intersections open. Cached geometry is reused for these extra draws. Road/path meshes include bounded bevel joins and square endpoint caps, closing bend and fragment gaps exposed by wider strokes. Duplicate consecutive points are removed before meshing.
 
 Native tests check corner coverage, degenerate paths, width continuity and the road-class hierarchy. A visible Chromium check covered z14–20 and tilted buildings; changing road width altered pixels with **zero new map requests and zero GPU uploads** in both flat and 3D views. Existing `.atlas` files work without regeneration.
+
+## Footways, railways and waterways
+
+Every retained line class now has continuous zoom-dependent width and filled bevel joins. Footways/trails receive a subtle darker casing, up to 0.4 CSS px on each side by z16. Railway centerlines gain a lighter inset from z13–16, leaving two darker edges; this is a cartographic symbol, not track-gauge geometry. Rivers, canals, streams and drains represented as lines also widen with zoom. Water polygons keep their source boundaries: the waterway width control has no effect on lake or riverbank area geometry.
+
+| Class | z14 | z16 | z18 | z20 |
+| --- | ---: | ---: | ---: | ---: |
+| Footways / paths | 1.2 px | 2.2 px | 4 px | 7 px |
+| Rail lines | 1.8 px | 3.5 px | 6 px | 9 px |
+| Waterway lines | 2.2 px | 3.5 px | 6 px | 9 px |
+
+These widths precede style multipliers and exclude the path casing. **Style → Footway & path width**, **Rail width** and **Waterway width** retain the existing `widths.paths`, `widths.railways` and `widths.water` fields, so saved styles remain readable. Extra casing/inset passes reuse the uploaded geometry and honor layer visibility. Native tests cover the actual mesh path for every line class, duplicate points, outer-corner coverage, width continuity and zero stroke displacement for water-area vertices.
+
+The current compact tiles retain broad classes, not every OSM subtype. `path`, `footway`, `cycleway`, `steps`, `bridleway` and `track` share path paint; `pedestrian` streets use local-road paint. Railways (including trams) share rail paint. Separate sidewalk/cycleway/stair symbols, sleepers, tunnel dashes and bridge stacking require retaining more source attributes in display tiles; changing width does not invent those attributes. Existing Vienna data needs no regeneration for these improvements.
+
+A visible Chromium check exercised Stadtpark footways, Hauptbahnhof rail lines and the Wien waterway. Each width dial changed map pixels in both flat and 3D views with zero additional range reads and zero mesh uploads. Changing the widths of disabled rail/path layers left the map unchanged. The mobile layout also passed the horizontal-overflow check.

@@ -191,9 +191,17 @@ fn base_line_width(class: usize) -> f32 {
     }
 }
 /// Cartographic widths in CSS pixels, continuously interpolated across fractional zooms.
-/// These are visual defaults, not surveyed OSM road widths.
+/// These are visual defaults, not surveyed OSM feature widths.
 fn line_width(class: usize, zoom: f64) -> f32 {
     let stops: &[(f64, f32)] = match class {
+        1 => &[
+            (9., 1.),
+            (12., 1.6),
+            (14., 2.2),
+            (16., 3.5),
+            (18., 6.),
+            (20., 9.),
+        ],
         3 => &[
             (10., 0.7),
             (12., 1.4),
@@ -212,7 +220,15 @@ fn line_width(class: usize, zoom: f64) -> f32 {
             (18., 18.),
             (20., 28.),
         ],
-        5 => &[(12., 0.55), (14., 0.8), (16., 1.2), (18., 1.8), (20., 2.8)],
+        5 => &[(12., 0.7), (14., 1.2), (16., 2.2), (18., 4.), (20., 7.)],
+        6 => &[
+            (9., 0.6),
+            (12., 1.),
+            (14., 1.8),
+            (16., 3.5),
+            (18., 6.),
+            (20., 9.),
+        ],
         _ => return base_line_width(class),
     };
     for pair in stops.windows(2) {
@@ -250,7 +266,7 @@ fn line(out: &mut Vec<f32>, points: &[[f32; 2]], width: f32, joined: bool) {
     for (i, segment) in path.windows(2).enumerate() {
         let (a, b) = (segment[0], segment[1]);
         let n = normals[i];
-        // Square caps connect independently stored road fragments without tiny endpoint gaps.
+        // Square caps connect independently stored line fragments without tiny endpoint gaps.
         let start = if joined && !closed && i == 0 {
             [-n[1], n[0]]
         } else {
@@ -313,7 +329,7 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
                     out,
                     ring,
                     base_line_width(f.class),
-                    (3..=5).contains(&f.class),
+                    matches!(f.class, 1 | 3..=6),
                 );
             }
         } else {
@@ -698,6 +714,29 @@ impl Renderer {
             if self.mask & (1 << layer_id) == 0 {
                 continue;
             }
+            if layer_id == 5 {
+                // A narrow casing separates footways/trails from similarly colored land.
+                let border = ((zoom - 13.) / 3.).clamp(0., 1.) as f32 * 0.4;
+                if border > 0. {
+                    let color = self.colors[5];
+                    self.gl.uniform3f(
+                        Some(&self.paint),
+                        color[0] * 0.8,
+                        color[1] * 0.8,
+                        color[2] * 0.8,
+                    );
+                    self.gl.uniform1f(
+                        Some(&self.stroke),
+                        (line_width(5, zoom) + 2. * border) * self.widths[5] / base_line_width(5),
+                    );
+                    for key in &self.visible {
+                        if let Some(tile) = self.tiles.get(key) {
+                            triangles +=
+                                self.draw_layer(tile, &tile.layers[5], cx, cy, world, extruded);
+                        }
+                    }
+                }
+            }
             if layer_id == 2 && extruded {
                 self.gl.enable(Gl::DEPTH_TEST);
                 self.gl.depth_func(Gl::LEQUAL);
@@ -708,7 +747,7 @@ impl Renderer {
             let color = self.colors[layer_id];
             self.gl
                 .uniform3f(Some(&self.paint), color[0], color[1], color[2]);
-            let stroke = if (3..=5).contains(&layer_id) {
+            let stroke = if matches!(layer_id, 1 | 3..=6) {
                 self.widths[layer_id] * line_width(layer_id, zoom) / base_line_width(layer_id)
             } else {
                 self.widths[layer_id]
@@ -719,6 +758,23 @@ impl Renderer {
                     continue;
                 };
                 triangles += self.draw_layer(tile, &tile.layers[layer_id], cx, cy, world, extruded);
+            }
+            if layer_id == 6 {
+                // Railways are stored as centerlines. A lighter inset leaves two dark rails.
+                // Fade it in at street zooms; reuse the joined line mesh and width multiplier.
+                let inset = ((zoom - 13.) / 3.).clamp(0., 1.) as f32;
+                if inset > 0. {
+                    let color = self.colors[6].map(|c| c + (1. - c) * 0.7 * inset);
+                    self.gl
+                        .uniform3f(Some(&self.paint), color[0], color[1], color[2]);
+                    self.gl.uniform1f(Some(&self.stroke), stroke * 0.45);
+                    for key in &self.visible {
+                        if let Some(tile) = self.tiles.get(key) {
+                            triangles +=
+                                self.draw_layer(tile, &tile.layers[6], cx, cy, world, extruded);
+                        }
+                    }
+                }
             }
             if layer_id == 2 {
                 self.gl.disable(Gl::POLYGON_OFFSET_FILL);
@@ -810,38 +866,59 @@ fn compile(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
 mod tests {
     use super::*;
     #[test]
-    fn wider_road_bends_are_filled_and_duplicate_points_are_safe() {
-        let mut mesh = Vec::new();
-        line(
-            &mut mesh,
-            &[[0., 0.], [1., 0.], [1., 0.], [1., 1.]],
-            0.4,
-            true,
-        );
-        assert_eq!(mesh.len() / 7, 15); // Two segment quads plus one outside bevel.
-        assert!(mesh.iter().all(|n| n.is_finite()));
-        let point = [1.05, -0.05];
-        let covers = mesh.chunks_exact(21).any(|t| {
-            let p: Vec<_> = t
-                .chunks_exact(7)
-                .map(|v| [v[0] + v[2], v[1] + v[3]])
-                .collect();
-            let signs: Vec<_> = (0..3)
-                .map(|i| {
-                    let a = p[i];
-                    let b = p[(i + 1) % 3];
-                    (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
-                })
-                .collect();
-            signs.iter().all(|x| *x >= 0.) || signs.iter().all(|x| *x <= 0.)
-        });
-        assert!(
-            covers,
-            "The outer corner must not have a hole when strokes become wide"
-        );
+    fn linear_feature_bends_are_filled_and_duplicate_points_are_safe() {
+        for class in [1, 3, 4, 5, 6] {
+            let feature = Feature {
+                class,
+                kind: 2,
+                height: -1.,
+                min_height: 0.,
+                rings: vec![vec![[0., 0.], [1., 0.], [1., 0.], [1., 1.]]],
+            };
+            let (meshes, _) = mesh(&[feature]).unwrap();
+            let vertices = &meshes[class];
+            assert!(vertices.iter().all(|n| n.is_finite()));
+            let point = [1.05, -0.05];
+            let covers = vertices.chunks_exact(21).any(|t| {
+                let p: Vec<_> = t
+                    .chunks_exact(7)
+                    .map(|v| {
+                        [
+                            v[0] + v[2] * 0.4 / base_line_width(class),
+                            v[1] + v[3] * 0.4 / base_line_width(class),
+                        ]
+                    })
+                    .collect();
+                let signs: Vec<_> = (0..3)
+                    .map(|i| {
+                        let a = p[i];
+                        let b = p[(i + 1) % 3];
+                        (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+                    })
+                    .collect();
+                signs.iter().all(|x| *x >= 0.) || signs.iter().all(|x| *x <= 0.)
+            });
+            assert!(
+                covers,
+                "Class {class} must not leave a gap at the outer corner"
+            );
+        }
         let mut zero = Vec::new();
         line(&mut zero, &[[0., 0.], [0., 0.]], 1., true);
         assert!(zero.is_empty());
+    }
+    #[test]
+    fn water_area_vertices_are_unaffected_by_stroke_width() {
+        let feature = Feature {
+            class: 1,
+            kind: 3,
+            height: -1.,
+            min_height: 0.,
+            rings: vec![vec![[0., 0.], [1., 0.], [1., 1.], [0., 1.], [0., 0.]]],
+        };
+        let (meshes, _) = mesh(&[feature]).unwrap();
+        assert!(!meshes[1].is_empty());
+        assert!(meshes[1].chunks_exact(7).all(|v| v[2] == 0. && v[3] == 0.));
     }
     #[test]
     fn road_widths_are_continuous_and_preserve_class_hierarchy() {
@@ -852,8 +929,16 @@ mod tests {
         }
         assert_eq!(line_width(3, 16.), 6.);
         assert_eq!(line_width(4, 16.), 10.);
-        assert_eq!(line_width(5, 16.), 1.2);
-        assert_eq!(line_width(6, 16.), base_line_width(6));
+        assert_eq!(line_width(5, 16.), 2.2);
+        for class in [1, 5, 6] {
+            for z in [9., 12., 13., 14., 15., 16., 18., 20.] {
+                assert!(
+                    (line_width(class, z - 0.0001) - line_width(class, z + 0.0001)).abs() < 0.001
+                );
+            }
+            assert!(line_width(class, 20.) > line_width(class, 16.));
+            assert!(line_width(class, 16.) > line_width(class, 14.));
+        }
     }
     #[test]
     fn building_edges_keep_courtyards_and_height_but_omit_tile_cuts() {
