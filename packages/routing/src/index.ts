@@ -24,12 +24,16 @@ export type RouteResult = WalkingResult & {
   graphCached: boolean;
   graphBytes: number;
 };
-/** Lazy, verified graph loading; the server only delivers bytes. */
+/** The same verified Rust/WASM engine runs in the browser or on the server. */
 export class AtlasRouter {
   private engine?: WalkingRouter;
   private loading?: Promise<void>;
   private dead = false;
-  constructor(readonly reader: AtlasReader) {}
+  constructor(
+    readonly reader: AtlasReader,
+    readonly initialize: () => Promise<unknown> = () =>
+      init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" }),
+  ) {}
   async route(start: Position, end: Position): Promise<RouteResult> {
     if (this.dead) throw new Error("Router has been disposed");
     const metadata = this.reader.index.manifest.routing;
@@ -47,7 +51,7 @@ export class AtlasRouter {
           "Walking graph is not cached. Turn off Cache only and try again to fetch it.",
         );
       this.loading ??= (async () => {
-        await init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
+        await this.initialize();
         const bytes = await this.reader.block(metadata.block);
         if (this.dead) throw new Error("Router has been disposed");
         this.engine = new WalkingRouter(bytes);

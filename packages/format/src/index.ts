@@ -45,6 +45,7 @@ export interface Manifest {
   snapshot: string;
   routing?: RoutingMetadata;
   labelZoom?: number;
+  featureZoom?: number;
   areas?: { assembledRelations: number; skippedRelations: number };
   featureCountKind?: "tile-records";
   selection?: {
@@ -66,7 +67,20 @@ export interface Block {
   y?: number;
 }
 export const INDEX_PAGE_SIZE = 32;
+export function spatialAddress(key: string) {
+  const m =
+    /^(tile|features\/(?:buildings|water|railways|roads|land))\/(\d+)\/(\d+)\/(\d+)$/.exec(
+      key,
+    );
+  return m
+    ? { prefix: m[1]!, z: Number(m[2]), x: Number(m[3]), y: Number(m[4]) }
+    : null;
+}
+export function pageKey(prefix: string, z: number, x: number, y: number) {
+  return `index/${prefix === "tile" ? "tiles" : prefix}/${z}/${x}/${y}`;
+}
 export interface IndexPage extends Block {
+  prefix?: string;
   z: number;
   x: number;
   y: number;
@@ -170,6 +184,11 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     throw new Error("Invalid ATLAS metadata");
   if (manifest.capabilities.includes("map-labels") && manifest.labelZoom !== 12)
     throw new Error("Invalid label grid");
+  if (
+    manifest.capabilities.includes("feature-extraction") &&
+    manifest.featureZoom !== 12
+  )
+    throw new Error("Invalid feature grid");
   if (manifest.selection) {
     const s = manifest.selection;
     if (
@@ -228,8 +247,11 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     for (const p of pages) {
       if (
         ![p.z, p.x, p.y, p.count].every(Number.isInteger) ||
-        p.z < manifest.minZoom ||
-        p.z > manifest.maxZoom ||
+        (p.prefix
+          ? !/^features\/(buildings|water|railways|roads|land)$/.test(
+              p.prefix,
+            ) || p.z !== manifest.featureZoom
+          : p.z < manifest.minZoom || p.z > manifest.maxZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -238,7 +260,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
         p.count > INDEX_PAGE_SIZE ** 2 ||
         p.rawLength! > MAX_METADATA ||
         p.codec !== "gzip" ||
-        p.key !== `index/tiles/${p.z}/${p.x}/${p.y}` ||
+        p.key !== pageKey(p.prefix ?? "tile", p.z, p.x, p.y) ||
         pageKeys.has(p.key)
       )
         throw new Error("Invalid ATLAS directory page");
@@ -247,7 +269,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     if (
       blocks.some(
         (b) =>
-          b.key.startsWith("tile/") ||
+          spatialAddress(b.key) !== null ||
           b.key.startsWith("index/") ||
           b.offset + b.length >
             (pages[0]?.offset ?? header.fileLength - header.payloadOffset),
@@ -258,14 +280,14 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   const tileCount =
     header.version === 1
       ? blocks.filter((b) => b.key.startsWith("tile/")).length
-      : pages.reduce((n, p) => n + p.count, 0);
+      : pages.filter((p) => !p.prefix).reduce((n, p) => n + p.count, 0);
   return {
     header,
     manifest,
     blocks,
     pages,
     tileCount,
-    blockCount: blocks.length + (header.version === 2 ? tileCount : 0),
+    blockCount: blocks.length + pages.reduce((n, p) => n + p.count, 0),
   };
 }
 export function validateBlocks(
@@ -306,6 +328,18 @@ export function validateBlocks(
         Number(match[3]) >= 2 ** manifest.labelZoom!
       )
         throw new Error("Invalid label address");
+    }
+    if (block.key.startsWith("features/") && block.key !== "features/geojson") {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== manifest.featureZoom ||
+        a.x < 0 ||
+        a.y < 0 ||
+        a.x >= 2 ** a.z ||
+        a.y >= 2 ** a.z
+      )
+        throw new Error("Invalid feature address");
     }
     if (block.key.startsWith("tile/")) {
       if (

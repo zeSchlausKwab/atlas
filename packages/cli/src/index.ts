@@ -10,6 +10,8 @@ import type { FeatureCollection } from "geojson";
 import { buildLabels, partitionLabels } from "../../labels/src/compile";
 import { LABEL_ZOOM } from "../../labels/src/index";
 import { displayMinZoom } from "./display";
+import { buildFeatures } from "../../features/src/compile";
+import { FEATURE_ZOOM } from "../../features/src/index";
 import { DiskWriter } from "./disk-writer";
 import {
   HEADER_SIZE,
@@ -31,7 +33,12 @@ const DEFAULT_OUTPUT = resolve(ROOT, "data/liechtenstein.atlas");
 function args(argv: string[]) {
   const command = argv.shift() ?? "help";
   const flags: Record<string, string | boolean> = {};
-  const boolean = new Set(["help", "dry-run", "no-source-features"]);
+  const boolean = new Set([
+    "help",
+    "dry-run",
+    "no-source-features",
+    "features",
+  ]);
   const allowed = new Set([
     "url",
     "out",
@@ -354,6 +361,20 @@ async function main() {
         features: block.roads.length + block.pois.length,
         bytes: encoder.encode(JSON.stringify(block)),
       });
+    if (flags.features) {
+      console.log("Partitioning selectable source geometry…");
+      const cells = buildFeatures(imported.geojson);
+      for (const [key, features] of cells) {
+        await writer.add({
+          key,
+          features: features.length,
+          bytes: encoder.encode(
+            JSON.stringify({ schema: "features-v1", features }),
+          ),
+        });
+        cells.delete(key);
+      }
+    }
     const sourceFile = Bun.file(`${input}.source.json`);
     const source = (await sourceFile.exists())
       ? await sourceFile.json()
@@ -379,12 +400,14 @@ async function main() {
       places: imported.places,
       routing: imported.routing,
       labelZoom: LABEL_ZOOM,
+      ...(flags.features ? { featureZoom: FEATURE_ZOOM } : {}),
       areas: {
         assembledRelations: imported.assembledRelations,
         skippedRelations: imported.skippedRelations,
       },
       capabilities: [
         "vector-rendering",
+        ...(flags.features ? ["feature-extraction"] : []),
         "map-labels",
         "walking-routing",
         "location-search",

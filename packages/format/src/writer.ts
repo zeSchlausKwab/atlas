@@ -3,6 +3,8 @@ import {
   MAGIC,
   MAX_METADATA,
   INDEX_PAGE_SIZE,
+  spatialAddress,
+  pageKey,
   type IndexPage,
   sha256,
   type Manifest,
@@ -116,11 +118,17 @@ export async function encodePagedIndex(
   const groups = new Map<string, Block[]>();
   const root: Block[] = [];
   for (const b of blocks) {
-    if (!b.key.startsWith("tile/")) {
+    const a = spatialAddress(b.key);
+    if (!a) {
       root.push(b);
       continue;
     }
-    const key = `index/tiles/${b.z}/${Math.floor(b.x! / INDEX_PAGE_SIZE)}/${Math.floor(b.y! / INDEX_PAGE_SIZE)}`;
+    const key = pageKey(
+      a.prefix,
+      a.z,
+      Math.floor(a.x / INDEX_PAGE_SIZE),
+      Math.floor(a.y / INDEX_PAGE_SIZE),
+    );
     const group = groups.get(key) ?? [];
     group.push(b);
     groups.set(key, group);
@@ -135,7 +143,10 @@ export async function encodePagedIndex(
         new Blob([raw]).stream().pipeThrough(new CompressionStream("gzip")),
       ).arrayBuffer(),
     );
-    const [, , z, x, y] = key.split("/").map(Number);
+    const a = spatialAddress(entries[0]!.key)!;
+    const z = a.z,
+      x = Math.floor(a.x / INDEX_PAGE_SIZE),
+      y = Math.floor(a.y / INDEX_PAGE_SIZE);
     descriptors.push({
       ...(await describeBlock(
         { key, bytes, codec: "gzip", rawLength: raw.length },
@@ -145,6 +156,7 @@ export async function encodePagedIndex(
       x: x!,
       y: y!,
       count: entries.length,
+      ...(a.prefix === "tile" ? {} : { prefix: a.prefix }),
     });
     pages.push(bytes);
     offset += bytes.length;

@@ -1,6 +1,7 @@
 import {
   HEADER_SIZE,
   INDEX_PAGE_SIZE,
+  spatialAddress,
   validateBlocks,
   type IndexPage,
   parseHeader,
@@ -16,7 +17,8 @@ export type DataPurpose =
   | "routing"
   | "search"
   | "queries"
-  | "source";
+  | "source"
+  | "features";
 export type TransferPurpose =
   | DataPurpose
   | "directory"
@@ -26,6 +28,8 @@ export function purposeOf(key: string): TransferPurpose {
   if (key === "header" || key === "index" || key.startsWith("index/"))
     return "directory";
   if (key.startsWith("tile/")) return "map";
+  if (key.startsWith("features/") && key !== "features/geojson")
+    return "features";
   if (key.startsWith("labels/"))
     return key.includes("/roads/")
       ? "streetNames"
@@ -100,6 +104,7 @@ export class AtlasReader {
     search: 0,
     queries: 0,
     source: 0,
+    features: 0,
   };
   requests = 0;
   cacheHits = 0;
@@ -131,6 +136,7 @@ export class AtlasReader {
     return bytes;
   }
   private pagesFor(
+    prefix: string,
     z: number,
     xmin: number,
     xmax: number,
@@ -139,6 +145,7 @@ export class AtlasReader {
   ) {
     return this.index.pages.filter(
       (p) =>
+        (p.prefix ?? "tile") === prefix &&
         p.z === z &&
         p.x >= Math.floor(xmin / INDEX_PAGE_SIZE) &&
         p.x <= Math.floor(xmax / INDEX_PAGE_SIZE) &&
@@ -156,14 +163,17 @@ export class AtlasReader {
       validateBlocks(this.index.header, this.index.manifest, blocks);
       if (
         blocks.length !== page.count ||
-        blocks.some(
-          (b) =>
-            !b.key.startsWith("tile/") ||
-            b.z !== page.z ||
-            Math.floor(b.x! / INDEX_PAGE_SIZE) !== page.x ||
-            Math.floor(b.y! / INDEX_PAGE_SIZE) !== page.y ||
-            b.offset + b.length > this.index.pages[0]!.offset,
-        )
+        blocks.some((b) => {
+          const a = spatialAddress(b.key);
+          return (
+            !a ||
+            a.prefix !== (page.prefix ?? "tile") ||
+            a.z !== page.z ||
+            Math.floor(a.x / INDEX_PAGE_SIZE) !== page.x ||
+            Math.floor(a.y / INDEX_PAGE_SIZE) !== page.y ||
+            b.offset + b.length > this.index.pages[0]!.offset
+          );
+        })
       )
         throw new Error("Invalid directory page contents");
       for (const b of blocks) this.byKey.set(b.key, b);
@@ -185,7 +195,7 @@ export class AtlasReader {
     ymax: number,
   ) {
     return {
-      complete: this.pagesFor(z, xmin, xmax, ymin, ymax).every((p) =>
+      complete: this.pagesFor("tile", z, xmin, xmax, ymin, ymax).every((p) =>
         this.loadedPages.has(p.key),
       ),
       blocks: [...this.byKey.values()].filter(
@@ -207,9 +217,36 @@ export class AtlasReader {
     ymax: number,
   ) {
     await Promise.all(
-      this.pagesFor(z, xmin, xmax, ymin, ymax).map((p) => this.loadPage(p)),
+      this.pagesFor("tile", z, xmin, xmax, ymin, ymax).map((p) =>
+        this.loadPage(p),
+      ),
     );
     return this.tilesCached(z, xmin, xmax, ymin, ymax).blocks;
+  }
+  async spatial(
+    prefix: string,
+    z: number,
+    xmin: number,
+    xmax: number,
+    ymin: number,
+    ymax: number,
+  ) {
+    await Promise.all(
+      this.pagesFor(prefix, z, xmin, xmax, ymin, ymax).map((p) =>
+        this.loadPage(p),
+      ),
+    );
+    return [...this.byKey.values()].filter((b) => {
+      const a = spatialAddress(b.key);
+      return (
+        a?.prefix === prefix &&
+        a.z === z &&
+        a.x >= xmin &&
+        a.x <= xmax &&
+        a.y >= ymin &&
+        a.y <= ymax
+      );
+    });
   }
   /** Explicit full-catalog operation for auditing, never needed to display a view. */
   async allBlocks() {
@@ -225,10 +262,12 @@ export class AtlasReader {
       !this.options.purposes.includes(purpose)
     )
       throw new Error(`Data purpose not enabled: ${purpose}`);
-    if (!this.byKey.has(key) && key.startsWith("tile/")) {
-      const [, z, x, y] = key.split("/").map(Number);
-      await this.tiles(z!, x!, x!, y!, y!);
+    const address = spatialAddress(key);
+    if (!this.byKey.has(key) && address) {
+      const a = address;
+      await this.spatial(a.prefix, a.z, a.x, a.x, a.y, a.y);
     }
+
     const block = this.byKey.get(key);
     if (!block) throw new Error(`Block not present in this package: ${key}`);
     return this.readBlock(block);

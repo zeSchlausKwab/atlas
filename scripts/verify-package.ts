@@ -1,3 +1,4 @@
+import { decodeFeatures } from "../packages/features/src/index";
 import { decodeLabels } from "../packages/labels/src/index";
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
 const file = process.argv[2] ?? "data/vienna-plus.atlas";
@@ -8,8 +9,8 @@ let maxFeatures = 0,
   checked = 0;
 for (const b of await reader.allBlocks()) {
   const bytes = await reader.block(b.key);
-  if (b.z !== undefined) {
-    levels[b.z] = (levels[b.z] ?? 0) + 1;
+  if (b.key.startsWith("tile/")) {
+    levels[b.z!] = (levels[b.z!] ?? 0) + 1;
     const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (new TextDecoder().decode(bytes.subarray(0, 4)) !== "TIL1")
       throw new Error(`Invalid tile magic ${b.key}`);
@@ -35,6 +36,8 @@ for (const b of await reader.allBlocks()) {
     maxFeatures = Math.max(maxFeatures, count);
     maxPoints = Math.max(maxPoints, points);
   }
+  if (b.key.startsWith("features/") && b.key !== "features/geojson")
+    decodeFeatures(bytes);
   if (b.key.startsWith("labels/")) decodeLabels(bytes);
   reader.cache.delete(b.key);
   if (++checked % 20000 === 0) console.log(`${checked} blocks verified…`);

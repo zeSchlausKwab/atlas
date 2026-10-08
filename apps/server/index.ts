@@ -1,5 +1,9 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import init from "../../packages/renderer/pkg/atlas_renderer";
+import { AtlasReader, FileSource } from "../../packages/format/src/reader";
+import { AtlasEngine } from "../../packages/operations/src/index";
+import { createApiHandler } from "./api";
 import { servePackage } from "./ranges";
 import { sha256 } from "../../packages/format/src/index";
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -27,6 +31,16 @@ const built = await Bun.build({
   sourcemap: "linked",
 });
 if (!built.success) throw new AggregateError(built.logs, "Web build failed");
+const engine = new AtlasEngine(
+  await new AtlasReader(new FileSource(snapshot)).open(),
+  async () =>
+    init({
+      module_or_path: await Bun.file(
+        resolve(root, "packages/renderer/pkg/atlas_renderer_bg.wasm"),
+      ).arrayBuffer(),
+    }),
+);
+const api = createApiHandler(engine);
 const routes = new Map([
   ["/sw.js", ["apps/web/sw.js", "text/javascript; charset=utf-8"]],
   [
@@ -45,8 +59,10 @@ const routes = new Map([
 const server = Bun.serve({
   hostname: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3100),
+  maxRequestBodySize: 16384,
   fetch(request) {
     const path = new URL(request.url).pathname;
+    if (path.startsWith("/api/")) return api(request);
     if (path === "/maps/demo.atlas")
       return servePackage(request, snapshot, etag);
     if (path === "/health")
