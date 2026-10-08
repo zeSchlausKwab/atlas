@@ -182,7 +182,7 @@ fn mesh(features: &[Feature]) -> Result<Vec<Vec<f32>>, String> {
     Ok(layers)
 }
 struct Layer {
-    buffer: WebGlBuffer,
+    buffer: Option<WebGlBuffer>,
     count: i32,
 }
 struct Tile {
@@ -270,6 +270,16 @@ impl Renderer {
         })
     }
     pub fn add_tile(&mut self, z: u32, x: u32, y: u32, bytes: &[u8]) -> Result<u32, JsValue> {
+        self.add_tile_part(&format!("tile/{z}/{x}/{y}"), z, x, y, bytes)
+    }
+    pub fn add_tile_part(
+        &mut self,
+        key: &str,
+        z: u32,
+        x: u32,
+        y: u32,
+        bytes: &[u8],
+    ) -> Result<u32, JsValue> {
         if z > 18 || x >= (1 << z) || y >= (1 << z) {
             return Err(JsValue::from_str("Invalid tile address"));
         }
@@ -277,6 +287,13 @@ impl Renderer {
         let meshes = mesh(&features).map_err(|e| JsValue::from_str(&e))?;
         let mut layers = Vec::new();
         for data in meshes {
+            if data.is_empty() {
+                layers.push(Layer {
+                    buffer: None,
+                    count: 0,
+                });
+                continue;
+            }
             let buffer = self
                 .gl
                 .create_buffer()
@@ -286,23 +303,22 @@ impl Renderer {
             self.gl
                 .buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &array, Gl::STATIC_DRAW);
             layers.push(Layer {
-                buffer,
+                buffer: Some(buffer),
                 count: (data.len() / 7) as i32,
             });
         }
-        let key = format!("tile/{z}/{x}/{y}");
-        if let Some(old) = self.tiles.remove(&key) {
+        if let Some(old) = self.tiles.remove(key) {
             for layer in old.layers {
-                self.gl.delete_buffer(Some(&layer.buffer));
+                self.gl.delete_buffer(layer.buffer.as_ref());
             }
         }
-        self.tiles.insert(key, Tile { z, x, y, layers });
+        self.tiles.insert(key.to_owned(), Tile { z, x, y, layers });
         Ok(features.len() as u32)
     }
     pub fn remove_tile(&mut self, key: &str) {
         if let Some(tile) = self.tiles.remove(key) {
             for layer in tile.layers {
-                self.gl.delete_buffer(Some(&layer.buffer));
+                self.gl.delete_buffer(layer.buffer.as_ref());
             }
         }
     }
@@ -319,7 +335,7 @@ impl Renderer {
     pub fn clear(&mut self) {
         for tile in self.tiles.values() {
             for layer in &tile.layers {
-                self.gl.delete_buffer(Some(&layer.buffer));
+                self.gl.delete_buffer(layer.buffer.as_ref());
             }
         }
         self.tiles.clear();
@@ -366,7 +382,7 @@ impl Renderer {
                     ((tile.y as f64 / n - cy) * world) as f32,
                 );
                 self.gl.uniform1f(Some(&self.scale), (world / n) as f32);
-                self.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&layer.buffer));
+                self.gl.bind_buffer(Gl::ARRAY_BUFFER, layer.buffer.as_ref());
                 for (slot, size, offset) in [(0, 2, 0), (1, 2, 8), (2, 3, 16)] {
                     self.gl.enable_vertex_attrib_array(slot);
                     self.gl.vertex_attrib_pointer_with_i32(

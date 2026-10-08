@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import { MAP_LAYERS } from "../../format/src/index";
+import { splitTile } from "../../format/src/tiles";
+import { splitPackageLayers } from "./split-layers";
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,7 +142,23 @@ async function main() {
     throw new Error("--format must be md or json");
   if (command === "help" || flags.help) {
     console.log(
-      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
+      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
+    );
+    return;
+  }
+  if (command === "split-layers") {
+    const input = resolve(text(flags, "input", DEFAULT_OUTPUT)),
+      output = resolve(text(flags, "output", input));
+    const maxBytes = Number(text(flags, "max-bytes", "2000000000"));
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+      throw new Error("Invalid --max-bytes");
+    if (flags["dry-run"]) {
+      report({ action: "split-map-layers", input, output, maxBytes }, format);
+      return;
+    }
+    report(
+      await splitPackageLayers(input, output, maxBytes, console.log),
+      format,
     );
     return;
   }
@@ -306,14 +325,15 @@ async function main() {
             (f) => z >= displayMinZoom(f.tags ?? {}),
           );
           if (!features.length) continue;
-          await writer.add({
-            key: `tile/${z}/${x}/${y}`,
-            z,
-            x,
-            y,
-            features: features.length,
-            bytes: encodeTile(features),
-          });
+          for (const part of splitTile(encodeTile(features)))
+            await writer.add({
+              key: `tile/${part.layer}/${z}/${x}/${y}`,
+              z,
+              x,
+              y,
+              features: part.features,
+              bytes: part.bytes,
+            });
           // Only source geometry is needed to split descendants. Release encoded tile geometry.
           tile.features = [];
           if (z === maxZoom)
@@ -396,6 +416,7 @@ async function main() {
       minZoom,
       maxZoom,
       features: imported.geojson.features.length,
+      tileLayers: [...MAP_LAYERS],
       peaks: imported.peaks.length,
       places: imported.places,
       routing: imported.routing,
@@ -432,7 +453,8 @@ async function main() {
       {
         file: output,
         bytes: size,
-        tiles: writer.blocks.filter((b) => b.key.startsWith("tile/")).length,
+        tileBlocks: writer.blocks.filter((b) => b.key.startsWith("tile/"))
+          .length,
         features: imported.geojson.features.length,
         peaks: imported.peaks.length,
         routing: imported.routing,
@@ -460,7 +482,7 @@ async function main() {
         manifest: index.manifest,
         bytes: header.fileLength,
         blocks: index.blockCount,
-        tiles: index.tileCount,
+        tileBlocks: index.tileCount,
       },
       format,
     );

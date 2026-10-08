@@ -2,6 +2,46 @@
 export const MAGIC = "ATLAS001";
 export const HEADER_SIZE = 32;
 export const TILE_EXTENT = 65535;
+export const MAP_LAYERS = [
+  "land",
+  "water",
+  "buildings",
+  "roads",
+  "railways",
+  "peaks",
+] as const;
+export type MapLayer = (typeof MAP_LAYERS)[number];
+export const LAYER_MASKS: Record<MapLayer, number> = {
+  land: 1,
+  water: 2,
+  buildings: 4,
+  roads: 56,
+  railways: 64,
+  peaks: 128,
+};
+export function layerForClass(cls: number): MapLayer {
+  const layer = [
+    "land",
+    "water",
+    "buildings",
+    "roads",
+    "roads",
+    "roads",
+    "railways",
+    "peaks",
+  ][cls];
+  if (!layer) throw new Error("Invalid tile class");
+  return layer as MapLayer;
+}
+export function tileLayer(key: string): MapLayer | undefined {
+  const layer = key.split("/")[1];
+  return key.startsWith("tile/") && MAP_LAYERS.includes(layer as MapLayer)
+    ? (layer as MapLayer)
+    : undefined;
+}
+export function isTilePrefix(prefix: string) {
+  return prefix === "tile" || prefix.startsWith("tile/");
+}
 export const MAX_METADATA = 64 * 1024 * 1024;
 export interface Peak {
   id: string;
@@ -46,6 +86,7 @@ export interface Manifest {
   routing?: RoutingMetadata;
   labelZoom?: number;
   featureZoom?: number;
+  tileLayers?: MapLayer[];
   areas?: { assembledRelations: number; skippedRelations: number };
   featureCountKind?: "tile-records";
   selection?: {
@@ -69,7 +110,7 @@ export interface Block {
 export const INDEX_PAGE_SIZE = 32;
 export function spatialAddress(key: string) {
   const m =
-    /^(tile|features\/(?:buildings|water|railways|roads|land))\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land))\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -99,6 +140,7 @@ export interface PackageIndex {
   /** Root entries only in v2. Use reader.tiles() or reader.allBlocks(). */
   blocks: Block[];
   pages: IndexPage[];
+  /** Display blocks; a spatial tile can have multiple independently stored layers. */
   tileCount: number;
   blockCount: number;
 }
@@ -182,6 +224,13 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     manifest.bounds[3] > 90
   )
     throw new Error("Invalid ATLAS metadata");
+  if (
+    manifest.tileLayers !== undefined &&
+    (!Array.isArray(manifest.tileLayers) ||
+      manifest.tileLayers.some((l) => !MAP_LAYERS.includes(l)) ||
+      new Set(manifest.tileLayers).size !== manifest.tileLayers.length)
+  )
+    throw new Error("Invalid map layer catalog");
   if (manifest.capabilities.includes("map-labels") && manifest.labelZoom !== 12)
     throw new Error("Invalid label grid");
   if (
@@ -247,11 +296,15 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     for (const p of pages) {
       if (
         ![p.z, p.x, p.y, p.count].every(Number.isInteger) ||
-        (p.prefix
-          ? !/^features\/(buildings|water|railways|roads|land)$/.test(
-              p.prefix,
-            ) || p.z !== manifest.featureZoom
-          : p.z < manifest.minZoom || p.z > manifest.maxZoom) ||
+        (isTilePrefix(p.prefix ?? "tile")
+          ? p.z < manifest.minZoom ||
+            p.z > manifest.maxZoom ||
+            (p.prefix
+              ? !manifest.tileLayers?.includes(p.prefix.slice(5) as MapLayer)
+              : !!manifest.tileLayers)
+          : !/^features\/(buildings|water|railways|roads|land)$/.test(
+              p.prefix!,
+            ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -280,7 +333,9 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   const tileCount =
     header.version === 1
       ? blocks.filter((b) => b.key.startsWith("tile/")).length
-      : pages.filter((p) => !p.prefix).reduce((n, p) => n + p.count, 0);
+      : pages
+          .filter((p) => isTilePrefix(p.prefix ?? "tile"))
+          .reduce((n, p) => n + p.count, 0);
   return {
     header,
     manifest,
@@ -350,7 +405,12 @@ export function validateBlocks(
         block.y! < 0 ||
         block.x! >= 2 ** block.z! ||
         block.y! >= 2 ** block.z! ||
-        block.key !== `tile/${block.z}/${block.x}/${block.y}`
+        (manifest.tileLayers
+          ? !tileLayer(block.key) ||
+            !manifest.tileLayers.includes(tileLayer(block.key)!) ||
+            block.key !==
+              `tile/${tileLayer(block.key)}/${block.z}/${block.x}/${block.y}`
+          : block.key !== `tile/${block.z}/${block.x}/${block.y}`)
       )
         throw new Error("Invalid tile address");
     }

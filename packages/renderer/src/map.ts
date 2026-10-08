@@ -4,9 +4,21 @@ import { MapLabels, type LabelStats } from "./labels";
 import type { Location } from "../../geocoding/src/model";
 import init, { Renderer } from "../pkg/atlas_renderer";
 import { AtlasReader } from "../../format/src/reader";
-import { project, unproject, type Peak } from "../../format/src/index";
+import {
+  MAP_LAYERS,
+  LAYER_MASKS,
+  project,
+  unproject,
+  type Peak,
+  type MapLayer,
+} from "../../format/src/index";
 import type { Position, WalkingResult } from "../../routing/src/index";
 export const MAX_VIEW_ZOOM = 20;
+export interface MapOptions {
+  layers?: readonly MapLayer[];
+  streetNames?: boolean;
+  pois?: boolean;
+}
 export interface MapStats {
   zoom: number;
   tiles: number;
@@ -76,6 +88,7 @@ export class AtlasMap {
   } | null = null;
   private endpoints: [Position | null, Position | null] = [null, null];
   private route: Extract<WalkingResult, { status: "found" }> | null = null;
+  private layerMask = 255;
   private loaded = new Set<string>();
   private loading = new Set<string>();
   private failed = new Set<string>();
@@ -115,10 +128,13 @@ export class AtlasMap {
     reader: AtlasReader,
     onStats: (stats: MapStats) => void,
     onError: (message: string) => void,
+    options: MapOptions = {},
   ) {
     await init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
     const map = new AtlasMap(canvas, reader, onStats, onError);
     map.renderer = new Renderer(canvas);
+    map.setLayers(options.layers ?? 255);
+    map.setLabels(options.streetNames ?? true, options.pois ?? true);
     map.events();
     map.fit();
     return map;
@@ -385,7 +401,12 @@ export class AtlasMap {
     this.zoom = Math.max(this.zoom, 13);
     this.invalidate();
   }
-  setLayers(mask: number) {
+  setLayers(layers: number | readonly MapLayer[]) {
+    const mask =
+      typeof layers === "number"
+        ? layers
+        : layers.reduce((mask, l) => mask | LAYER_MASKS[l], 0);
+    this.layerMask = mask;
     this.renderer.set_layers(mask);
     this.invalidate();
   }
@@ -414,8 +435,11 @@ export class AtlasMap {
       Math.max(0, Math.floor((this.center[1] - dy) * n)),
       Math.min(n - 1, Math.floor((this.center[1] + dy) * n)),
     ];
-    const known = this.reader.tilesCached(...range),
-      key = range.join("/");
+    const layers = MAP_LAYERS.filter(
+      (l) => (this.layerMask & LAYER_MASKS[l]) !== 0,
+    );
+    const known = this.reader.tilesCached(...range, layers),
+      key = `${range.join("/")}/${layers.join(",")}`;
     this.catalogMissing = known.complete ? 0 : 1;
     if (
       !known.complete &&
@@ -425,7 +449,7 @@ export class AtlasMap {
     ) {
       this.catalogLoading.add(key);
       this.reader
-        .tiles(...range)
+        .tiles(...range, layers)
         .catch((e) => {
           if (!this.dead) {
             this.catalogFailed.add(key);
@@ -481,7 +505,13 @@ export class AtlasMap {
         .block(block.key)
         .then((bytes) => {
           if (this.dead || !this.wanted.includes(block.key)) return;
-          this.renderer.add_tile(block.z!, block.x!, block.y!, bytes);
+          this.renderer.add_tile_part(
+            block.key,
+            block.z!,
+            block.x!,
+            block.y!,
+            bytes,
+          );
           this.loaded.add(block.key);
         })
         .catch((error) => {

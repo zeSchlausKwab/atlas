@@ -28,7 +28,9 @@ export class DiskWriter {
     if (this.keys.has(input.key))
       throw new Error(`Duplicate block ${input.key}`);
     this.keys.add(input.key);
-    const zipped = Bun.gzipSync(input.bytes as Uint8Array<ArrayBuffer>);
+    const zipped = input.codec
+      ? input.bytes
+      : Bun.gzipSync(input.bytes as Uint8Array<ArrayBuffer>);
     const stored: InputBlock =
       zipped.length < input.bytes.length
         ? {

@@ -1,3 +1,4 @@
+import { splitTile } from "../../format/src/tiles";
 import { decodeLabels, type LabelBlock } from "../../labels/src/index";
 import { AtlasReader } from "../../format/src/reader";
 import {
@@ -6,6 +7,8 @@ import {
   type InputBlock,
 } from "../../format/src/writer";
 import {
+  MAP_LAYERS,
+  type MapLayer,
   unproject,
   project,
   type Block,
@@ -35,9 +38,25 @@ export interface Selection {
   search: boolean;
   queries?: boolean;
   name: string;
+  layers?: MapLayer[];
+  streetNames?: boolean;
+  pois?: boolean;
 }
 export async function plan(reader: AtlasReader, s: Selection) {
   validatePolygon(s.polygon);
+  if (
+    s.layers !== undefined &&
+    (!Array.isArray(s.layers) ||
+      s.layers.some((l) => !MAP_LAYERS.includes(l)) ||
+      new Set(s.layers).size !== s.layers.length)
+  )
+    throw new Error("Invalid selected map layers");
+  if (
+    [s.streetNames, s.pois].some(
+      (v) => v !== undefined && typeof v !== "boolean",
+    )
+  )
+    throw new Error("Invalid label selection");
   const m = reader.index.manifest;
   if (
     !Number.isInteger(s.minZoom) ||
@@ -60,6 +79,7 @@ export async function plan(reader: AtlasReader, s: Selection) {
         Math.min(n - 1, Math.floor(se[0] * n)),
         Math.max(0, Math.floor(nw[1] * n)),
         Math.min(n - 1, Math.floor(se[1] * n)),
+        s.layers,
       )),
     );
   }
@@ -70,15 +90,21 @@ export async function plan(reader: AtlasReader, s: Selection) {
       c = unproject((b.x! + 1) / n, b.y! / n);
     return intersectsRectangle(s.polygon, [...a, ...c]);
   });
-  if (!tiles.length) throw new Error("No map tiles intersect this area.");
   const labelBlocks = reader.index.blocks.filter((b) => {
     if (!b.key.startsWith("labels/")) return false;
+    if (s.streetNames === false && s.pois === false) return false;
+    if (b.key.includes("/roads/") && s.streetNames === false) return false;
+    if (b.key.includes("/pois/") && s.pois === false) return false;
     const [, z, x, y] = b.key.split("/").map(Number),
       n = 2 ** z!;
     const a = unproject(x! / n, (y! + 1) / n),
       c = unproject((x! + 1) / n, y! / n);
     return intersectsRectangle(s.polygon, [...a, ...c]);
   });
+  if (!tiles.length && !labelBlocks.length)
+    throw new Error(
+      "No selected map data intersects this area. Enable a layer or choose another area.",
+    );
   const extra = reader.index.blocks.filter(
     (b) =>
       (s.queries && b.key === "query/peaks") ||
@@ -138,14 +164,27 @@ export async function extract(
     const b = selection.tiles[i]!;
     if (i % 20 === 0)
       progress(`Packing tiles ${i + 1} / ${selection.tiles.length}…`);
-    await add({
-      key: b.key,
-      z: b.z,
-      x: b.x,
-      y: b.y,
-      features: b.features,
-      bytes: await reader.block(b.key),
-    });
+    const bytes = await reader.block(b.key);
+    if (s.layers && !m.tileLayers) {
+      for (const part of splitTile(bytes))
+        if (s.layers.includes(part.layer))
+          await add({
+            key: `tile/${part.layer}/${b.z}/${b.x}/${b.y}`,
+            z: b.z,
+            x: b.x,
+            y: b.y,
+            features: part.features,
+            bytes: part.bytes,
+          });
+    } else
+      await add({
+        key: b.key,
+        z: b.z,
+        x: b.x,
+        y: b.y,
+        features: b.features,
+        bytes,
+      });
     reader.cache.delete(b.key);
   }
   const json = async (key: string) =>
@@ -159,10 +198,13 @@ export async function extract(
       const source = decodeLabels(await reader.block(b.key));
       const clipped: LabelBlock = {
         schema: "labels-v1",
-        pois: source.pois.filter((p) => inside(p.coordinates, s.polygon)),
+        pois:
+          s.pois === false
+            ? []
+            : source.pois.filter((p) => inside(p.coordinates, s.polygon)),
         roads: [],
       };
-      for (const road of source.roads) {
+      for (const road of s.streetNames === false ? [] : source.roads) {
         let part: typeof road | undefined;
         for (let i = 1; i < road.coordinates.length; i++) {
           const a = road.coordinates[i - 1]!,
@@ -195,7 +237,8 @@ export async function extract(
         });
       reader.cache.delete(b.key);
     }
-    capabilities.push("map-labels");
+    if (blocks.some((b) => b.key.startsWith("labels/")))
+      capabilities.push("map-labels");
   }
   let routing: Manifest["routing"];
   let peaks: Peak[] = [];
@@ -282,7 +325,10 @@ export async function extract(
     bounds: bounds(s.polygon),
     minZoom: s.minZoom,
     maxZoom: s.maxZoom,
-    features: selection.tiles.reduce((n, b) => n + b.features, 0),
+    features: blocks
+      .filter((b) => b.key.startsWith("tile/"))
+      .reduce((n, b) => n + b.features, 0),
+    tileLayers: s.layers ?? m.tileLayers,
     featureCountKind: "tile-records",
     peaks: peaks.length,
     places: m.places.filter((p) => inside(p.coordinates, s.polygon)),

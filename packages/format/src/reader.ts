@@ -1,4 +1,7 @@
 import {
+  MAP_LAYERS,
+  tileLayer,
+  type MapLayer,
   HEADER_SIZE,
   INDEX_PAGE_SIZE,
   spatialAddress,
@@ -106,6 +109,15 @@ export class AtlasReader {
     source: 0,
     features: 0,
   };
+  readonly bytesByLayer: Record<MapLayer | "combined", number> = {
+    land: 0,
+    water: 0,
+    buildings: 0,
+    roads: 0,
+    railways: 0,
+    peaks: 0,
+    combined: 0,
+  };
   requests = 0;
   cacheHits = 0;
   readonly cache = new Map<string, Uint8Array>();
@@ -132,6 +144,8 @@ export class AtlasReader {
     this.requests++;
     this.bytesRead += bytes.length;
     this.bytesByPurpose[purposeOf(key)] += bytes.length;
+    if (key.startsWith("tile/"))
+      this.bytesByLayer[tileLayer(key) ?? "combined"] += bytes.length;
     this.onRead?.({ key, start, end, bytes: bytes.length, cached: false });
     return bytes;
   }
@@ -187,20 +201,35 @@ export class AtlasReader {
       this.pageRequests.delete(page.key);
     }
   }
+  private tilePrefixes(layers: readonly MapLayer[]) {
+    if (!layers.length) return [];
+    return this.index.manifest.tileLayers
+      ? layers
+          .filter((l) => this.index.manifest.tileLayers!.includes(l))
+          .map((l) => `tile/${l}`)
+      : ["tile"];
+  }
   tilesCached(
     z: number,
     xmin: number,
     xmax: number,
     ymin: number,
     ymax: number,
+    layers: readonly MapLayer[] = MAP_LAYERS,
   ) {
+    const prefixes = this.tilePrefixes(layers);
     return {
-      complete: this.pagesFor("tile", z, xmin, xmax, ymin, ymax).every((p) =>
-        this.loadedPages.has(p.key),
+      complete: prefixes.every((prefix) =>
+        this.pagesFor(prefix, z, xmin, xmax, ymin, ymax).every((p) =>
+          this.loadedPages.has(p.key),
+        ),
       ),
       blocks: [...this.byKey.values()].filter(
         (b) =>
           b.key.startsWith("tile/") &&
+          prefixes.includes(
+            tileLayer(b.key) ? `tile/${tileLayer(b.key)}` : "tile",
+          ) &&
           b.z === z &&
           b.x! >= xmin &&
           b.x! <= xmax &&
@@ -215,13 +244,14 @@ export class AtlasReader {
     xmax: number,
     ymin: number,
     ymax: number,
+    layers: readonly MapLayer[] = MAP_LAYERS,
   ) {
     await Promise.all(
-      this.pagesFor("tile", z, xmin, xmax, ymin, ymax).map((p) =>
-        this.loadPage(p),
-      ),
+      this.tilePrefixes(layers)
+        .flatMap((prefix) => this.pagesFor(prefix, z, xmin, xmax, ymin, ymax))
+        .map((p) => this.loadPage(p)),
     );
-    return this.tilesCached(z, xmin, xmax, ymin, ymax).blocks;
+    return this.tilesCached(z, xmin, xmax, ymin, ymax, layers).blocks;
   }
   async spatial(
     prefix: string,
