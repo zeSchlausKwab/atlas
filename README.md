@@ -27,7 +27,7 @@ The server watches TypeScript changes and rebuilds the frontend on restart. Refr
 
 ## Vienna Plus and offline drawing
 
-**Vienna Plus is ready: 619.6 MB, 118,490 spatial tile addresses across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
+**Vienna Plus is ready: 640.1 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
 
 ```sh
 bun run data:vienna # needs osmium-tool, uses verified cached sources when present
@@ -60,6 +60,7 @@ The wider sidebar has **Explore**, **Route**, **Extract**, **Offline**, **Style*
 
 The following local-data experiments assume **Run tools on → This device**:
 
+- **City & village names** have an independent checkbox and data block; disabling them before loading avoids the name payload.
 - **Street names** appear from z13 (major roads), with local streets from z15. **Points of interest** appear progressively from z14–17. Toggle each layer independently; click a POI marker or name to inspect it and use it as a route endpoint. Labels load from nearby package cells, independently of the geocoder. They remain in offline exports even when the separate search option is off.
 - The missing buildings near Schönbrunn were an importer omission: relation-based building outlines never reached the tile compiler. See the [diagnosis and fix](docs/BUILDINGS-AND-LABELS.md).
 
@@ -103,7 +104,7 @@ bun test
 cargo test --workspace
 ```
 
-43 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 15 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings and rendering codecs. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
+50 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 18 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings and rendering codecs. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
 
 ## Original small sample
 
@@ -116,7 +117,7 @@ CPU draw timing measures the synchronous render submission call, not complete GP
 ## Deliberate boundaries
 
 - Renderer is currently a browser WebGL2 backend controlled by Rust/WASM. Native rendering and WebGPU are future work. Tile decoding and tessellation have native Rust tests.
-- Polygons include closed ways, building parts and flat multipolygon relations with courtyards. Incomplete/ambiguous rings and nested relation members are skipped and counted in the manifest. Source import keeps selected display ways, peaks, named location nodes and walking topology, not the complete OSM object graph.
+- Polygons include closed ways, building parts and nested multipolygon relations with courtyards. Incomplete/ambiguous rings and cyclic or excessively deep relations are skipped and counted in the manifest. Source import keeps selected display ways, peaks, named location nodes and walking topology, not the complete OSM object graph.
 - Walking routing uses one graph block, linear nearest-segment snapping (150 m limit), and Dijkstra shortest distance. No driving/cycling profiles, turn relations/instructions, terrain/difficulty costs, conditional access evaluation, national access defaults, imagery, terrain, or Hashtree transport. Unsupported conditional/access values are conservatively excluded. See the exact [walking profile](docs/ROUTING.md).
 - Geocoding uses TypeScript, in-memory name scans and bounding-box-filtered street segment projection. No house-number matching, address interpolation, typo correction, administrative hierarchy or external search provider. Nearest street is scoped to retained road/pedestrian-street/track types within 1 km; it is not a postal address or accessibility claim. See [geocoding details](docs/GEOCODING.md).
 - Graph coverage is the retained source extract, not a complete worldwide network. A missing graph, an unsnappable point, and no path in the loaded graph are distinct outcomes. No-path is not proof of real-world disconnection. Graph partitioning and fetching missing graph regions during search are future work.
@@ -131,7 +132,7 @@ Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright
 
 ## Request data for a purpose
 
-The **Data → On the map** checkboxes configure downloads as well as visibility. Choose any combination of landscape, water, buildings, roads, railways and peaks, plus separate street-name and POI labels. Choices are saved before the next page load. Buildings first appear at z14. Offline exports use the same selection.
+The **Data → On the map** checkboxes configure downloads as well as visibility. Choose any combination of landscape, water, buildings, roads, railways and peaks, plus separate settlement, street-name and POI labels. Choices are saved before the next page load. Buildings first appear at z13 in regenerated files. Offline exports use the same selection.
 
 With only buildings + water, a cold 1600×1000 Vienna view through z11–17 read **2.64 MB including metadata**: **1.50 MB buildings**, **105.8 KB water**, and **zero bytes of other geometry or labels**. Enabling roads afterward fetched only road blocks. Previously downloaded bytes remain in cumulative counters; disabling a layer stops future requests but does not undo completed or in-flight transfers.
 
@@ -140,6 +141,7 @@ Consumer code can choose layers at creation or change them later:
 ```ts
 const map = await AtlasMap.create(canvas, reader, onStats, onError, {
   layers: ["buildings", "water"],
+  placeNames: false,
   streetNames: false,
   pois: false,
 });
@@ -180,6 +182,6 @@ While drawing, use the **Finish area** button over the map or **Enter** after th
 
 ## Live styling and 3D
 
-**Style** offers three palettes, individual colors, line-weight and label-size dials, validated style JSON import/export, and saved appearance. Paint changes update GPU uniforms without fetching tiles or re-uploading meshes. **Inspect in 3D** adds an orthographic tilted view with depth-tested, shaded building extrusions. All buildings use an explicitly illustrative height; OSM heights, terrain and perspective are future work. Picking and overlays share the ground camera.
+**Style** offers three palettes, individual colors, line-weight and label-size dials, validated style JSON import/export, and saved appearance. Paint changes update GPU uniforms without fetching tiles or re-uploading meshes. **Inspect in 3D** adds an orthographic tilted view with depth-tested, shaded building extrusions. Buildings use tagged OSM heights, floor estimates, or a disclosed fallback. Right-drag or Command + drag to orbit; Mac trackpads also support Command + two-finger scrolling. The map’s **Top-down** button resets tilt and bearing. Height scale, unknown-height fallback and shading remain adjustable. Terrain and perspective are future work. Picking and overlays share the ground camera.
 
 See [the styling contract and 3D roadmap](docs/STYLING-AND-3D.md). The proposed planet stack is budgeted at **1–2 TB per complete snapshot**, with substantial compiler/index/serving changes required first. [Planet storage, hardware estimates and evidence](docs/PLANET-SIZING.md).

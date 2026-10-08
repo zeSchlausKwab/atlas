@@ -25,6 +25,7 @@ export type DataPurpose =
 export type TransferPurpose =
   | DataPurpose
   | "directory"
+  | "placeNames"
   | "streetNames"
   | "pois";
 export function purposeOf(key: string): TransferPurpose {
@@ -33,6 +34,7 @@ export function purposeOf(key: string): TransferPurpose {
   if (key.startsWith("tile/")) return "map";
   if (key.startsWith("features/") && key !== "features/geojson")
     return "features";
+  if (key === "labels/places") return "placeNames";
   if (key.startsWith("labels/"))
     return key.includes("/roads/")
       ? "streetNames"
@@ -101,6 +103,7 @@ export class AtlasReader {
     directory: 0,
     map: 0,
     labels: 0,
+    placeNames: 0,
     streetNames: 0,
     pois: 0,
     routing: 0,
@@ -285,7 +288,10 @@ export class AtlasReader {
   }
   async block(key: string): Promise<Uint8Array> {
     const kind = purposeOf(key);
-    const purpose = kind === "streetNames" || kind === "pois" ? "labels" : kind;
+    const purpose =
+      kind === "streetNames" || kind === "pois" || kind === "placeNames"
+        ? "labels"
+        : kind;
     if (
       this.options.purposes &&
       purpose !== "directory" &&

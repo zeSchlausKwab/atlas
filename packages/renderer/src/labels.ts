@@ -12,6 +12,7 @@ import {
 import type { Position, Location } from "../../geocoding/src/model";
 type Box = [number, number, number, number];
 export interface LabelStats {
+  places?: number;
   roads: number;
   pois: number;
   loading: number;

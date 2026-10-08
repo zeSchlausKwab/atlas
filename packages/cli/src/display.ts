@@ -3,7 +3,7 @@ export function displayMinZoom(properties: Record<string, unknown>): number {
   const cls = Number(properties.class);
   const tags = properties.tags as Record<string, string> | undefined;
   const highway = tags?.highway ?? "";
-  if (cls === 2) return 14;
+  if (cls === 2) return 13;
   if (cls === 5) return 14;
   if (cls === 3)
     return highway === "tertiary" || highway === "tertiary_link"

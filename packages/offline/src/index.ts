@@ -1,4 +1,9 @@
-import { splitTile } from "../../format/src/tiles";
+import {
+  PLACE_LABEL_KEY,
+  decodePlaces,
+  encodePlaces,
+} from "../../labels/src/places";
+import { tileRecords, splitTile } from "../../format/src/tiles";
 import { decodeLabels, type LabelBlock } from "../../labels/src/index";
 import { AtlasReader } from "../../format/src/reader";
 import {
@@ -39,6 +44,7 @@ export interface Selection {
   queries?: boolean;
   name: string;
   layers?: MapLayer[];
+  placeNames?: boolean;
   streetNames?: boolean;
   pois?: boolean;
 }
@@ -52,7 +58,7 @@ export async function plan(reader: AtlasReader, s: Selection) {
   )
     throw new Error("Invalid selected map layers");
   if (
-    [s.streetNames, s.pois].some(
+    [s.placeNames, s.streetNames, s.pois].some(
       (v) => v !== undefined && typeof v !== "boolean",
     )
   )
@@ -92,6 +98,7 @@ export async function plan(reader: AtlasReader, s: Selection) {
   });
   const labelBlocks = reader.index.blocks.filter((b) => {
     if (!b.key.startsWith("labels/")) return false;
+    if (b.key === PLACE_LABEL_KEY) return s.placeNames !== false;
     if (s.streetNames === false && s.pois === false) return false;
     if (b.key.includes("/roads/") && s.streetNames === false) return false;
     if (b.key.includes("/pois/") && s.pois === false) return false;
@@ -135,7 +142,25 @@ export async function extract(
   const blocks: Block[] = [],
     parts: Uint8Array<ArrayBuffer>[] = [];
   let offset = 0;
+  const buildingHeights = { tagged: 0, estimated: 0, missing: 0, maxMeters: 0 };
   async function add(input: InputBlock) {
+    if (m.buildingHeights && input.key.startsWith("tile/"))
+      for (const r of tileRecords(input.bytes))
+        if (r.class === 2) {
+          const h = r.height;
+          buildingHeights[
+            h && (h.source & 3) === 1
+              ? "tagged"
+              : h && (h.source & 3) === 2
+                ? "estimated"
+                : "missing"
+          ]++;
+          buildingHeights.maxMeters = Math.max(
+            buildingHeights.maxMeters,
+            h?.height ?? 0,
+            h?.minHeight ?? 0,
+          );
+        }
     const compressed = new Uint8Array(
       await new Response(
         new Blob([input.bytes as Uint8Array<ArrayBuffer>])
@@ -192,9 +217,30 @@ export async function extract(
   const encode = (value: unknown) =>
     new TextEncoder().encode(JSON.stringify(value));
   const capabilities = ["vector-rendering"];
+  if (
+    m.capabilities.includes("building-heights") &&
+    buildingHeights.tagged +
+      buildingHeights.estimated +
+      buildingHeights.missing >
+      0
+  )
+    capabilities.push("building-heights");
   if (m.capabilities.includes("map-labels")) {
     progress("Packing street names and points of interest…");
     for (const b of selection.labelBlocks) {
+      if (b.key === PLACE_LABEL_KEY) {
+        const places = decodePlaces(await reader.block(b.key)).filter((p) =>
+          inside(p.coordinates, s.polygon),
+        );
+        if (places.length)
+          await add({
+            key: b.key,
+            features: places.length,
+            bytes: encodePlaces(places),
+          });
+        reader.cache.delete(b.key);
+        continue;
+      }
       const source = decodeLabels(await reader.block(b.key));
       const clipped: LabelBlock = {
         schema: "labels-v1",
@@ -331,7 +377,11 @@ export async function extract(
     tileLayers: s.layers ?? m.tileLayers,
     featureCountKind: "tile-records",
     peaks: peaks.length,
-    places: m.places.filter((p) => inside(p.coordinates, s.polygon)),
+    ...(m.buildingHeights ? { buildingHeights } : {}),
+    places:
+      s.placeNames === false
+        ? []
+        : m.places.filter((p) => inside(p.coordinates, s.polygon)),
     routing,
     capabilities,
     selection: {

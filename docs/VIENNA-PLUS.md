@@ -1,27 +1,31 @@
 # Vienna Plus: regional 0–16 package
 
-The prepared package is **619,639,337 bytes (619.6 MB / 590.9 MiB)**, below the **2,000,000,000-byte** output ceiling. It contains stored, nonempty vector tiles at **every zoom from 0 to 16**. Zooms 17–20 overzoom the z16 geometry. Low zooms use the existing layer visibility and geometry simplification rules; “0–16” does not mean all OSM tags or relation types are implemented.
+The prepared package is **640,136,825 bytes (640.1 MB / 610.5 MiB)**, below the **2,000,000,000-byte** output ceiling. It contains stored, nonempty vector tiles at **every zoom from 0 to 16**. Zooms 17–20 overzoom the z16 geometry. Low zooms use the existing layer visibility and geometry simplification rules; “0–16” does not mean all OSM tags or relation types are implemented.
 
 | Content                                       |                                    Count |
 | --------------------------------------------- | ---------------------------------------: |
-| Retained display features                     |                                2,207,067 |
-| Spatial tile addresses                        |                                  118,490 |
+| Retained display features                     |                                2,207,068 |
+| Spatial tile addresses                        |                                  118,491 |
 | Walking graph nodes                           |                                3,308,492 |
 | Walking segments                              |                                3,547,639 |
 | Location search records                       |                                  178,580 |
 | Reverse-lookup street ways                    |                                  406,630 |
 | Peaks                                         |                                    2,880 |
 | Street/POI label blocks                       | 2,053 (separate purposes and zoom tiers) |
-| Display layer directory pages                 |                                      916 |
-| Display layer blocks                          |                                  343,103 |
+| Display layer directory pages                 |                                      920 |
+| Display layer blocks                          |                                  344,461 |
 | Source-geometry blocks                        |                                    1,889 |
 | Source-geometry directory pages               |                                       10 |
-| Assembled area relations                      |                                   15,042 |
-| Skipped incomplete/unsupported area relations |                                      131 |
+| Assembled area relations                      |                                   15,043 |
+| Skipped incomplete/unsupported area relations |                                      130 |
 
-Every one of the 347,049 stored data blocks and 926 directory pages passed SHA-256 verification. All tile payloads passed structural checks; the largest contains 73,582 features and 471,663 points. The full audit is repeatable with `scripts/verify-package.ts`.
+Every one of the 348,408 stored data blocks and 930 directory pages passed SHA-256 verification. All tile payloads passed structural checks; the largest contains 73,582 features and 471,663 points. The full audit is repeatable with `scripts/verify-package.ts`.
 
-Stored tiles by zoom: `0:1, 1:1, 2:1, 3:1, 4:1, 5:1, 6:2, 7:2, 8:4, 9:12, 10:37, 11:116, 12:426, 13:1540, 14:5915, 15:22660, 16:87770`.
+Stored tiles by zoom: `0:1, 1:1, 2:1, 3:1, 4:1, 5:1, 6:2, 7:2, 8:4, 9:12, 10:37, 11:116, 12:426, 13:1541, 14:5915, 15:22660, 16:87770`.
+
+The current snapshot is `0f31c9e32fe2eca27f19d20476b216f27f1167c014c5593b592be9c79684b17f`. It fixes Danube relation 2742635, adds buildings at z13 and TIL2 height attributes. Across 1,290,229 building/part features, **10,198** have tagged heights, **117,096** use floor-based estimates and **1,162,935** use the renderer fallback. These are OSM objects, not unique physical buildings. The highest retained tag is 970 m; values are community data and may contain outliers.
+
+**1,160 settlement names** now live in the independently requested `labels/places` block: 20,682 stored bytes (76,721 decoded). The initial header and root metadata total **630,250 bytes**. Turning off city/village names before loading fetches zero place-label bytes. Old inline-name packages remain readable but cannot undo their manifest transfer.
 
 ## Sources and coverage
 
@@ -87,7 +91,7 @@ Before layer separation, a visible Chromium test at 1440×1000, default Vienna c
 | Initial z11 view                | 30.03 MB |  1.75 MB |
 | Cumulative through z17          | 53.88 MB |  7.49 MB |
 
-These totals exclude the app shell/WASM and vary with viewport, center and enabled layers. Routing, search and queries were not requested and transferred zero payload bytes. The inspector now separates bytes by purpose. This table describes the earlier combined-tile revision. The current layer-selective measurements are below.
+These totals exclude the app shell/WASM and vary with viewport, center and enabled layers. Routing, search and queries were not requested and transferred zero payload bytes. The inspector now separates bytes by purpose. This table describes the earlier combined-tile revision. Measurements from the preceding layer-selective revision are below.
 
 The reductions come from directory paging, half-pixel display simplification at normal zooms, zoom-dependent feature classes, and separate label purposes/visibility tiers. Z0–5 keeps an overview-specific simplification profile so the small regional footprint survives at world scale. Z16 retains unsimplified supported geometry. Native routing and geocoding precision is independent of display simplification.
 
@@ -106,7 +110,7 @@ These measurements are viewport/selection-specific, not performance guarantees. 
 
 ## Selective display layers
 
-The current snapshot is `59d63b3503c9962dec7e9ee285a64ee35300604114ad98d75096387237197ef0`. The conversion preserved all **118,490 spatial addresses**, all per-tile feature counts and zooms **0–16**, and every non-map payload hash. Source coordinates, polygon rings and holes are copied byte-for-byte. It produces **343,103 display layer blocks**, with 916 display pages and 10 source-geometry pages. The root metadata is **705,596 bytes**.
+The earlier layer-conversion snapshot was `59d63b3503c9962dec7e9ee285a64ee35300604114ad98d75096387237197ef0`. The conversion preserved all **118,490 spatial addresses**, all per-tile feature counts and zooms **0–16**, and every non-map payload hash. Source coordinates, polygon rings and holes are copied byte-for-byte. It produces **343,103 display layer blocks**, with 916 display pages and 10 source-geometry pages. The root metadata is **705,596 bytes**.
 
 | Display layer |  Blocks | Stored payload bytes |
 | ------------- | ------: | -------------------: |
@@ -121,7 +125,7 @@ The whole package grows by about **19.3 MB** over combined tiles because indepen
 
 A visible Chromium test configured buildings + water through the checkboxes, reloaded to verify settings apply before any tile request, and zoomed z11–17 without panning at 1600×1000. All 183 HTTP range requests were mapped back to the package directory: only header/root metadata and buildings/water directory pages/payloads were requested. Total **2.64 MB**; buildings **1.50 MB**, water **105.8 KB**, all other geometry/labels/semantic payloads **zero**. Re-enabling cached water generated zero new range requests. Enabling roads generated ten requests, all for road pages/payloads.
 
-A server-built offline file for a small central-Vienna polygon contained only buildings/water tile blocks, with no labels or semantic blocks: **232,350 bytes**, 20 blocks, declared zoom range 0–16. File size varies with selection. Opening it locally, changing layers and disabling all geometry were verified. A layer absent at a particular zoom is empty; buildings begin at z14.
+A server-built offline file for a small central-Vienna polygon contained only buildings/water tile blocks, with no labels or semantic blocks: **232,350 bytes**, 20 blocks, declared zoom range 0–16. File size varies with selection. Opening it locally, changing layers and disabling all geometry were verified. A layer absent at a particular zoom is empty; buildings began at z14 in that revision and now begin at z13.
 
 The old combined package is retained locally as `data/vienna-plus.combined.atlas`. To convert another existing package:
 
@@ -131,3 +135,9 @@ bun scripts/verify-package.ts data/region.layered.atlas data/region.atlas
 ```
 
 The second audit argument compares original spatial tile counts and non-map hashes. New OSM generation already emits separate layers, so no extra migration step is needed after rebuilding.
+
+## Prototype 008 verification
+
+All 348,408 payloads and 930 directory pages passed integrity and structure checks. Eight direct tile checks (four Danube points, each at z13 and z16) confirm filled water. The central-Vienna z13 building tile has 8,016 footprints, including 2,129 tagged heights and 4,927 floor estimates. This is a tile sample, not a regional coverage percentage. The previous file is retained locally as `data/vienna-plus.pre-heights.atlas`.
+
+Visible Chromium checks verified: cold settlement-name bytes remain zero when disabled; enabling them reads 20.7 KB; footprints draw at z13; right-drag, Command-drag and Command-wheel change pitch/bearing; Top-down and R reset the view; scene preferences persist; tilted picking matches an independent inverse projection; offline polygons finish; no horizontal overflow at 390 px. A second styling check recorded zero additional map requests and zero `bufferData` uploads for paint/shading edits. Browser wheel deltas may be scaled by the platform; a real physical trackpad was not operated by this automation.

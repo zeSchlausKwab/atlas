@@ -1,4 +1,6 @@
-import { tileLayer, layerForClass } from "../packages/format/src/index";
+import { decodePlaces } from "../packages/labels/src/places";
+import { tileRecords } from "../packages/format/src/tiles";
+import { tileLayer } from "../packages/format/src/index";
 import { decodeFeatures } from "../packages/features/src/index";
 import { decodeLabels } from "../packages/labels/src/index";
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
@@ -20,40 +22,22 @@ for (const b of await reader.allBlocks()) {
     addresses.set(address, (addresses.get(address) ?? 0) + b.features);
     layerCounts[layer] = (layerCounts[layer] ?? 0) + 1;
     layerBytes[layer] = (layerBytes[layer] ?? 0) + b.length;
-    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (new TextDecoder().decode(bytes.subarray(0, 4)) !== "TIL1")
-      throw new Error(`Invalid tile magic ${b.key}`);
-    const count = v.getUint32(4, true);
-    if (count !== b.features || count > 500000)
-      throw new Error(`Invalid tile count ${b.key}`);
-    let o = 8,
+    let count = 0,
       points = 0;
-    for (let f = 0; f < count; f++) {
-      const cls = v.getUint8(o),
-        kind = v.getUint8(o + 1),
-        parts = v.getUint16(o + 2, true);
-      o += 4;
-      if (
-        (layer !== "combined" && layerForClass(cls) !== layer) ||
-        cls > 7 ||
-        kind < 1 ||
-        kind > 3
-      )
-        throw new Error("Bad feature");
-      for (let p = 0; p < parts; p++) {
-        const n = v.getUint32(o, true);
-        points += n;
-        o += 4 + n * 4;
-      }
+    for (const record of tileRecords(bytes)) {
+      count++;
+      points += record.pointCount;
+      if (layer !== "combined" && record.layer !== layer)
+        throw new Error(`Mixed tile layer ${b.key}`);
     }
-    if (o !== bytes.length || points > 3000000)
-      throw new Error(`Invalid tile length/points ${b.key}`);
+    if (count !== b.features) throw new Error(`Invalid tile count ${b.key}`);
     maxFeatures = Math.max(maxFeatures, count);
     maxPoints = Math.max(maxPoints, points);
   }
   if (b.key.startsWith("features/") && b.key !== "features/geojson")
     decodeFeatures(bytes);
-  if (b.key.startsWith("labels/")) decodeLabels(bytes);
+  if (b.key === "labels/places") decodePlaces(bytes);
+  else if (b.key.startsWith("labels/")) decodeLabels(bytes);
   reader.cache.delete(b.key);
   if (++checked % 20000 === 0) console.log(`${checked} blocks verified…`);
 }

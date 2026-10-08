@@ -1806,3 +1806,50 @@ button:disabled {
 .tool-tabs {
   overflow-x: auto;
 }
+
+/* Camera gestures live on the map; reset remains within reach in every tab. */
+.reset-view {
+  position: absolute;
+  right: 22px;
+  top: 202px;
+  z-index: 4;
+  border: 1px solid var(--line, #d9dbcf);
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: #f8f7f0ee;
+  color: #294336;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px #263d2920;
+}
+.reset-view:hover {
+  background: #fff;
+}
+.reset-view:focus-visible {
+  outline: 3px solid #548876;
+  outline-offset: 3px;
+}
+.scene-gestures {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.scene-gestures strong {
+  color: var(--ink);
+}
+.scene-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 20px;
+}
+.scene-toggle input {
+  accent-color: #365e4b;
+}
+@media (max-width: 760px) {
+  .reset-view {
+    right: 16px;
+    top: 184px;
+  }
+}

@@ -1,16 +1,20 @@
 # Styling and the third dimension
 
-Implemented in prototype 007. The map data and `.atlas` snapshot are unchanged.
+Styling was introduced in prototype 007. Prototype 008 adds per-building height attributes, direct camera gestures and optional settlement labels; regenerate packages to get the new data.
 
 ## Try it
 
 Open **Style**. Choose **Paper**, **Midnight** or **Blueprint**, change individual colors, adjust road/path/rail/waterway weight and label size. Export the result as a small `.style.json` and import it again. Appearance and scene settings persist in this browser and survive switching packages. Import validates the entire document before changing the map; unsupported versions, unknown fields, unsafe color strings and out-of-range values are rejected. The demo limits imported styles to 16 KB.
 
-**Inspect in 3D** keeps the current center, zooms to at least z17, sets tilt to 52°, bearing to −25°, and raises footprints to an illustrative 18 m. Tilt, bearing, height and face shading are independent dials. **Back to 2D** restores a flat north-up camera. The Buildings layer still needs to be enabled in Data and present in the package at the current zoom.
+**Inspect in 3D** keeps the center, zooms to at least z17, and sets tilt to 52° / bearing to −25°. Right-drag (or Command/Ctrl + left-drag) changes bearing horizontally and tilt vertically. On a Mac trackpad, Command + two-finger scroll/drag uses horizontal and vertical wheel deltas for the same controls; ordinary wheel/pinch zoom remains available. Command/Ctrl/Shift + arrow keys provide a keyboard equivalent. Pitch is bounded to 0–65°. **Top-down**, always visible on the map, or **R** while the map is focused resets to north-up, flat 2D without moving the center or changing zoom. **Back to 2D** is the equivalent sidebar action. The compass and saved scene follow gestures.
 
-The ordinary display footprints supply roof triangles and courtyard/outer wall triangles. The GPU depth-tests buildings, colors faces with directional shading and projects the scene orthographically. This is actual geometry with height and occlusion between buildings, not a CSS transform. Flat views draw only roof triangles. No extra dataset or format migration is needed.
+Buildings start at **z13** in newly generated files. Roofs use OSM `height` where valid. Otherwise `building:levels × 3 m` plus `roof:height` (or `roof:levels × 3 m`) estimates the top. `min_height`, otherwise `building:min_level × 3 m`, raises the base. Missing heights stay unknown in the file and use the scene's **Height when unknown** (default 12 m above the base). **Height scale** defaults to 1×; it scales both bases and tops. **Extrude buildings** and face shading are separate controls. No external height source is downloaded.
 
-**Heights are illustrative, not OSM measurements.** All buildings have the same selected height, with a visible disclosure on the map. Display tiles currently contain class and geometry but no per-feature height or identity. Tile-cut boundaries can produce artificial walls; overlapping building parts are not resolved into a solid model. There is no terrain, perspective, roof-shape modeling, cast shadows, transparency ordering, 3D feature picking, or native/WebGPU backend. Labels, routes and selectable extracted shapes remain Canvas2D annotations drawn above the scene; they follow the ground projection and do not occlude behind buildings. Coordinate picking intersects the ground, not a roof.
+The ordinary display footprints supply roof triangles and courtyard/outer wall triangles. The GPU depth-tests buildings, shades faces and projects orthographically. Flat views draw roof footprints at ground level. TIL2 stores height, base and provenance in nine additional bytes per building before compression; old TIL1 packages remain readable with fallback heights. Paint and fallback edits use uniforms without rebuilding meshes. Increasing extrusion can expose more tiles.
+
+Tagged OSM heights are community data, not a claim of surveyed accuracy; floor-based and unknown-height estimates are identified in the sidebar. Source semantics: [height](https://wiki.openstreetmap.org/wiki/Key:height), [building levels](https://wiki.openstreetmap.org/wiki/Key:building:levels), and [minimum building level](https://wiki.openstreetmap.org/wiki/Key:building:min_level). We accept meters, `ft`/`feet`, and feet/inches, reject ambiguous lists/negative/non-finite/over-2,000 m values, and discard a base at or above a known top.
+
+Tile-cut boundaries can produce artificial walls; overlapping building parts are not resolved into a solid model. There is no terrain, perspective, roof-shape modeling, cast shadows, transparency ordering, 3D feature picking, or native/WebGPU backend. Labels, routes and selectable extracted shapes remain Canvas2D annotations above the scene. Coordinate picking intersects the ground, not a roof.
 
 ## The styling contract
 
@@ -20,7 +24,7 @@ Keep three independent descriptions:
 | ----------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
 | Data subscription | What may this consumer fetch?                   | `setLayers(["buildings", "water"])`, reader purposes, label choices |
 | Paint             | How should available data look?                 | `setStyle(style)`                                                   |
-| Camera / scene    | From where and with what illustrative geometry? | `setScene(scene)` plus center/zoom                                  |
+| Camera / scene    | From where and at what height scale? | `setScene(scene)` plus center/zoom                                  |
 
 **JSON remains a good exchange format.** [MapLibre's specification](https://maplibre.org/maplibre-style-spec/) is an existing example of declarative map styling. The improvement belongs in the model and execution, not in replacing JSON syntax. A small validated semantic document is easy to save, diff, share through Nostr or content-address, and compile on web/native/server. We do not need to clone a large vendor style specification or let style files execute arbitrary JavaScript or trigger arbitrary data requests.
 
@@ -35,12 +39,15 @@ style.colors.buildings = "#527e95";
 style.widths.roads = 1.8;
 const map = await AtlasMap.create(canvas, reader, onStats, onError, {
   layers: ["buildings", "water"],
+  placeNames: false,
   streetNames: false,
   pois: false,
   style,
 });
 map.setStyle(style); // Paint only: no tile re-fetch or mesh upload.
-map.setScene({ pitch: 52, bearing: -25, buildingHeight: 18, shading: 0.8 });
+map.setScene({ pitch: 52, bearing: -25, extrude: true, fallbackHeight: 12, heightScale: 1, shading: 0.8 });
+map.onSceneChange = (scene) => saveCameraPreference(scene);
+map.resetView(); // Top-down and north-up; keep center and zoom.
 // Moving/tilting the camera can expose additional tiles; height also expands roof coverage.
 ```
 
@@ -56,11 +63,11 @@ This is a direction, not implemented functionality:
 4. **Separate immutable data identity from style identity.** The same data hashes support multiple styles. Share a style digest and a scene/camera separately from the `.atlas` snapshot; a future manifest can recommend a default style without baking it into geometry. Exporting an offline map need not duplicate its geometry for every theme.
 5. **Use one scene for basemaps and visualization.** A layer interface should take typed geometry/attribute buffers, bounds, a picking identity and explicit dependency declarations. Polygons, elevated paths, points, columns and GPU aggregation can share the camera, depth buffer and tile/cache scheduler. Input may be `.atlas`, GeoJSON or analytical result buffers. This is the useful direction from [deck.gl's composable layer model](https://deck.gl/docs/developer-guide/using-layers); compatibility with its API is not required. Its [PolygonLayer](https://deck.gl/docs/api-reference/layers/polygon-layer) is a useful reference for extruded geometry, not evidence of feature/performance parity in this prototype.
 
-Next worthwhile demos: preserve `height`, `min_height` and `building:levels` in optional display columns and extrude measured/fallback heights distinctly; draw population or POI-count columns; elevate a route by real terrain data; add GPU picking with stable feature IDs. Terrain and imagery are independent subscribed sources, not inferred from OSM footprints.
+Next worthwhile demos: shade buildings by height provenance; make height attributes a separately subscribable column; draw population or POI-count columns; elevate a route by real terrain data; add GPU picking with stable feature IDs. Terrain and imagery are independent subscribed sources, not inferred from OSM footprints.
 
 ## Implementation and verification
 
-- Rust geometry buffers now store position, stroke offset, normalized height and face normal. Paint moved out of the meshes into GPU uniforms. Building walls are prepared once per loaded tile and skipped in flat rendering.
+- Rust geometry buffers now store position, stroke offset, height in meters (or an unknown-height sentinel) and face normal. Paint moved out of the meshes into GPU uniforms. Building walls are prepared once per loaded tile and skipped in flat rendering.
 - A shared TypeScript orthographic transform mirrors the vertex shader. Panning, cursor-anchored zooming, bounds/fit, grid, labels, feature overlays, route annotations and offline polygon input use it. Visible ground bounds include elevated roofs whose bases are just outside the viewport.
 - Native tests verify roof area and courtyard exclusion plus walls on both boundaries. Camera tests cover projection/inverse picking, tilted bounds, rotation, fitting and zoom anchoring. Style tests cover validation and mutable-state isolation.
 - A visible Chromium check measures map HTTP ranges and WebGL `bufferData` calls around palette, line-weight, label-size and shading edits. Both remain unchanged while rendered pixels change. It also checks JSON round-trip/rejection, persisted appearance, tilted coordinate picking against an independent calculation, polygon finishing, mobile overflow and tab keyboard navigation.

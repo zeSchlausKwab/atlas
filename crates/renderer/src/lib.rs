@@ -19,6 +19,8 @@ const COLORS: [[f32; 3]; 8] = [
 struct Feature {
     class: usize,
     kind: u8,
+    height: f32,
+    min_height: f32,
     rings: Vec<Vec<[f32; 2]>>,
 }
 struct Cursor<'a> {
@@ -38,15 +40,20 @@ impl<'a> Cursor<'a> {
     fn u16(&mut self) -> Result<u16, String> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
     }
+    fn f32(&mut self) -> Result<f32, String> {
+        Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
     fn u32(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 }
 fn decode(bytes: &[u8]) -> Result<Vec<Feature>, String> {
     let mut c = Cursor { bytes, pos: 0 };
-    if c.take(4)? != b"TIL1" {
+    let magic = c.take(4)?;
+    if magic != b"TIL1" && magic != b"TIL2" {
         return Err("Invalid tile magic".into());
     }
+    let with_heights = magic == b"TIL2";
     let count = c.u32()? as usize;
     if count > 500_000 {
         return Err("Tile feature limit exceeded".into());
@@ -60,6 +67,25 @@ fn decode(bytes: &[u8]) -> Result<Vec<Feature>, String> {
             return Err("Invalid tile feature type".into());
         }
         let parts = c.u16()?;
+        let (height, min_height) = if with_heights && class == 2 {
+            let height = c.f32()?;
+            let min = c.f32()?;
+            let source = c.u8()?;
+            if !height.is_finite()
+                || !min.is_finite()
+                || !(height == -1. || height > 0. && height <= 2000.)
+                || !(0. ..=2000.).contains(&min)
+                || height >= 0. && min >= height
+                || source > 10
+                || source & 3 > 2
+                || (source & 3 == 0) != (height == -1.)
+            {
+                return Err("Invalid building height".into());
+            }
+            (height, min)
+        } else {
+            (-1., 0.)
+        };
         let mut rings = Vec::new();
         for _ in 0..parts {
             let count = c.u32()? as usize;
@@ -73,25 +99,23 @@ fn decode(bytes: &[u8]) -> Result<Vec<Feature>, String> {
             }
             rings.push(ring);
         }
-        features.push(Feature { class, kind, rings });
+        features.push(Feature {
+            class,
+            kind,
+            rings,
+            height,
+            min_height,
+        });
     }
     if c.pos != bytes.len() {
         return Err("Trailing tile data".into());
     }
     Ok(features)
 }
-fn vertex(out: &mut Vec<f32>, p: [f32; 2], offset: [f32; 2], class: usize) {
-    out.extend_from_slice(&[
-        p[0],
-        p[1],
-        offset[0],
-        offset[1],
-        if class == 2 { 1. } else { 0. },
-        0.,
-        0.,
-    ]);
+fn vertex(out: &mut Vec<f32>, p: [f32; 2], offset: [f32; 2], height: f32) {
+    out.extend_from_slice(&[p[0], p[1], offset[0], offset[1], height, 0., 0.]);
 }
-fn polygon(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>], class: usize) -> Result<(), String> {
+fn polygon(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>], height: f32) -> Result<(), String> {
     let mut points = Vec::<f64>::new();
     let mut holes = Vec::new();
     for (i, ring) in rings.iter().enumerate() {
@@ -112,7 +136,7 @@ fn polygon(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>], class: usize) -> Result<
             out,
             [points[i * 2] as f32, points[i * 2 + 1] as f32],
             [0., 0.],
-            class,
+            height,
         );
     }
     Ok(())
@@ -122,7 +146,7 @@ fn area(ring: &[[f32; 2]]) -> f64 {
         .map(|p| p[0][0] as f64 * p[1][1] as f64 - p[1][0] as f64 * p[0][1] as f64)
         .sum()
 }
-fn walls(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>]) {
+fn walls(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>], base: f32, top: f32) {
     let sign = rings.first().map(|r| area(r).signum() as f32).unwrap_or(1.);
     for ring in rings {
         for segment in ring.windows(2) {
@@ -135,10 +159,26 @@ fn walls(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>]) {
                 continue;
             }
             let normal = [dy / length * sign, -dx / length * sign];
-            for (p, z) in [(a, 0.), (b, 0.), (a, 1.), (a, 1.), (b, 0.), (b, 1.)] {
+            for (p, z) in [
+                (a, base),
+                (b, base),
+                (a, top),
+                (a, top),
+                (b, base),
+                (b, top),
+            ] {
                 out.extend_from_slice(&[p[0], p[1], 0., 0., z, normal[0], normal[1]]);
             }
         }
+    }
+}
+fn roof_height(f: &Feature) -> f32 {
+    if f.class != 2 {
+        0.
+    } else if f.height < 0. {
+        -f.min_height - 1.
+    } else {
+        f.height
     }
 }
 fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
@@ -156,12 +196,12 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
                 if group.is_empty() {
                     outer_sign = sign;
                 } else if sign == outer_sign {
-                    polygon(out, &group, f.class)?;
+                    polygon(out, &group, roof_height(f))?;
                     group.clear();
                 }
                 group.push(ring.clone());
             }
-            polygon(out, &group, f.class)?;
+            polygon(out, &group, roof_height(f))?;
         } else if f.kind == 2 {
             let width = match f.class {
                 1 => 1.3,
@@ -184,7 +224,7 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
                     let n = [-dy / length * width / 2., dx / length * width / 2.];
                     let m = [-n[0], -n[1]];
                     for (p, o) in [(a, n), (a, m), (b, n), (b, n), (a, m), (b, m)] {
-                        vertex(out, p, o, f.class);
+                        vertex(out, p, o, 0.);
                     }
                 }
             }
@@ -192,7 +232,7 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
             for ring in &f.rings {
                 for p in ring {
                     for o in [[0., -4.], [-3.5, 3.], [3.5, 3.]] {
-                        vertex(out, *p, o, f.class);
+                        vertex(out, *p, o, 0.);
                     }
                 }
             }
@@ -200,7 +240,7 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
     }
     let roof_vertices = layers[2].len() / 7;
     for f in features.iter().filter(|f| f.class == 2 && f.kind == 3) {
-        walls(&mut layers[2], &f.rings);
+        walls(&mut layers[2], &f.rings, f.min_height, roof_height(f));
     }
     Ok((layers, roof_vertices))
 }
@@ -227,6 +267,7 @@ pub struct Renderer {
     rotation: WebGlUniformLocation,
     scene: WebGlUniformLocation,
     depth: WebGlUniformLocation,
+    fallback: WebGlUniformLocation,
     colors: [[f32; 3]; 8],
     background: [f32; 3],
     widths: [f32; 8],
@@ -249,18 +290,18 @@ impl Renderer {
             precision highp float;
             layout(location=0) in vec2 a_position;
             layout(location=1) in vec2 a_offset;
-            // Height fraction + horizontal face normal; paint is never baked into vertices.
+            // Height in meters (negative = unknown roof above base) + face normal; paint is never baked into vertices.
             layout(location=2) in vec3 a_surface;
             uniform vec2 u_origin; uniform float u_scale; uniform vec2 u_view;
             uniform vec3 u_paint; uniform float u_stroke; uniform vec2 u_rotation;
-            // sin(pitch), cos(pitch), height in pixels, shading strength
-            uniform vec4 u_scene; uniform float u_depth;
+            // sin(pitch), cos(pitch), pixels per height-meter, shading strength
+            uniform vec4 u_scene; uniform float u_depth; uniform float u_fallback;
             out vec3 color;
             void main() {
               vec2 p = u_origin + a_position * u_scale + a_offset * u_stroke;
               vec2 q = vec2(u_rotation.y * p.x + u_rotation.x * p.y,
                            -u_rotation.x * p.x + u_rotation.y * p.y);
-              float z = a_surface.x * u_scene.z;
+              float z = (a_surface.x < 0.0 ? -a_surface.x - 1.0 + u_fallback : a_surface.x) * u_scene.z;
               float y = q.y * u_scene.y - z * u_scene.x;
               float depth = -(q.y * u_scene.x + z * u_scene.y) / u_depth;
               gl_Position = vec4(q.x / u_view.x * 2.0, -y / u_view.y * 2.0, depth, 1.0);
@@ -306,6 +347,7 @@ impl Renderer {
         let rotation = uniform("u_rotation")?;
         let scene = uniform("u_scene")?;
         let depth = uniform("u_depth")?;
+        let fallback = uniform("u_fallback")?;
         gl.use_program(Some(&program));
         gl.disable(Gl::DEPTH_TEST);
         Ok(Renderer {
@@ -319,6 +361,7 @@ impl Renderer {
             rotation,
             scene,
             depth,
+            fallback,
             colors: COLORS,
             background: [0.91, 0.90, 0.84],
             widths: [1.; 8],
@@ -441,7 +484,8 @@ impl Renderer {
         pixel_ratio: f64,
         pitch: f64,
         bearing: f64,
-        building_height: f64,
+        height_scale: f64,
+        fallback_height: f64,
         shading: f64,
     ) -> u32 {
         self.gl.viewport(
@@ -467,7 +511,9 @@ impl Renderer {
         let bearing = bearing.to_radians();
         let latitude = (std::f64::consts::PI * (1. - 2. * cy)).sinh().atan();
         let height_px =
-            (building_height.clamp(0., 100.) * world / (40075016.686 * latitude.cos())) as f32;
+            (height_scale.clamp(0., 3.) * world / (40075016.686 * latitude.cos())) as f32;
+        self.gl
+            .uniform1f(Some(&self.fallback), fallback_height.clamp(1., 100.) as f32);
         let extruded = height_px > 0.;
         self.gl.uniform2f(
             Some(&self.rotation),
@@ -487,7 +533,7 @@ impl Renderer {
         );
         self.gl.uniform1f(
             Some(&self.depth),
-            width.max(height) as f32 * 8. + height_px * 4.,
+            width.max(height) as f32 * 8. + height_px * 2100. * 4.,
         );
         let order = if extruded {
             [0, 1, 5, 6, 3, 4, 7, 2]
@@ -576,6 +622,36 @@ fn compile(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
 mod tests {
     use super::*;
     #[test]
+    fn heights_survive_decode_into_roofs_and_elevated_wall_bases() {
+        let mut bytes = b"TIL2".to_vec();
+        bytes.extend(1_u32.to_le_bytes());
+        bytes.extend([2, 3, 1, 0]);
+        bytes.extend(24_f32.to_le_bytes());
+        bytes.extend(6_f32.to_le_bytes());
+        bytes.push(5);
+        bytes.extend(5_u32.to_le_bytes());
+        for p in [[0_u16, 0], [65535, 0], [65535, 65535], [0, 65535], [0, 0]] {
+            bytes.extend(p[0].to_le_bytes());
+            bytes.extend(p[1].to_le_bytes());
+        }
+        let features = decode(&bytes).unwrap();
+        let (layers, roofs) = mesh(&features).unwrap();
+        assert!(layers[2][..roofs * 7].chunks_exact(7).all(|v| v[4] == 24.));
+        assert!(layers[2][roofs * 7..]
+            .chunks_exact(7)
+            .all(|v| v[4] == 6. || v[4] == 24.));
+        bytes[12..16].copy_from_slice(&(-1_f32).to_le_bytes());
+        bytes[20] = 4;
+        let unknown = decode(&bytes).unwrap();
+        assert_eq!(roof_height(&unknown[0]), -7.); // Shader adds the fallback above this 6 m base.
+        bytes[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(decode(&bytes).is_err());
+        bytes[12..16].copy_from_slice(&24_f32.to_le_bytes());
+        bytes[20] = 5;
+        bytes[16..20].copy_from_slice(&25_f32.to_le_bytes());
+        assert!(decode(&bytes).is_err());
+    }
+    #[test]
     fn rejects_truncated_and_unknown_tiles() {
         assert!(decode(b"TIL1").is_err());
         assert!(decode(b"MVT10000").is_err());
@@ -594,6 +670,8 @@ mod tests {
         let features = vec![Feature {
             class: 2,
             kind: 3,
+            height: 1.,
+            min_height: 0.,
             rings: vec![
                 vec![[0., 0.], [1., 0.], [1., 1.], [0., 1.], [0., 0.]],
                 vec![
@@ -626,6 +704,8 @@ mod tests {
         let features = vec![Feature {
             class: 0,
             kind: 3,
+            height: -1.,
+            min_height: 0.,
             rings: vec![
                 vec![[0., 0.], [1., 0.], [1., 1.], [0., 1.], [0., 0.]],
                 vec![

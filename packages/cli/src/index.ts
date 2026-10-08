@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import { PLACE_LABEL_KEY, encodePlaces } from "../../labels/src/places";
+import { encodeTile } from "./tile-codec";
+import { buildingHeight } from "../../format/src/heights";
 import { MAP_LAYERS } from "../../format/src/index";
 import { splitTile } from "../../format/src/tiles";
 import { splitPackageLayers } from "./split-layers";
@@ -91,49 +94,6 @@ function report(value: Record<string, unknown>, format: string) {
         )
         .join("\n"),
     );
-}
-function encodeTile(features: geojsonvt.Feature[]): Uint8Array {
-  const normalized = features.map((f) => ({
-    class: Number(f.tags?.class ?? 3),
-    type: f.type,
-    parts: (f.type === 1 ? [f.geometry] : f.geometry) as number[][][],
-  }));
-  const length =
-    8 +
-    normalized.reduce(
-      (n, f) => n + 4 + f.parts.reduce((n, p) => n + 4 + p.length * 4, 0),
-      0,
-    );
-  const bytes = new Uint8Array(length);
-  bytes.set(new TextEncoder().encode("TIL1"));
-  const view = new DataView(bytes.buffer);
-  view.setUint32(4, features.length, true);
-  let pos = 8;
-  for (const f of normalized) {
-    if (f.parts.length > 65535) throw new Error("Tile part limit exceeded");
-    view.setUint8(pos++, f.class);
-    view.setUint8(pos++, f.type);
-    view.setUint16(pos, f.parts.length, true);
-    pos += 2;
-    for (const part of f.parts) {
-      view.setUint32(pos, part.length, true);
-      pos += 4;
-      for (const point of part) {
-        view.setUint16(
-          pos,
-          Math.max(0, Math.min(TILE_EXTENT, Math.round(point[0]!))),
-          true,
-        );
-        view.setUint16(
-          pos + 2,
-          Math.max(0, Math.min(TILE_EXTENT, Math.round(point[1]!))),
-          true,
-        );
-        pos += 4;
-      }
-    }
-  }
-  return bytes;
 }
 async function main() {
   const { command, flags } = args(process.argv.slice(2));
@@ -254,6 +214,28 @@ async function main() {
       routing: RoutingMetadata;
       locations: Location[];
     };
+    const buildingHeights = {
+      tagged: 0,
+      estimated: 0,
+      missing: 0,
+      maxMeters: 0,
+    };
+    for (const f of imported.geojson.features)
+      if (f.properties?.class === 2) {
+        const h = buildingHeight(f.properties.tags);
+        buildingHeights[
+          (h.source & 3) === 1
+            ? "tagged"
+            : (h.source & 3) === 2
+              ? "estimated"
+              : "missing"
+        ]++;
+        buildingHeights.maxMeters = Math.max(
+          buildingHeights.maxMeters,
+          h.height,
+          h.minHeight,
+        );
+      }
     const bounds: [number, number, number, number] = [
       Infinity,
       Infinity,
@@ -342,6 +324,11 @@ async function main() {
     }
     const encoder = new TextEncoder();
     await writer.add({
+      key: PLACE_LABEL_KEY,
+      features: imported.places.length,
+      bytes: encodePlaces(imported.places),
+    });
+    await writer.add({
       key: "query/peaks",
       features: imported.peaks.length,
       bytes: encoder.encode(JSON.stringify(imported.peaks)),
@@ -417,8 +404,9 @@ async function main() {
       maxZoom,
       features: imported.geojson.features.length,
       tileLayers: [...MAP_LAYERS],
+      buildingHeights,
       peaks: imported.peaks.length,
-      places: imported.places,
+      places: [],
       routing: imported.routing,
       labelZoom: LABEL_ZOOM,
       ...(flags.features ? { featureZoom: FEATURE_ZOOM } : {}),
@@ -428,6 +416,7 @@ async function main() {
       },
       capabilities: [
         "vector-rendering",
+        "building-heights",
         ...(flags.features ? ["feature-extraction"] : []),
         "map-labels",
         "walking-routing",
@@ -438,7 +427,7 @@ async function main() {
       ],
       limitations: [
         "Experimental schema; no compatibility guarantee",
-        `${imported.assembledRelations} area relations assembled; ${imported.skippedRelations} incomplete or unsupported area relations skipped. Nested relation members are not assembled.`,
+        `${imported.assembledRelations} area relations assembled; ${imported.skippedRelations} incomplete or unsupported area relations skipped. Nested multipolygon members are expanded with composed inner/outer roles.`,
         "Walking-v1 only: shortest distance, no turn relations, terrain/difficulty, live conditions, or country-specific access defaults",
         "Routing graph covers retained ways in the source extract; no route does not prove real-world disconnection",
         "Conditional access and unsupported access values are excluded; nearest-segment snapping is limited to 150 m",

@@ -21,9 +21,9 @@ The reader supports both versions and caps root metadata at 64 MiB. CLI generati
 
 ## Manifest
 
-Contains format/version, display name, source URL and PBF SHA-256, OSM attribution, longitude/latitude bounds, min/max stored tile zoom, retained feature and peak counts, a small place-label list, capabilities, limitations, and a snapshot digest. Bounds are the envelope of retained source features, not an authoritative country polygon. Dateline-spanning sources are not specially handled.
+Contains format/version, display name, source URL and PBF SHA-256, OSM attribution, longitude/latitude bounds, min/max stored tile zoom, retained feature and peak counts, a legacy place-label list (empty in new packages), capabilities, limitations, and a snapshot digest. Bounds are the envelope of retained source features, not an authoritative country polygon. Dateline-spanning sources are not specially handled.
 
-Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`.
+Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`, `building-heights`.
 
 Routing-enabled packages also declare `routing: {profile: "walking-v1", block: "routing/walking", nodes, segments, bytes, skippedWays, snapLimitMeters: 150, scope: "retained-source-extract"}`. Routing is optional; older packages without the capability still render. Display zoom ranges do not govern routing detail.
 
@@ -53,12 +53,16 @@ The CLI spools compressed blocks to disk and writes the header/index plus payloa
 Tile identity lives in the directory. The tile stores display geometry, not a routing graph.
 
 ```
-magic:          4 bytes ASCII TIL1
+magic:          4 bytes ASCII TIL2 (legacy TIL1 also readable)
 feature_count:  u32
 repeat feature_count times:
   class:        u8
   geometry:     u8 (1 point, 2 line, 3 polygon)
   part_count:   u16
+  if TIL2 and class == 2:
+    height:      f32 (meters, -1 means unknown)
+    min_height:  f32 (meters above ground)
+    source:      u8 (top/base provenance bit pairs)
   repeat part_count times:
     point_count: u32
     repeat point_count times:
@@ -68,21 +72,25 @@ repeat feature_count times:
 
 Coordinates occupy `[0, 65535]` in tile space; x increases east, y south. Point features use one part containing their points. Line parts are independent paths. Polygon parts contain closed rings; outer rings share a winding direction, and opposite-winding holes follow their outer ring. A new outer ring starts another polygon. The decoder limits tiles to 500,000 features and 3,000,000 points and rejects trailing bytes, bad geometry classes, and truncation.
 
-Classes: 0 landscape, 1 water, 2 buildings, 3 local roads, 4 major roads, 5 paths, 6 rail, 7 peaks. The prototype style is compiled into the renderer. Buildings, service roads and paths enter at z14, residential roads at z12 and tertiary roads at z11. Major roads appear progressively by class. Normal map zooms use geojson-vt tolerance `65535 / 512`, equivalent to half a CSS pixel on a 256px tile. Overview z0–5 uses tolerance 5 and overview classes to retain the small regional footprint. At the stored maximum geojson-vt preserves unsimplified geometry. Tile buffer is zero. The WASM renderer decodes, tessellates polygons, expands line segments into screen-width triangle strips, creates peak triangles, and submits WebGL2 draw calls. Line joins are independent segment quads; sophisticated joins, labels, and styling remain separate work.
+Height `source` bits 0–1 describe the top (0 unknown, 1 explicit height, 2 floor estimate); bits 2–3 describe the base (0 ground, 1 explicit min_height, 2 minimum-level estimate). Unknown roofs use the client fallback **above** the base; known roofs are absolute heights above local ground. Readers reject non-finite/out-of-range heights, inconsistent provenance, and bases at/above a known top. TIL1 has no attributes and uses fallback heights. TIL2 retains identical geometry encoding. New readers accept both; old TIL1-only readers cannot render TIL2. The outer container wire version is unchanged.
+
+The optional manifest `buildingHeights: {tagged, estimated, missing, maxMeters}` reports source-building counts and the maximum of retained top/base heights. Offline exports count repeated tile records instead, consistent with `featureCountKind: "tile-records"`. `building-heights` announces the attributes. Height fields follow OSM tags, with 3 m/floor estimates; no terrain elevation is implied.
+
+Classes: 0 landscape, 1 water, 2 buildings, 3 local roads, 4 major roads, 5 paths, 6 rail, 7 peaks. Client style paint is passed as GPU uniforms. Buildings enter at z13, service roads and paths at z14, residential roads at z12 and tertiary roads at z11. Major roads appear progressively by class. Normal map zooms use geojson-vt tolerance `65535 / 512`, equivalent to half a CSS pixel on a 256px tile. Overview z0–5 uses tolerance 5 and overview classes to retain the small regional footprint. At the stored maximum geojson-vt preserves unsimplified geometry. Tile buffer is zero. The WASM renderer decodes, tessellates polygons, expands line segments into screen-width triangle strips, creates peak triangles, and submits WebGL2 draw calls. Line joins are independent segment quads; sophisticated joins, labels, and styling remain separate work.
 
 The camera can zoom to 20 independently of the stored maximum. Beyond that maximum, it uses the stored highest-zoom tile geometry with larger transforms (overzoom). No additional higher-resolution source geometry is implied. Vienna Plus stores through z16 and overzooms only z17–20.
 
 ## Independent display layers
 
-The optional manifest field `tileLayers` declares a subset of `land`, `water`, `buildings`, `roads`, `railways`, `peaks`. New generator output includes all six. Their class masks are 1, 2, 4, 56, 64 and 128 respectively. A tile payload contains only one group and uses key `tile/<layer>/z/x/y`, while retaining its numeric `z/x/y` fields and unchanged TIL1 geometry encoding. Empty layer tiles are not stored.
+The optional manifest field `tileLayers` declares a subset of `land`, `water`, `buildings`, `roads`, `railways`, `peaks`. New generator output includes all six. Their class masks are 1, 2, 4, 56, 64 and 128 respectively. A tile payload contains only one group and uses key `tile/<layer>/z/x/y`, while retaining its numeric `z/x/y` fields and TIL1 or TIL2 encoding. Empty layer tiles are not stored.
 
 Each layer has its own directory pages: `prefix: "tile/<layer>"`, key `index/tile/<layer>/z/pageX/pageY`. Requesting only buildings and water loads only those page families and payloads. Without `tileLayers`, legacy `tile/z/x/y` and `index/tiles/z/pageX/pageY` remain readable and require combined geometry reads. The empty requested layer list loads no geometry; labels remain independent.
 
-`AtlasMap.create(..., {layers: ["buildings", "water"], streetNames: false, pois: false})` applies the selection before the first render. `map.setLayers([...])` changes it during use; numeric class masks remain supported. The WASM renderer stores geometry under its complete block key so layers at the same tile address coexist without overwriting one another. Missing geometry classes do not allocate GPU buffers.
+`AtlasMap.create(..., {layers: ["buildings", "water"], placeNames: false, streetNames: false, pois: false})` applies the selection before the first render. `map.setLayers([...])` changes it during use; numeric class masks remain supported. The WASM renderer stores geometry under its complete block key so layers at the same tile address coexist without overwriting one another. Missing geometry classes do not allocate GPU buffers.
 
 The CLI `split-layers` command copies individual binary feature records without changing coordinates, parts, winding, holes or feature counts. Non-map stored payloads retain their hashes. It writes a new index/snapshot and publishes only after the file-size budget passes. Layer separation increases directory entries, compression overhead and all-layer request counts; it enables smaller targeted transfers.
 
-Offline `Selection` accepts `layers`, `streetNames` and `pois`. Planning reads selected spatial directory pages, exports only matching payloads and filters labels independently. Defaults preserve the previous all-layer export API. A legacy combined source must still be read before it can be split during export. A child can retain the parent zoom range even when its selected layer has no objects at a lower zoom.
+Offline `Selection` accepts `layers`, `placeNames`, `streetNames` and `pois`. Planning reads selected spatial directory pages, exports only matching payloads and filters labels independently. Defaults preserve the previous all-layer export API. A legacy combined source must still be read before it can be split during export. A child can retain the parent zoom range even when its selected layer has no objects at a lower zoom.
 
 ## Query blocks
 
@@ -160,3 +168,7 @@ Each feature is a GeoJSON Feature with original `way/<id>` or `relation/<id>` id
 `AtlasFeatures.query({kind, bounds, limit, tag})` returns a FeatureCollection with snapshot, attribution, total matched count and a truncation flag. Bounds are `[west,south,east,north]`, maximum 0.25° per axis; limits are 1–500 objects. `tag` is one optional exact `key=value` predicate. Returned shapes are complete source objects, not clipped tile fragments. Selecting only a portion of a line does not split it. `asPolylines()` converts polygon boundaries and inner rings into MultiLineString geometry and leaves existing lines intact.
 
 Feature extraction is independent of display zoom and visibility toggles. In device mode it reads just the intersecting category cells; in server mode it returns matching objects without sending source cells. Offline child packages currently omit this index. See [shared operations API](SERVER-AND-EXTRACTION.md).
+
+## Optional settlement names
+
+New files store `labels/places` as a separate compressed, hashed root block with `{schema: "places-v1", places: [{name, coordinates: [lon, lat]}]}` and an empty `manifest.places`. It is fetched only when `placeNames` is enabled. This small regional block is not spatially partitioned yet. Legacy inline names remain readable and can be hidden but have already arrived with the root. Street names, POIs and search remain independent. Offline exports omit the block when disabled, or retain only names inside the selection polygon.

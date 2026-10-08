@@ -45,6 +45,7 @@ function saveLayers() {
       LAYER_SETTINGS,
       JSON.stringify({
         layers: selectedLayers(),
+        placeNames: el<HTMLInputElement>("place-labels").checked,
         streetNames: el<HTMLInputElement>("street-labels").checked,
         pois: el<HTMLInputElement>("poi-labels").checked,
       }),
@@ -68,6 +69,7 @@ try {
       "[data-mask]",
     ))
       input.checked = (mask & Number(input.dataset.mask)) !== 0;
+    el<HTMLInputElement>("place-labels").checked = saved.placeNames !== false;
     el<HTMLInputElement>("street-labels").checked = saved.streetNames;
     el<HTMLInputElement>("poi-labels").checked = saved.pois;
   }
@@ -102,6 +104,7 @@ function telemetry(event?: ReadEvent) {
   for (const purpose of [
     "directory",
     "map",
+    "placeNames",
     "streetNames",
     "pois",
     "routing",
@@ -148,7 +151,7 @@ function stats(s: MapStats) {
   el<HTMLButtonElement>("zoom-out").disabled =
     s.zoom <= Math.max(0, reader.index.manifest.minZoom - 1);
   el("labels-stat").textContent =
-    `${s.labels.roads} streets · ${s.labels.pois} POIs`;
+    `${s.labels.places ?? 0} places · ${s.labels.roads} streets · ${s.labels.pois} POIs`;
   el("labels-stat").title = s.labels.missing
     ? `${s.labels.missing} nearby label blocks missing${s.labels.loading ? " (loading)" : ""}`
     : "Nearby labels ready";
@@ -235,10 +238,22 @@ async function open(source: ByteSource) {
         style: appearance.style,
         scene: appearance.scene,
         layers: selectedLayers(),
+        placeNames: el<HTMLInputElement>("place-labels").checked,
         streetNames: el<HTMLInputElement>("street-labels").checked,
         pois: el<HTMLInputElement>("poi-labels").checked,
       },
     );
+    map.onSceneChange = (scene) => appearance.receiveScene(scene);
+    const heights = m.buildingHeights;
+    el("height-coverage").textContent = heights
+      ? `${number(heights.tagged)} tagged heights · ${number(heights.estimated)} estimated from floors · ${number(heights.missing)} use fallback.${m.featureCountKind === "tile-records" ? " Counts are tile records." : ""}`
+      : "This package has no height attributes. Buildings use the fallback height.";
+    el("scene-badge").textContent = heights
+      ? "3D · OSM heights + estimates"
+      : "3D · fallback heights";
+    el<HTMLInputElement>("place-labels").disabled =
+      !m.places.length &&
+      !reader.index.blocks.some((b) => b.key === "labels/places");
     map.onPickModeChange = (hint) => {
       el("pick-banner").hidden = hint === null;
       el("pick-banner").textContent = hint ?? "";
@@ -276,6 +291,7 @@ async function open(source: ByteSource) {
       operations,
       () => ({
         layers: selectedLayers(),
+        placeNames: el<HTMLInputElement>("place-labels").checked,
         streetNames: el<HTMLInputElement>("street-labels").checked,
         pois: el<HTMLInputElement>("poi-labels").checked,
       }),
@@ -334,9 +350,10 @@ function setLabels() {
   map?.setLabels(
     el<HTMLInputElement>("street-labels").checked,
     el<HTMLInputElement>("poi-labels").checked,
+    el<HTMLInputElement>("place-labels").checked,
   );
 }
-for (const id of ["street-labels", "poi-labels"])
+for (const id of ["place-labels", "street-labels", "poi-labels"])
   el<HTMLInputElement>(id).onchange = setLabels;
 function setLayers() {
   map?.setLayers(selectedLayers());

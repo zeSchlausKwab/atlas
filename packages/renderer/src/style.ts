@@ -154,25 +154,50 @@ export function compileStyle(input: MapStyle) {
 export interface MapScene {
   pitch: number;
   bearing: number;
-  buildingHeight: number;
+  extrude: boolean;
+  fallbackHeight: number;
+  heightScale: number;
   shading: number;
 }
 export const FLAT_SCENE: MapScene = {
   pitch: 0,
   bearing: 0,
-  buildingHeight: 0,
+  extrude: false,
+  fallbackHeight: 12,
+  heightScale: 1,
   shading: 0.7,
 };
 export function parseScene(value: unknown): MapScene {
+  // Upgrade the previous saved illustrative-height experiment.
+  if (value && typeof value === "object" && "buildingHeight" in value) {
+    const old = object(
+      value,
+      ["pitch", "bearing", "buildingHeight", "shading"],
+      "Scene",
+    );
+    const fallbackHeight = number(old.buildingHeight, 0, 100, "buildingHeight");
+    value = {
+      pitch: old.pitch,
+      bearing: old.bearing,
+      shading: old.shading,
+      extrude: fallbackHeight > 0,
+      fallbackHeight: fallbackHeight || 12,
+      heightScale: 1,
+    };
+  }
   const o = object(
     value,
-    ["pitch", "bearing", "buildingHeight", "shading"],
+    ["pitch", "bearing", "extrude", "fallbackHeight", "heightScale", "shading"],
     "Scene",
   );
+  if (typeof o.extrude !== "boolean")
+    throw new Error("extrude must be a boolean");
   return {
     pitch: number(o.pitch, 0, 65, "pitch"),
     bearing: number(o.bearing, -180, 180, "bearing"),
-    buildingHeight: number(o.buildingHeight, 0, 100, "buildingHeight"),
+    extrude: o.extrude,
+    fallbackHeight: number(o.fallbackHeight, 1, 100, "fallbackHeight"),
+    heightScale: number(o.heightScale, 0.25, 3, "heightScale"),
     shading: number(o.shading, 0, 1, "shading"),
   };
 }

@@ -1,3 +1,5 @@
+import { PLACE_LABEL_KEY, decodePlaces } from "../../labels/src/places";
+import type { Place } from "../../format/src/index";
 import {
   PAPER,
   FLAT_SCENE,
@@ -36,6 +38,7 @@ export interface MapOptions {
   style?: MapStyle;
   scene?: MapScene;
   layers?: readonly MapLayer[];
+  placeNames?: boolean;
   streetNames?: boolean;
   pois?: boolean;
 }
@@ -80,8 +83,10 @@ export class AtlasMap {
     this.style = compiled.style;
     this.invalidate();
   }
+  onSceneChange?: (scene: MapScene) => void;
   setScene(scene: MapScene) {
     this.scene = parseScene(scene);
+    this.onSceneChange?.({ ...this.scene });
     this.invalidate();
   }
   viewBounds(): Bounds {
@@ -100,6 +105,10 @@ export class AtlasMap {
   grid = false;
   selected: Peak | null = null;
   onPoiSelect?: (poi: Location) => void;
+  private placeNames = true;
+  private places: Place[] | undefined;
+  private placesLoading = false;
+  private placesFailed = false;
   private labels: MapLabels;
   private labelStats: LabelStats = {
     roads: 0,
@@ -107,7 +116,8 @@ export class AtlasMap {
     loading: 0,
     missing: 0,
   };
-  setLabels(roads: boolean, pois: boolean) {
+  setLabels(roads: boolean, pois: boolean, places = this.placeNames) {
+    this.placeNames = places;
     this.labels.roads = roads;
     this.labels.pois = pois;
     this.invalidate();
@@ -143,6 +153,8 @@ export class AtlasMap {
   private dead = false;
   private frame = 0;
   private drag: {
+    mode: "pan" | "orbit";
+    pointerId: number;
     x: number;
     y: number;
     startX: number;
@@ -180,7 +192,11 @@ export class AtlasMap {
     map.setStyle(options.style ?? PAPER);
     map.setScene(options.scene ?? FLAT_SCENE);
     map.setLayers(options.layers ?? 255);
-    map.setLabels(options.streetNames ?? true, options.pois ?? true);
+    map.setLabels(
+      options.streetNames ?? true,
+      options.pois ?? true,
+      options.placeNames ?? true,
+    );
     map.events();
     map.fit();
     return map;
@@ -190,8 +206,15 @@ export class AtlasMap {
     this.canvas.addEventListener(
       "pointerdown",
       (event) => {
-        if (event.button !== 0) return;
+        if (this.drag || ![0, 2].includes(event.button)) return;
+        event.preventDefault();
+        this.canvas.focus({ preventScroll: true });
         this.drag = {
+          mode:
+            event.button === 2 || event.metaKey || event.ctrlKey
+              ? "orbit"
+              : "pan",
+          pointerId: event.pointerId,
           x: event.clientX,
           y: event.clientY,
           startX: event.clientX,
@@ -205,7 +228,7 @@ export class AtlasMap {
     this.canvas.addEventListener(
       "pointermove",
       (event) => {
-        if (!this.drag) return;
+        if (!this.drag || this.drag.pointerId !== event.pointerId) return;
         if (
           Math.hypot(
             event.clientX - this.drag.startX,
@@ -214,6 +237,12 @@ export class AtlasMap {
         )
           this.drag.moved = true;
         if (!this.drag.moved) return;
+        if (this.drag.mode === "orbit") {
+          this.orbit(event.clientX - this.drag.x, event.clientY - this.drag.y);
+          this.drag.x = event.clientX;
+          this.drag.y = event.clientY;
+          return;
+        }
         const scale = 256 * 2 ** this.zoom;
         const [dx, dy] = groundDelta(
           event.clientX - this.drag.x,
@@ -234,6 +263,11 @@ export class AtlasMap {
     this.canvas.addEventListener(
       "pointerup",
       (event) => {
+        if (!this.drag || this.drag.pointerId !== event.pointerId) return;
+        if (this.drag.mode === "orbit") {
+          this.drag = null;
+          return;
+        }
         const wasPicking = !!this.picker;
         if (this.drag && !this.drag.moved && this.picker) {
           const box = this.canvas.getBoundingClientRect();
@@ -277,12 +311,27 @@ export class AtlasMap {
         options,
       );
     this.canvas.addEventListener(
+      "contextmenu",
+      (event) => event.preventDefault(),
+      options,
+    );
+    this.canvas.addEventListener(
       "wheel",
       (event) => {
         event.preventDefault();
+        const unit =
+          event.deltaMode === 1
+            ? 16
+            : event.deltaMode === 2
+              ? this.canvas.clientHeight
+              : 1;
+        if (event.metaKey) {
+          this.orbit(event.deltaX * unit, event.deltaY * unit);
+          return;
+        }
         const box = this.canvas.getBoundingClientRect();
         this.zoomAt(
-          this.zoom - event.deltaY * 0.002,
+          this.zoom - event.deltaY * unit * 0.002,
           event.clientX - box.left - box.width / 2,
           event.clientY - box.top - box.height / 2,
         );
@@ -309,6 +358,15 @@ export class AtlasMap {
           const cancel = this.picker.cancel;
           this.endPicking(this.picker.owner);
           cancel();
+        } else if (
+          shifts[event.key] &&
+          (event.metaKey || event.ctrlKey || event.shiftKey)
+        ) {
+          event.preventDefault();
+          this.orbit(shifts[event.key]![0] / 4, shifts[event.key]![1] / 4);
+        } else if (event.key.toLowerCase() === "r") {
+          event.preventDefault();
+          this.resetView();
         } else if (shifts[event.key]) {
           event.preventDefault();
           const [x, y] = groundDelta(
@@ -326,6 +384,20 @@ export class AtlasMap {
       },
       options,
     );
+  }
+  private orbit(dx: number, dy: number) {
+    const pitch = Math.max(0, Math.min(65, this.scene.pitch - dy * 0.35));
+    const bearing =
+      ((((this.scene.bearing + dx * 0.3 + 540) % 360) + 360) % 360) - 180;
+    this.setScene({
+      ...this.scene,
+      pitch,
+      bearing,
+      extrude: this.scene.extrude || pitch > 0,
+    });
+  }
+  resetView() {
+    this.setScene({ ...this.scene, pitch: 0, bearing: 0, extrude: false });
   }
   fit() {
     const [w, s, e, n] = this.reader.index.manifest.bounds;
@@ -471,6 +543,7 @@ export class AtlasMap {
     this.failed.clear();
     this.catalogFailed.clear();
     this.labels.retry();
+    this.placesFailed = false;
     this.invalidate();
   }
   setGrid(grid: boolean) {
@@ -483,7 +556,12 @@ export class AtlasMap {
     const n = 2 ** z;
     // Include bases just outside the view whose roofs rise into it.
     const padding =
-      (this.scene.buildingHeight / metersPerPixel(this.camera)) *
+      ((this.scene.extrude && (this.layerMask & 4) !== 0 && z >= 13
+        ? this.scene.heightScale *
+          ((this.reader.index.manifest.buildingHeights?.maxMeters ?? 0) +
+            this.scene.fallbackHeight)
+        : 0) /
+        metersPerPixel(this.camera)) *
       Math.sin((this.scene.pitch * Math.PI) / 180);
     const [w, north, e, south] = cameraBounds(this.camera, padding);
     const range: [number, number, number, number, number] = [
@@ -591,7 +669,8 @@ export class AtlasMap {
       ratio,
       this.scene.pitch,
       this.scene.bearing,
-      this.scene.buildingHeight,
+      this.scene.extrude ? this.scene.heightScale : 0,
+      this.scene.fallbackHeight,
       this.scene.shading,
     );
     this.lastDraw = performance.now() - start;
@@ -608,6 +687,35 @@ export class AtlasMap {
       loading: this.loading.size + this.catalogLoading.size,
       labels: this.labelStats,
     });
+  }
+  private visiblePlaces(): Place[] {
+    if (!this.placeNames) return [];
+    if (!this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY))
+      return this.reader.index.manifest.places;
+    if (
+      !this.places &&
+      !this.placesLoading &&
+      !this.placesFailed &&
+      (!this.reader.offline || this.reader.cache.has(PLACE_LABEL_KEY))
+    ) {
+      this.placesLoading = true;
+      this.reader
+        .block(PLACE_LABEL_KEY)
+        .then((bytes) => {
+          if (!this.dead) this.places = decodePlaces(bytes);
+        })
+        .catch((e) => {
+          if (!this.dead) {
+            this.placesFailed = true;
+            this.onError(String(e));
+          }
+        })
+        .finally(() => {
+          this.placesLoading = false;
+          this.invalidate();
+        });
+    }
+    return this.places ?? [];
   }
   private drawOverlay(width: number, height: number, ratio: number) {
     const ctx = this.overlay.getContext("2d")!;
@@ -670,7 +778,7 @@ export class AtlasMap {
     ctx.textAlign = "center";
     this.featureOverlay.draw(ctx, this.camera);
     const occupied: Array<[number, number]> = [];
-    for (const place of this.reader.index.manifest.places) {
+    for (const place of this.visiblePlaces()) {
       const [x, y] = screen(...place.coordinates);
       if (
         x! < 25 ||
@@ -702,6 +810,14 @@ export class AtlasMap {
         y + 5 * this.style.labels.scale,
       ]),
     );
+    this.labelStats.places = occupied.length;
+    this.labelStats.loading += this.placesLoading ? 1 : 0;
+    this.labelStats.missing +=
+      this.placeNames &&
+      !this.places &&
+      this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY)
+        ? 1
+        : 0;
     if (this.route) {
       ctx.lineJoin = "round";
       ctx.lineCap = "round";

@@ -87,6 +87,12 @@ export interface Manifest {
   labelZoom?: number;
   featureZoom?: number;
   tileLayers?: MapLayer[];
+  buildingHeights?: {
+    tagged: number;
+    estimated: number;
+    missing: number;
+    maxMeters: number;
+  };
   areas?: { assembledRelations: number; skippedRelations: number };
   featureCountKind?: "tile-records";
   selection?: {
@@ -231,6 +237,18 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       new Set(manifest.tileLayers).size !== manifest.tileLayers.length)
   )
     throw new Error("Invalid map layer catalog");
+  if (manifest.buildingHeights) {
+    const h = manifest.buildingHeights;
+    if (
+      ![h.tagged, h.estimated, h.missing].every(
+        (n) => Number.isSafeInteger(n) && n >= 0,
+      ) ||
+      !Number.isFinite(h.maxMeters) ||
+      h.maxMeters < 0 ||
+      h.maxMeters > 2000
+    )
+      throw new Error("Invalid building height metadata");
+  }
   if (manifest.capabilities.includes("map-labels") && manifest.labelZoom !== 12)
     throw new Error("Invalid label grid");
   if (
@@ -371,7 +389,7 @@ export function validateBlocks(
       !/^[a-f0-9]{64}$/.test(block.hash)
     )
       throw new Error("Invalid ATLAS block directory");
-    if (block.key.startsWith("labels/")) {
+    if (block.key.startsWith("labels/") && block.key !== "labels/places") {
       const match =
         /^labels\/(\d+)\/(\d+)\/(\d+)(?:\/(roads|pois)\/(13|14|15|16|17))?$/.exec(
           block.key,

@@ -62,22 +62,28 @@ export class StyleControls {
       "[data-scene]",
     ))
       input.oninput = () => {
-        this.scene[input.dataset.scene as keyof MapScene] = Number(input.value);
+        this.scene[
+          input.dataset.scene as "fallbackHeight" | "heightScale" | "shading"
+        ] = Number(input.value);
         this.applyScene();
       };
     el("scene-demo").onclick = () => {
       this.scene = {
         pitch: 52,
         bearing: -25,
-        buildingHeight: 18,
+        extrude: true,
+        fallbackHeight: 12,
+        heightScale: 1,
         shading: 0.8,
       };
       const map = this.map();
       if (map) map.zoom = Math.max(map.zoom, 17);
       this.applyScene();
     };
-    el("scene-flat").onclick = () => {
-      this.scene = { ...FLAT_SCENE };
+    el("scene-flat").onclick = () => this.reset();
+    el("reset-view").onclick = () => this.reset();
+    el<HTMLInputElement>("scene-extrude").onchange = (e) => {
+      this.scene.extrude = (e.target as HTMLInputElement).checked;
       this.applyScene();
     };
     el("style-export").onclick = () => {
@@ -113,6 +119,15 @@ export class StyleControls {
       input.value = "";
     };
     this.sync();
+  }
+  receiveScene(scene: MapScene) {
+    this.scene = parseScene(scene);
+    this.save();
+    this.sync();
+  }
+  private reset() {
+    this.scene = { ...this.scene, pitch: 0, bearing: 0, extrude: false };
+    this.applyScene();
   }
   private save() {
     try {
@@ -168,18 +183,25 @@ export class StyleControls {
     for (const input of document.querySelectorAll<HTMLInputElement>(
       "[data-scene]",
     )) {
-      const k = input.dataset.scene as keyof MapScene,
+      const k = input.dataset.scene as
+          | "fallbackHeight"
+          | "heightScale"
+          | "shading",
         value = this.scene[k];
       input.value = String(value);
       el(`${input.id}-value`).textContent =
-        k === "buildingHeight"
+        k === "fallbackHeight"
           ? `${value} m`
           : k === "shading"
             ? `${Math.round(value * 100)}%`
-            : `${value}°`;
+            : `${value.toFixed(2)}×`;
     }
     const compass = document.querySelector<HTMLElement>(".compass")!;
     compass.style.transform = `rotate(${-this.scene.bearing}deg)`;
-    el("scene-badge").hidden = this.scene.buildingHeight === 0;
+    el<HTMLInputElement>("scene-extrude").checked = this.scene.extrude;
+    el("scene-orientation").textContent =
+      `${Math.round(this.scene.pitch)}° tilt · ${Math.round(this.scene.bearing)}° bearing`;
+    el("scene-badge").hidden = !this.scene.extrude;
+    el("reset-view").setAttribute("aria-label", "Reset to top-down, north up");
   }
 }

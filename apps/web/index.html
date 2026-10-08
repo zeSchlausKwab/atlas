@@ -17,7 +17,7 @@
       >
       <span class="masthead-note">A geographic format experiment</span>
       <div class="masthead-right">
-        <span class="prototype">PROTOTYPE 007</span
+        <span class="prototype">PROTOTYPE 008</span
         ><a
           href="https://www.openstreetmap.org/copyright"
           target="_blank"
@@ -644,41 +644,46 @@
                   Inspect in 3D ↗</button
                 ><button id="scene-flat" class="text-button">Back to 2D</button>
               </div>
+              <p class="scene-gestures">
+                <strong>Grab the view.</strong> Right-drag to tilt and rotate,
+                or hold ⌘ and drag. On a Mac trackpad, hold ⌘ and drag with two
+                fingers.
+              </p>
+              <p id="scene-orientation" class="style-note"></p>
+              <label class="scene-toggle"
+                ><input id="scene-extrude" type="checkbox" /> Extrude
+                buildings</label
+              >
               <div class="style-dials">
-                <label class="style-dial" for="scene-pitch"
-                  ><span>Tilt</span
-                  ><output id="scene-pitch-value" for="scene-pitch"></output
-                  ><input
-                    id="scene-pitch"
-                    type="range"
-                    min="0"
-                    max="65"
-                    step="1"
-                    data-scene="pitch" /></label
-                ><label class="style-dial" for="scene-bearing"
-                  ><span>Bearing</span
-                  ><output id="scene-bearing-value" for="scene-bearing"></output
-                  ><input
-                    id="scene-bearing"
-                    type="range"
-                    min="-180"
-                    max="180"
-                    step="1"
-                    data-scene="bearing" /></label
-                ><label class="style-dial" for="scene-buildingHeight"
-                  ><span>Illustrative height</span
+                <label class="style-dial" for="scene-heightScale"
+                  ><span>Height scale</span
                   ><output
-                    id="scene-buildingHeight-value"
-                    for="scene-buildingHeight"
+                    id="scene-heightScale-value"
+                    for="scene-heightScale"
                   ></output
                   ><input
-                    id="scene-buildingHeight"
+                    id="scene-heightScale"
                     type="range"
-                    min="0"
+                    min="0.25"
+                    max="3"
+                    step="0.05"
+                    data-scene="heightScale"
+                /></label>
+                <label class="style-dial" for="scene-fallbackHeight"
+                  ><span>Height when unknown</span
+                  ><output
+                    id="scene-fallbackHeight-value"
+                    for="scene-fallbackHeight"
+                  ></output
+                  ><input
+                    id="scene-fallbackHeight"
+                    type="range"
+                    min="1"
                     max="100"
                     step="1"
-                    data-scene="buildingHeight" /></label
-                ><label class="style-dial" for="scene-shading"
+                    data-scene="fallbackHeight"
+                /></label>
+                <label class="style-dial" for="scene-shading"
                   ><span>Face shading</span
                   ><output id="scene-shading-value" for="scene-shading"></output
                   ><input
@@ -690,10 +695,12 @@
                     data-scene="shading"
                 /></label>
               </div>
+              <p id="height-coverage" class="scene-disclosure"></p>
               <p class="scene-disclosure">
-                All buildings use the same illustrative height, not measured OSM
-                heights. Buildings must be enabled in Data and available at this
-                zoom. Tilting reveals more ground and may load more tiles.
+                OSM heights take priority. Floor counts estimate 3 m per level;
+                missing values use your fallback. Height scale 1× keeps these
+                heights in meters. Buildings start at z13. Tilting reveals more
+                ground and may load more tiles.
               </p>
               <p class="style-note">
                 Orthographic 3D · depth-tested roofs and walls · labels stay
@@ -748,12 +755,21 @@
               /></label>
               <label class="layer"
                 ><span class="swatch buildings"></span
-                ><span>Buildings <small class="muted">z14+</small></span
+                ><span>Buildings <small class="muted">z13+</small></span
                 ><input
                   type="checkbox"
                   data-mask="4"
                   checked
                   aria-label="Buildings"
+              /></label>
+              <label class="layer"
+                ><span class="swatch" aria-hidden="true">Aa</span
+                ><span>City &amp; village names</span
+                ><input
+                  id="place-labels"
+                  type="checkbox"
+                  checked
+                  aria-label="City &amp; village names"
               /></label>
               <label class="layer"
                 ><span class="swatch">Aa</span><span>Street names</span
@@ -892,7 +908,7 @@
         <canvas
           id="map"
           tabindex="0"
-          aria-label="Map. Drag to pan, scroll to zoom, or use arrow and plus/minus keys."
+          aria-label="Map. Drag to pan; scroll to zoom. Right-drag or Command-drag to tilt and rotate. R resets to top-down. Arrow keys pan; Shift plus arrows rotate."
         ></canvas>
         <div id="pick-banner" class="pick-banner" hidden>
           Click the map to choose a point.
@@ -929,8 +945,15 @@
             ⌖
           </button>
         </div>
+        <button
+          id="reset-view"
+          class="reset-view"
+          title="Reset to top-down, north up (R)"
+        >
+          ↑ Top-down
+        </button>
         <div class="compass" aria-hidden="true"><span>N</span>↑</div>
-        <div id="scene-badge" hidden>3D study · illustrative heights</div>
+        <div id="scene-badge" hidden>3D · OSM heights + estimates</div>
         <div class="transport-card">
           <div class="transport-top">
             <span class="status-dot" id="connection-dot"></span
@@ -956,7 +979,8 @@
           · ODbL
         </div>
         <div class="map-hint">
-          DRAG TO EXPLORE <span>·</span> SCROLL TO ZOOM
+          DRAG TO PAN <span>·</span> SCROLL TO ZOOM <span>·</span> ⌘ /
+          RIGHT-DRAG TO TILT
         </div>
       </section>
       <aside class="inspector" aria-label="Package inspector">
@@ -984,6 +1008,10 @@
           <div>
             <dt>Map geometry</dt>
             <dd id="bytes-map">0 KB</dd>
+          </div>
+          <div>
+            <dt>Place names</dt>
+            <dd id="bytes-placeNames">0.0 KB</dd>
           </div>
           <div>
             <dt>Street names</dt>

@@ -28,7 +28,7 @@ export class OfflineControls {
     readonly operations: OperationSession,
     readonly mapData: () => Pick<
       Selection,
-      "layers" | "streetNames" | "pois"
+      "layers" | "placeNames" | "streetNames" | "pois"
     > = () => ({}),
   ) {
     const m = reader.index.manifest;
