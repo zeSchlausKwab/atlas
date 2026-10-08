@@ -9,6 +9,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export async function addRoutingCells(
   writer: DiskWriter,
   bytes: Uint8Array,
+  prefix = "routing/cells",
 ): Promise<RoutingMetadata["cells"]> {
   const temp = await mkdtemp(join(tmpdir(), "atlas-routing-"));
   try {
@@ -40,7 +41,7 @@ export async function addRoutingCells(
         await Bun.file(join(out, file)).arrayBuffer(),
       );
       await writer.add({
-        key: `routing/cells/14/${x}/${y}`,
+        key: `${prefix}/14/${x}/${y}`,
         bytes: data,
         features: new DataView(data.buffer).getUint32(24, true),
       });

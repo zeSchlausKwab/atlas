@@ -11,12 +11,16 @@ import {
   HttpSource,
   type DataPurpose,
 } from "../../../packages/format/src/reader";
-import type { Position } from "../../../packages/routing/src/index";
+import type {
+  Position,
+  TransportMode,
+} from "../../../packages/routing/src/index";
 import type { FeatureQuery } from "../../../packages/features/src/index";
 import type { Selection } from "../../../packages/offline/src/index";
 export type Capability = "routing" | "search" | "queries" | "features";
 const purposes: Record<Operation, Capability | undefined> = {
   route: "routing",
+  isochrone: "routing",
   search: "search",
   reverse: "search",
   peak: "queries",
@@ -26,6 +30,7 @@ const purposes: Record<Operation, Capability | undefined> = {
 export class OperationSession {
   readonly engine: AtlasEngine;
   readonly remote?: RemoteOperations;
+  profile: TransportMode = "walking";
   mode: "device" | "server" = "device";
   enabled = new Set<Capability>(["routing", "search", "queries", "features"]);
   apiBytes = 0;
@@ -89,7 +94,7 @@ export class OperationSession {
     }
     const start = performance.now(),
       before =
-        op === "route"
+        op === "route" || op === "isochrone"
           ? this.reader.bytesByPurpose.routing
           : this.reader.bytesRead;
     const result = await local();
@@ -98,7 +103,7 @@ export class OperationSession {
       operation: op,
       computeMs: performance.now() - start,
       sourceBytes:
-        (op === "route"
+        (op === "route" || op === "isochrone"
           ? this.reader.bytesByPurpose.routing
           : this.reader.bytesRead) - before,
       responseBytes: 0,
@@ -109,18 +114,63 @@ export class OperationSession {
     };
   }
   private localRoute(start: Position, end: Position) {
-    if (!this.reader.index.manifest.routing?.cells)
-      return this.engine.route(start, end);
+    if (
+      !this.reader.index.manifest.routing?.cells &&
+      !this.reader.index.manifest.transport
+    )
+      return this.engine.route(start, end, this.profile);
     this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
       this.onRouteProgress?.(p),
     );
-    return this.workerRouter.route(start, end);
+    return this.workerRouter.route(start, end, this.profile);
   }
   cancelRoute() {
     this.workerRouter?.cancel();
   }
   route(start: Position, end: Position) {
-    return this.run("route", { start, end }, () => this.localRoute(start, end));
+    return this.run("route", { start, end, profile: this.profile }, () =>
+      this.localRoute(start, end),
+    );
+  }
+  isochrone(start: Position, bands: number[]) {
+    return this.run(
+      "isochrone",
+      { start, bands, profile: this.profile },
+      () => {
+        this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
+          this.onRouteProgress?.(p),
+        );
+        return this.workerRouter.isochrone(start, bands, this.profile);
+      },
+    );
+  }
+  async compareIsochrone(start: Position, bands: number[]) {
+    const input = { start, bands, profile: this.profile };
+    const device = await this.run(
+      "isochrone",
+      input,
+      () => {
+        this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
+          this.onRouteProgress?.(p),
+        );
+        return this.workerRouter.isochrone(start, bands, this.profile);
+      },
+      "device",
+    );
+    const server = await this.run(
+      "isochrone",
+      input,
+      () => this.engine.isochrone(start, bands, this.profile),
+      "server",
+    );
+    return {
+      device,
+      server,
+      same:
+        device.status === "reachable" &&
+        server.status === "reachable" &&
+        JSON.stringify(device.contours) === JSON.stringify(server.contours),
+    };
   }
   search(query: string) {
     return this.run("search", { query }, () => this.engine.search(query));
@@ -148,13 +198,13 @@ export class OperationSession {
   async compareRoute(start: Position, end: Position) {
     const device = await this.run(
       "route",
-      { start, end },
+      { start, end, profile: this.profile },
       () => this.localRoute(start, end),
       "device",
     );
     const server = await this.run(
       "route",
-      { start, end },
+      { start, end, profile: this.profile },
       () => this.localRoute(start, end),
       "server",
     );
@@ -164,6 +214,7 @@ export class OperationSession {
       (device.status !== "found" ||
         (server.status === "found" &&
           Math.abs(device.meters - server.meters) < 1e-6 &&
+          device.seconds === server.seconds &&
           JSON.stringify(device.coordinates) ===
             JSON.stringify(server.coordinates) &&
           JSON.stringify(device.wayIds) === JSON.stringify(server.wayIds)));

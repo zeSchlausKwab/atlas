@@ -1,3 +1,4 @@
+import type { Reachable } from "../../routing/src/index";
 import { TilePresentation, type TileView } from "./tile-presentation";
 import { PLACE_LABEL_KEY, decodePlaces } from "../../labels/src/places";
 import type { Place } from "../../format/src/index";
@@ -10,6 +11,7 @@ import {
   type MapScene,
 } from "./style";
 import {
+  worldProjector,
   cameraBounds,
   fitZoom,
   groundDelta,
@@ -104,6 +106,11 @@ export class AtlasMap {
   }
   center: [number, number] = [0.5, 0.5];
   zoom = 10;
+  private reachable: Reachable | null = null;
+  setReachable(value: Reachable | null) {
+    this.reachable = value;
+    this.invalidate();
+  }
   private routingCells: Array<{ key: string; state: string }> = [];
   setRoutingCells(cells: Array<{ key: string; state: string }>) {
     this.routingCells = cells;
@@ -737,13 +744,14 @@ export class AtlasMap {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
     const world = 256 * 2 ** this.zoom;
-    const screen = (lon: number, lat: number) =>
-      projectScreen([lon, lat], this.camera);
+    const camera = this.camera,
+      toScreen = worldProjector(camera);
+    const screen = (lon: number, lat: number) => toScreen(project(lon, lat));
     for (const c of this.routingCells) {
-      const parts = c.key.split("/"),
-        z = Number(parts[2]),
-        x = Number(parts[3]),
-        y = Number(parts[4]),
+      const parts = c.key.split("/").slice(-3),
+        z = Number(parts[0]),
+        x = Number(parts[1]),
+        y = Number(parts[2]),
         n = 2 ** z;
       const corners = [
         [x / n, y / n],
@@ -774,6 +782,35 @@ export class AtlasMap {
       ctx.fill();
       ctx.strokeStyle = color + "b0";
       ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    if (this.reachable) {
+      const colors = ["#22776f", "#578fac", "#c89949", "#a479ae"];
+      for (let i = this.reachable.contours.features.length - 1; i >= 0; i--) {
+        const feature = this.reachable.contours.features[i]!;
+        ctx.beginPath();
+        for (const polygon of feature.geometry.coordinates)
+          for (const ring of polygon) {
+            ring.forEach((p, j) => {
+              const [x, y] = screen(p[0]!, p[1]!);
+              if (j) ctx.lineTo(x, y);
+              else ctx.moveTo(x, y);
+            });
+            ctx.closePath();
+          }
+        ctx.fillStyle = colors[i] + "35";
+        ctx.fill("evenodd");
+        ctx.strokeStyle = colors[i]!;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      const [x, y] = screen(...this.reachable.start.coordinates);
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = "#22776f";
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 3;
       ctx.stroke();
     }
     if (this.selection?.points.length) {

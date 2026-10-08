@@ -1,5 +1,6 @@
 //! A small, deterministic, distance-weighted walking graph. No display geometry is used.
 pub mod cells;
+pub mod contours;
 use serde::Serialize;
 use std::{
     cmp::Ordering,
@@ -25,12 +26,23 @@ struct Arc {
     to: usize,
     segment: usize,
     meters: f64,
+    seconds: f64,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Turn {
+    pub via: i64,
+    pub from: i64,
+    pub to: i64,
+    pub kind: u8,
 }
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub segments: Vec<Segment>,
     adjacency: Vec<Vec<Arc>>,
     lengths: Vec<f64>,
+    pub costs: Vec<[f64; 2]>,
+    pub turns: Vec<Turn>,
+    pub profile: Option<u32>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +61,7 @@ pub enum Route {
     Found {
         coordinates: Vec<[f64; 2]>,
         meters: f64,
+        seconds: f64,
         visited: usize,
         start: Snap,
         end: Snap,
@@ -132,6 +145,7 @@ impl Graph {
                     to: b,
                     segment: i,
                     meters,
+                    seconds: meters / (4.8 / 3.6),
                 });
             }
             if s.directions & 2 != 0 {
@@ -139,6 +153,7 @@ impl Graph {
                     to: a,
                     segment: i,
                     meters,
+                    seconds: meters / (4.8 / 3.6),
                 });
             }
         }
@@ -146,29 +161,91 @@ impl Graph {
             nodes,
             segments,
             adjacency,
+            costs: lengths.iter().map(|m| [m / (4.8 / 3.6); 2]).collect(),
             lengths,
+            turns: Vec::new(),
+            profile: None,
         })
+    }
+    /// Mode IDs: walking=0, cycling=1, driving=2. Costs are seconds per full edge.
+    pub fn with_costs(
+        mut self,
+        profile: u32,
+        costs: Vec<[f64; 2]>,
+        turns: Vec<Turn>,
+    ) -> Result<Self, String> {
+        if profile > 2 || costs.len() != self.segments.len() || turns.len() > 500_000 {
+            return Err("Invalid transport profile or cost count".into());
+        }
+        let max_speed = [4.8 / 3.6, 25. / 3.6, 200. / 3.6][profile as usize];
+        for (i, pair) in costs.iter().enumerate() {
+            if pair.iter().any(|s| {
+                !s.is_finite() || *s < 0. || *s > 1e7 || *s + 1e-4 < self.lengths[i] / max_speed
+            }) {
+                return Err("Invalid transport edge time".into());
+            }
+        }
+        let ids: HashSet<_> = self.nodes.iter().map(|n| n.id).collect();
+        if turns.iter().any(|t| !ids.contains(&t.via) || t.kind > 3) {
+            return Err("Invalid turn restriction".into());
+        }
+        for (node, arcs) in self.adjacency.iter_mut().enumerate() {
+            for arc in arcs {
+                arc.seconds =
+                    costs[arc.segment][usize::from(self.segments[arc.segment].a as usize != node)];
+            }
+        }
+        self.costs = costs;
+        self.turns = turns;
+        self.profile = Some(profile);
+        Ok(self)
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(12 + self.nodes.len() * 24 + self.segments.len() * 20);
-        out.extend_from_slice(b"RTE1");
+        out.extend_from_slice(if self.profile.is_some() {
+            b"RTE2"
+        } else {
+            b"RTE1"
+        });
         out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.segments.len() as u32).to_le_bytes());
+        if let Some(profile) = self.profile {
+            out.extend_from_slice(&(self.turns.len() as u32).to_le_bytes());
+            out.extend_from_slice(&profile.to_le_bytes());
+        }
         for n in &self.nodes {
             out.extend_from_slice(&n.id.to_le_bytes());
             for c in n.position {
                 out.extend_from_slice(&c.to_le_bytes());
             }
         }
-        for s in &self.segments {
+        for (i, s) in self.segments.iter().enumerate() {
             out.extend_from_slice(&s.a.to_le_bytes());
             out.extend_from_slice(&s.b.to_le_bytes());
             out.extend_from_slice(&s.way.to_le_bytes());
             out.extend_from_slice(&[s.directions, 0, 0, 0]);
+            if self.profile.is_some() {
+                for c in self.costs[i] {
+                    let mut encoded = c as f32;
+                    if (encoded as f64) < c {
+                        encoded = f32::from_bits(encoded.to_bits() + 1);
+                    }
+                    out.extend_from_slice(&encoded.to_le_bytes());
+                }
+            }
+        }
+        for t in &self.turns {
+            for id in [t.via, t.from, t.to] {
+                out.extend_from_slice(&id.to_le_bytes());
+            }
+            out.extend_from_slice(&[t.kind, 0, 0, 0, 0, 0, 0, 0]);
         }
         out
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() >= 4 && &bytes[..4] == b"RTE2" {
+            return Self::decode_profile(bytes);
+        }
         if bytes.len() < 12 || &bytes[..4] != b"RTE1" {
             return Err("Invalid walking graph header".into());
         }
@@ -200,6 +277,45 @@ impl Graph {
             });
         }
         Self::new(nodes, segments)
+    }
+    fn decode_profile(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 20 {
+            return Err("Invalid transport graph header".into());
+        }
+        let u = |p| u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap()) as usize;
+        let (n, e, t, profile) = (u(4), u(8), u(12), u(16));
+        if n > 8_000_000
+            || e > 12_000_000
+            || t > 500_000
+            || profile > 2
+            || bytes.len() != 20 + n * 24 + e * 28 + t * 32
+        {
+            return Err("Invalid transport graph length".into());
+        }
+        let mut legacy = b"RTE1".to_vec();
+        legacy.extend_from_slice(&bytes[4..12]);
+        legacy.extend_from_slice(&bytes[20..20 + n * 24]);
+        let mut costs = Vec::with_capacity(e);
+        for v in bytes[20 + n * 24..20 + n * 24 + e * 28].chunks_exact(28) {
+            legacy.extend_from_slice(&v[..20]);
+            costs.push([
+                f32::from_le_bytes(v[20..24].try_into().unwrap()) as f64,
+                f32::from_le_bytes(v[24..28].try_into().unwrap()) as f64,
+            ]);
+        }
+        let mut turns = Vec::with_capacity(t);
+        for v in bytes[20 + n * 24 + e * 28..].chunks_exact(32) {
+            if v[25..] != [0; 7] {
+                return Err("Invalid turn flags".into());
+            }
+            turns.push(Turn {
+                via: i64::from_le_bytes(v[..8].try_into().unwrap()),
+                from: i64::from_le_bytes(v[8..16].try_into().unwrap()),
+                to: i64::from_le_bytes(v[16..24].try_into().unwrap()),
+                kind: v[24],
+            });
+        }
+        Self::decode(&legacy)?.with_costs(profile as u32, costs, turns)
     }
     fn snap(&self, p: [f64; 2]) -> Option<Snap> {
         let cos = p[1].to_radians().cos();
@@ -246,6 +362,9 @@ impl Graph {
         result
     }
     pub fn route(&self, a: [f64; 2], b: [f64; 2]) -> Result<Route, String> {
+        if self.profile.is_some() {
+            return Err("Transport graphs require the time-aware paged router".into());
+        }
         if !valid_position(a) || !valid_position(b) {
             return Err(
                 "Route coordinates must be finite longitude/latitude within ±85° latitude".into(),
@@ -342,6 +461,7 @@ impl Graph {
         Ok(Route::Found {
             coordinates,
             meters: best,
+            seconds: best / (4.8 / 3.6),
             visited,
             start,
             end,

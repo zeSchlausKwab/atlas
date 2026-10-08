@@ -53,6 +53,34 @@ export interface Place {
   name: string;
   coordinates: [number, number];
 }
+export const TRANSPORT_MODES = ["walking", "cycling", "driving"] as const;
+export type TransportMode = (typeof TRANSPORT_MODES)[number];
+export interface TransportProfile {
+  prefix: string;
+  zoom: 14;
+  count: number;
+  codec: "rcl2";
+  nodes: number;
+  segments: number;
+  turns: number;
+  skippedWays: number;
+  unsupportedRestrictions: number;
+  excludedRestrictionWays: number;
+}
+export interface TransportMetadata {
+  version: 1;
+  profiles: Record<TransportMode, TransportProfile>;
+}
+export function isRoutingCell(key: string) {
+  return /^routing\/(?:walking\/|cycling\/|driving\/)?cells\//.test(key);
+}
+function routingZoom(manifest: Manifest, prefix: string) {
+  return prefix === "routing/cells"
+    ? manifest.routing?.cells?.zoom
+    : Object.values(manifest.transport?.profiles ?? {}).find(
+        (p) => p.prefix === prefix,
+      )?.zoom;
+}
 export interface RoutingMetadata {
   cells?: { zoom: 14; count: number; codec: "rcl1" };
   profile: "walking-v1";
@@ -85,6 +113,7 @@ export interface Manifest {
   limitations: string[];
   snapshot: string;
   routing?: RoutingMetadata;
+  transport?: TransportMetadata;
   labelZoom?: number;
   featureZoom?: number;
   tileLayers?: MapLayer[];
@@ -117,7 +146,7 @@ export interface Block {
 export const INDEX_PAGE_SIZE = 32;
 export function spatialAddress(key: string) {
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|routing\/cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -277,6 +306,37 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     )
       throw new Error("Invalid selection metadata");
   }
+  if (manifest.transport) {
+    if (
+      manifest.transport.version !== 1 ||
+      !manifest.transport.profiles ||
+      Object.keys(manifest.transport.profiles).length !== 3
+    )
+      throw new Error("Invalid transport metadata");
+    for (const mode of TRANSPORT_MODES) {
+      const p = manifest.transport.profiles[mode];
+      if (
+        !p ||
+        p.prefix !== `routing/${mode}/cells` ||
+        p.zoom !== 14 ||
+        p.codec !== "rcl2" ||
+        ![
+          p.count,
+          p.nodes,
+          p.segments,
+          p.turns,
+          p.skippedWays,
+          p.unsupportedRestrictions,
+          p.excludedRestrictionWays,
+        ].every((n) => Number.isSafeInteger(n) && n >= 0)
+      )
+        throw new Error("Invalid transport profile");
+    }
+  }
+  if (
+    manifest.capabilities.includes("transport-routing") !== !!manifest.transport
+  )
+    throw new Error("Transport capability mismatch");
   if (manifest.routing) {
     const r = manifest.routing;
     if (
@@ -329,8 +389,8 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
             (p.prefix
               ? !manifest.tileLayers?.includes(p.prefix.slice(5) as MapLayer)
               : !!manifest.tileLayers)
-          : p.prefix === "routing/cells"
-            ? p.z !== manifest.routing?.cells?.zoom
+          : isRoutingCell(`${p.prefix}/`)
+            ? p.z !== routingZoom(manifest, p.prefix!)
             : !/^features\/(buildings|water|railways|roads|land)$/.test(
                 p.prefix!,
               ) || p.z !== manifest.featureZoom) ||
@@ -371,6 +431,17 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       !!manifest.routing?.cells
   )
     throw new Error("Routing cell directory does not match metadata");
+  for (const mode of TRANSPORT_MODES) {
+    const prefix = `routing/${mode}/cells`;
+    const count =
+      header.version === 1
+        ? blocks.filter((b) => b.key.startsWith(`${prefix}/`)).length
+        : pages
+            .filter((p) => p.prefix === prefix)
+            .reduce((n, p) => n + p.count, 0);
+    if (count !== (manifest.transport?.profiles[mode]?.count ?? 0))
+      throw new Error("Transport cell directory mismatch");
+  }
   const tileCount =
     header.version === 1
       ? blocks.filter((b) => b.key.startsWith("tile/")).length
@@ -437,14 +508,14 @@ export function validateBlocks(
       )
         throw new Error("Invalid feature address");
     }
-    if (block.key.startsWith("routing/cells/")) {
+    if (isRoutingCell(block.key)) {
       const a = spatialAddress(block.key);
       if (
         !a ||
-        a.z !== manifest.routing?.cells?.zoom ||
+        a.z !== routingZoom(manifest, a.prefix) ||
         a.x >= 2 ** a.z ||
         a.y >= 2 ** a.z ||
-        block.key !== `routing/cells/${a.z}/${a.x}/${a.y}` ||
+        block.key !== `${a.prefix}/${a.z}/${a.x}/${a.y}` ||
         (block.rawLength ?? block.length) > 16 * 1024 * 1024
       )
         throw new Error("Invalid routing cell address or size");

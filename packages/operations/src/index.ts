@@ -1,9 +1,14 @@
 import { AtlasReader } from "../../format/src/reader";
-import { AtlasRouter, type Position } from "../../routing/src/index";
+import {
+  AtlasRouter,
+  type Position,
+  type TransportMode,
+} from "../../routing/src/index";
 import { AtlasGeocoder } from "../../geocoding/src/index";
 import { AtlasFeatures, type FeatureQuery } from "../../features/src/index";
 import { extract, type Selection } from "../../offline/src/index";
 export type Operation =
+  | "isochrone"
   | "route"
   | "search"
   | "reverse"
@@ -30,8 +35,15 @@ export class AtlasEngine {
     this.geocoder = new AtlasGeocoder(reader);
     this.features = new AtlasFeatures(reader);
   }
-  route(start: Position, end: Position) {
-    return this.router.route(start, end);
+  route(start: Position, end: Position, profile: TransportMode = "walking") {
+    return this.router.route(start, end, profile);
+  }
+  isochrone(
+    start: Position,
+    bands: number[],
+    profile: TransportMode = "walking",
+  ) {
+    return this.router.isochrone(start, bands, profile);
   }
   search(query: string, limit?: number) {
     return this.geocoder.search(query, limit);

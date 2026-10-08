@@ -1883,3 +1883,33 @@ button:disabled {
   text-align: left;
   line-height: 1.6;
 }
+
+.reachability-section {
+  border-top: 1px solid var(--line, #d4d8cc);
+  margin-top: 32px;
+  padding-top: 32px;
+}
+#transport-profile,
+#iso-duration {
+  width: 100%;
+  margin: 8px 0 16px;
+}
+.iso-legend {
+  display: flex;
+  gap: 18px;
+  margin: 20px 0;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.iso-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--band);
+  margin-right: 6px;
+}
+#iso-origin {
+  width: 100%;
+}

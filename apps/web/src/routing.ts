@@ -1,3 +1,4 @@
+import { isRoutingCell } from "../../../packages/format/src/index";
 import type { RoutingProgress } from "../../../packages/routing/src/paged";
 import { OperationSession, executionText } from "./operations";
 import { type Position } from "../../../packages/routing/src/index";
@@ -71,16 +72,22 @@ export class RouteControls {
     });
     on("clear", () => this.clear());
     on("example", () => {
-      if (!a || !b) return;
-      this.points = [a.coordinates, b.coordinates];
-      this.names = [a.name, b.name];
+      const start =
+        vienna && this.operations.profile === "driving"
+          ? { name: "Schottentor", coordinates: [16.3605, 48.2145] as Position }
+          : a;
+      if (!start || !b) return;
+      this.points = [start.coordinates, b.coordinates];
+      this.names = [start.name, b.name];
       this.map.setEndpoints(...this.points);
-      this.map.fitPositions([a.coordinates, b.coordinates]);
+      this.map.fitPositions([start.coordinates, b.coordinates]);
       void this.calculate();
     });
     button("example").hidden = !a || !b;
     this.clear();
-    element("route-cell-panel").hidden = !reader.index.manifest.routing?.cells;
+    element("route-cell-panel").hidden = !(
+      reader.index.manifest.routing?.cells || reader.index.manifest.transport
+    );
     operations.onRouteProgress = (p) => {
       if (!this.dead) this.progress(p);
     };
@@ -111,7 +118,7 @@ export class RouteControls {
       .then((keys) => {
         if (this.dead) return;
         for (const key of keys)
-          if (key.startsWith("routing/cells/") && !this.cells.has(key))
+          if (isRoutingCell(key) && !this.cells.has(key))
             this.cells.set(key, { key, state: "cached" });
         this.drawCells();
       });
@@ -120,7 +127,11 @@ export class RouteControls {
         "This package has no walking graph. Rebuild it with the current generator.";
   }
   refresh() {
+    if (this.reader.index.manifest.name === "Vienna Plus")
+      button("example").textContent =
+        `Try ${this.operations.profile === "driving" ? "Schottentor" : "Stephansplatz"} → Praterstern ↗`;
     element("route-proof").hidden = true;
+    this.operations.cancelRoute();
     this.revision++;
     this.busy = false;
     this.picking = null;
@@ -237,7 +248,7 @@ export class RouteControls {
         ? "Calculating on the server…"
         : this.reader.cache.has("routing/walking")
           ? "Calculating in WASM…"
-          : "Loading the walking network…";
+          : `Loading the ${this.operations.profile} network…`;
     element("route-hint").textContent =
       "Routing uses the network independently of visible tiles.";
     try {
@@ -256,10 +267,17 @@ export class RouteControls {
         const time = document.createElement("p");
         time.className = "route-time";
         const minutes =
-          result.meters < 1 ? 0 : Math.max(1, Math.round(result.meters / 80));
-        time.textContent = `~${minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`} on foot · distance only`;
+          result.meters < 1
+            ? 0
+            : Math.max(
+                1,
+                Math.round(
+                  (result.seconds ?? result.meters / (4.8 / 3.6)) / 60,
+                ),
+              );
+        time.textContent = `~${minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`} ${this.operations.profile} · estimated travel time`;
         const computation = document.createElement("p");
-        computation.textContent = `${executionText(result.execution)} · ${result.visited.toLocaleString()} nodes explored. ${result.execution.side === "server" ? "The walking graph stayed on the server." : result.cells ? "Using selectively loaded routing cells." : result.graphCached ? "Using the cached walking graph." : "Walking graph is now available on this device."}`;
+        computation.textContent = `${executionText(result.execution)} · ${result.visited.toLocaleString()} nodes explored. ${result.execution.side === "server" ? "The network stayed on the server." : result.cells ? "Using selectively loaded routing cells." : result.graphCached ? "Using the cached walking graph." : "Walking graph is now available on this device."}`;
         const snap = document.createElement("p");
         snap.textContent = `Snapped A ${Math.round(result.start.distanceMeters)} m / B ${Math.round(result.end.distanceMeters)} m to the network. Dotted offsets are excluded from distance and time.`;
         box.append(title, time, computation, snap);
@@ -267,7 +285,7 @@ export class RouteControls {
         this.map.fitRoute();
       } else if (result.status === "no-route") {
         box.textContent =
-          "No path connects these snapped points in this extract’s walking graph. A connection may exist outside the extract or on ways excluded by this profile. Try different points.";
+          "No path connects these snapped points in this extract’s transport graph. A connection may exist outside the extract or on ways excluded by this profile. Try different points.";
       } else if (result.status === "missing-data") {
         box.textContent = `Search paused: ${result.missing.length} routing ${result.missing.length === 1 ? "cell is" : "cells are"} missing. ${result.reason} Reconnect and resume; a missing cell does not mean there is no route.`;
         button("resume").hidden = false;
@@ -275,7 +293,7 @@ export class RouteControls {
         box.textContent =
           "Search reached the prototype memory limit. Try a shorter route. This is not a no-route result.";
       } else {
-        box.textContent = `No eligible walking segment within ${result.limitMeters} m of ${result.endpoint === "start" ? "A" : "B"}. Pick closer to a road or path in this extract.`;
+        box.textContent = `No eligible ${this.operations.profile} segment within ${result.limitMeters} m of ${result.endpoint === "start" ? "A" : "B"}. Pick closer to a road or path in this extract.`;
       }
     } catch (e) {
       if (this.dead || revision !== this.revision) return;

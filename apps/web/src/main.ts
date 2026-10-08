@@ -1,3 +1,4 @@
+import { ReachabilityControls } from "./reachability";
 import { BrowserBlockStore } from "../../../packages/format/src/store";
 const blockStore =
   typeof indexedDB !== "undefined" ? new BrowserBlockStore() : undefined;
@@ -32,6 +33,7 @@ import {
 let world: OfflineControls | undefined;
 let search: SearchControls | undefined;
 let routing: RouteControls | undefined;
+let reachability: ReachabilityControls | undefined;
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
@@ -195,6 +197,7 @@ async function open(source: ByteSource) {
   world = undefined;
   search?.destroy();
   search = undefined;
+  reachability?.destroy();
   routing?.destroy();
   routing = undefined;
   operations?.destroy();
@@ -297,6 +300,9 @@ async function open(source: ByteSource) {
     if (!operations.remote)
       el<HTMLSelectElement>("execution-mode").value = "device";
     routing = new RouteControls(reader, map, operations);
+    reachability = new ReachabilityControls(map, operations, () =>
+      routing?.refresh(),
+    );
     search = new SearchControls(reader, map, routing, operations);
     extractor = new ExtractControls(map, operations);
     map.onPoiSelect = (poi) => search?.select(poi);
@@ -356,6 +362,7 @@ function configureOperations() {
       ? "Receive results; the source data stays on the server."
       : "Compute here; keep the downloaded data for offline use.";
   routing?.refresh();
+  reachability?.refresh();
   search?.refresh();
   extractor?.refresh();
   world?.refresh();
@@ -393,6 +400,7 @@ el<HTMLInputElement>("offline").onchange = (event) => {
   const offline = (event.target as HTMLInputElement).checked;
   map?.setOffline(offline);
   routing?.refresh();
+  reachability?.refresh();
   el("connection-label").textContent = offline
     ? "Using cached blocks"
     : sourceLabel === "server"

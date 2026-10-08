@@ -40,7 +40,9 @@ export function worldToScreen(
   return [
     Math.cos(r) * dx + Math.sin(r) * dy + camera.width / 2,
     (-Math.sin(r) * dx + Math.cos(r) * dy) * Math.cos(pitch) -
-      (heightMeters / metersPerPixel(camera)) * Math.sin(pitch) +
+      (heightMeters
+        ? (heightMeters / metersPerPixel(camera)) * Math.sin(pitch)
+        : 0) +
       camera.height / 2,
   ];
 }
@@ -108,4 +110,21 @@ export function fitZoom(
       Math.max(100, height) / Math.max(dy, 0.00001),
     ),
   );
+}
+
+/** Compute camera trigonometry once for a batch of ground-plane points. */
+export function worldProjector(camera: Camera): (p: Point) => Point {
+  const world = 256 * 2 ** camera.zoom,
+    r = (camera.bearing * Math.PI) / 180,
+    c = Math.cos(r),
+    s = Math.sin(r),
+    pitch = Math.cos((camera.pitch * Math.PI) / 180);
+  const [cx, cy] = camera.center,
+    hw = camera.width / 2,
+    hh = camera.height / 2;
+  return (p) => {
+    const dx = (p[0] - cx) * world,
+      dy = (p[1] - cy) * world;
+    return [c * dx + s * dy + hw, (-s * dx + c * dy) * pitch + hh];
+  };
 }

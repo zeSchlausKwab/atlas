@@ -218,7 +218,17 @@
               <p class="eyebrow">A PATH THROUGH THE DATA</p>
               <h2 id="routing-label">Go somewhere.</h2>
               <p class="routing-intro">
-                One walking network. Two places to calculate.
+                Three ways to travel. The same engine on your device and server.
+              </p>
+              <label for="transport-profile">Travel mode</label>
+              <select id="transport-profile">
+                <option value="walking">Walking</option>
+                <option value="cycling">Cycling</option>
+                <option value="driving">Driving</option>
+              </select>
+              <p class="search-scope">
+                Applies to routes and reachable areas below. Only this mode’s
+                network is loaded.
               </p>
               <button id="route-example" class="primary-button" disabled>
                 Try Vaduz → Schaan <span>↗</span>
@@ -296,15 +306,68 @@
               </p>
               <p id="route-proof" role="status" hidden></p>
               <details class="route-scope">
-                <summary>Walking profile & coverage</summary>
+                <summary>Travel profiles & coverage</summary>
                 <p>
-                  Shortest distance on retained OSM ways. Basic foot access,
-                  barriers and foot one-way rules. No terrain, difficulty, live
-                  closures or turn restrictions. Routes stay in this extract;
-                  they may be incomplete near its edges. Time assumes 4.8 km/h.
-                  Experimental, not navigation guidance.
+                  Estimated travel times, mode-specific access, barriers,
+                  one-way rules and common via-node turn restrictions. No
+                  traffic, elevation costs or public transport schedules.
+                  Unsupported conditional and complex turn restrictions
+                  conservatively exclude incoming ways. Coverage ends at the
+                  extract boundary. Experimental, not navigation guidance.
                 </p>
               </details>
+            </section>
+            <section
+              class="reachability-section"
+              aria-labelledby="reachability-title"
+            >
+              <p class="eyebrow">TIME BECOMES SPACE</p>
+              <h2 id="reachability-title">How far can I go?</h2>
+              <p class="tool-intro">
+                Reachable streets and paths, shaped by your travel mode.
+              </p>
+              <button
+                id="iso-origin"
+                class="secondary-button"
+                aria-pressed="false"
+              >
+                Choose isochrone origin on map
+              </button>
+              <p id="iso-origin-label" class="search-scope">
+                Stephansplatz · Vienna
+              </p>
+              <label for="iso-duration">Travel time</label>
+              <select id="iso-duration">
+                <option value="300">5 minutes · 1 / 3 / 5</option>
+                <option value="600">10 minutes · 2 / 5 / 10</option>
+                <option value="900" selected>15 minutes · 5 / 10 / 15</option>
+                <option value="1800">30 minutes · 10 / 20 / 30</option>
+              </select>
+              <button id="iso-calculate" class="primary-button">
+                Show reachable area ↗
+              </button>
+              <div id="iso-legend" class="iso-legend" hidden></div>
+              <p id="iso-result" role="status" class="search-scope">
+                Choose an origin or use the city center.
+              </p>
+              <button id="iso-resume" class="secondary-button" hidden>
+                Fetch missing cells &amp; resume area
+              </button>
+              <div class="route-actions">
+                <button id="iso-export" class="text-button" disabled>
+                  Export GeoJSON</button
+                ><button id="iso-clear" class="text-button">Clear area</button>
+              </div>
+              <button id="iso-compare" class="secondary-button">
+                Compare area on device &amp; server
+              </button>
+              <p id="iso-proof" role="status" class="search-scope"></p>
+              <p class="search-scope">
+                Colored envelopes approximate the reachable network; interiors
+                aren’t guaranteed traversable. River crossings follow actual
+                connections. Times exclude the offset from your origin to the
+                network.
+              </p>
             </section>
           </div>
           <div

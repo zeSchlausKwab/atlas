@@ -1,3 +1,4 @@
+import { isRoutingCell } from "./index";
 import type { Block } from "./index";
 export interface SavedIndex {
   header: Uint8Array;
@@ -15,7 +16,7 @@ const eligible = (key: string) =>
   key.startsWith("tile/") ||
   key.startsWith("labels/") ||
   key.startsWith("index/") ||
-  key.startsWith("routing/cells/");
+  isRoutingCell(key);
 const request = <T>(r: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
     r.onsuccess = () => resolve(r.result);

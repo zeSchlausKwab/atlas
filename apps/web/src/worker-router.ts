@@ -2,9 +2,12 @@ import {
   readRoutingCell,
   type RoutingProgress,
 } from "../../../packages/routing/src/paged";
-import type {
-  Position,
-  RouteResult,
+import {
+  profilePrefix,
+  type Position,
+  type RouteResult,
+  type IsochroneResult,
+  type TransportMode,
 } from "../../../packages/routing/src/index";
 import type { AtlasReader } from "../../../packages/format/src/reader";
 export class WorkerRouter {
@@ -13,13 +16,47 @@ export class WorkerRouter {
   private active = 0;
   private jobs = new Map<
     number,
-    { resolve: (v: RouteResult) => void; reject: (e: Error) => void }
+    {
+      resolve: (v: RouteResult | IsochroneResult) => void;
+      reject: (e: Error) => void;
+    }
   >();
   constructor(
     readonly reader: AtlasReader,
     readonly progress: (p: RoutingProgress) => void,
   ) {}
-  route(start: Position, end: Position): Promise<RouteResult> {
+  route(
+    start: Position,
+    end: Position,
+    profile: TransportMode,
+  ): Promise<RouteResult> {
+    return this.run({
+      type: "route",
+      start,
+      end,
+      profile,
+    }) as Promise<RouteResult>;
+  }
+  isochrone(
+    start: Position,
+    bands: number[],
+    profile: TransportMode,
+  ): Promise<IsochroneResult> {
+    return this.run({
+      type: "isochrone",
+      start,
+      bands,
+      profile,
+    }) as Promise<IsochroneResult>;
+  }
+  private run(input: {
+    type: string;
+    start: Position;
+    end?: Position;
+    bands?: number[];
+    profile: TransportMode;
+  }): Promise<RouteResult | IsochroneResult> {
+    const prefix = profilePrefix(this.reader, input.profile);
     if (this.jobs.size) this.cancel();
     if (!this.worker) {
       const worker = (this.worker = new Worker("/routing-worker.js", {
@@ -57,10 +94,9 @@ export class WorkerRouter {
     return new Promise((resolve, reject) => {
       this.jobs.set(id, { resolve, reject });
       this.worker!.postMessage({
-        type: "route",
+        ...input,
+        prefix,
         id,
-        start,
-        end,
         snapshot: this.reader.index.manifest.snapshot,
       });
     });

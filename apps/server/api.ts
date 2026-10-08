@@ -1,3 +1,4 @@
+import { validateTransport } from "../../packages/routing/src/index";
 import {
   AtlasEngine,
   type Operation,
@@ -7,6 +8,7 @@ import { validateFeatureQuery } from "../../packages/features/src/index";
 import { validatePolygon } from "../../packages/offline/src/geometry";
 const OPERATIONS: Operation[] = [
   "route",
+  "isochrone",
   "search",
   "reverse",
   "peak",
@@ -49,6 +51,13 @@ export function createApiHandler(engine: AtlasEngine) {
         (!validPosition(input?.start) || !validPosition(input?.end))
       )
         throw new Error("Invalid route endpoints");
+      if (operation === "route" || operation === "isochrone")
+        validateTransport(
+          input?.profile ?? "walking",
+          operation === "isochrone" ? (input?.bands ?? null) : undefined,
+        );
+      if (operation === "isochrone" && !validPosition(input?.start))
+        throw new Error("Invalid isochrone origin");
       if (
         operation === "search" &&
         (typeof input?.query !== "string" ||
@@ -89,7 +98,18 @@ export function createApiHandler(engine: AtlasEngine) {
           let result: unknown;
           switch (operation) {
             case "route":
-              result = await engine.route(input.start, input.end);
+              result = await engine.route(
+                input.start,
+                input.end,
+                input.profile,
+              );
+              break;
+            case "isochrone":
+              result = await engine.isochrone(
+                input.start,
+                input.bands,
+                input.profile,
+              );
               break;
             case "search":
               result = await engine.search(input.query, input.limit);

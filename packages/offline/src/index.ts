@@ -384,6 +384,7 @@ export async function extract(
         ? []
         : m.places.filter((p) => inside(p.coordinates, s.polygon)),
     routing,
+    transport: undefined,
     capabilities,
     selection: {
       polygon: s.polygon,

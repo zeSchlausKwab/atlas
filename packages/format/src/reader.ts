@@ -1,3 +1,4 @@
+import { isRoutingCell } from "./index";
 import type { BlockStore } from "./store";
 import {
   MAP_LAYERS,
@@ -251,18 +252,7 @@ export class AtlasReader {
           this.loadedPages.has(p.key),
         ),
       ),
-      blocks: [...this.byKey.values()].filter(
-        (b) =>
-          b.key.startsWith("tile/") &&
-          prefixes.includes(
-            tileLayer(b.key) ? `tile/${tileLayer(b.key)}` : "tile",
-          ) &&
-          b.z === z &&
-          b.x! >= xmin &&
-          b.x! <= xmax &&
-          b.y! >= ymin &&
-          b.y! <= ymax,
-      ),
+      blocks: this.spatialCached(prefixes, z, xmin, xmax, ymin, ymax),
     };
   }
   async tiles(
@@ -293,18 +283,43 @@ export class AtlasReader {
         this.loadPage(p),
       ),
     );
-    return [...this.byKey.values()].filter((b) => {
-      const a = spatialAddress(b.key);
-      return (
-        a?.prefix === prefix &&
-        a.z === z &&
-        a.x >= xmin &&
-        a.x <= xmax &&
-        a.y >= ymin &&
-        a.y <= ymax
-      );
-    });
+    return this.spatialCached([prefix], z, xmin, xmax, ymin, ymax);
   }
+  /** Small viewport queries cost only their own addresses, not all visited tiles. */
+  private spatialCached(
+    prefixes: string[],
+    z: number,
+    xmin: number,
+    xmax: number,
+    ymin: number,
+    ymax: number,
+  ) {
+    const result: Block[] = [];
+    if ((xmax - xmin + 1) * (ymax - ymin + 1) * prefixes.length <= 65536) {
+      for (const prefix of prefixes)
+        for (let x = xmin; x <= xmax; x++)
+          for (let y = ymin; y <= ymax; y++) {
+            const b = this.byKey.get(`${prefix}/${z}/${x}/${y}`);
+            if (b) result.push(b);
+          }
+    } else {
+      for (const b of this.byKey.values()) {
+        const a = spatialAddress(b.key);
+        if (
+          a &&
+          prefixes.includes(a.prefix) &&
+          a.z === z &&
+          a.x >= xmin &&
+          a.x <= xmax &&
+          a.y >= ymin &&
+          a.y <= ymax
+        )
+          result.push(b);
+      }
+    }
+    return result.sort((a, b) => a.offset - b.offset);
+  }
+
   /** Explicit full-catalog operation for auditing, never needed to display a view. */
   async allBlocks() {
     for (const page of this.index.pages) await this.loadPage(page);
@@ -380,14 +395,14 @@ export class AtlasReader {
         );
       this.cache.set(key, decoded);
       // Bound decoded routing bytes separately from the kernel's decoded-cell cache.
-      if (key.startsWith("routing/cells/")) {
+      if (isRoutingCell(key)) {
         let size = [...this.cache].reduce(
-          (n, [k, v]) => n + (k.startsWith("routing/cells/") ? v.length : 0),
+          (n, [k, v]) => n + (isRoutingCell(k) ? v.length : 0),
           0,
         );
         for (const [k, v] of this.cache) {
           if (size <= 16 * 1024 * 1024) break;
-          if (k.startsWith("routing/cells/")) {
+          if (isRoutingCell(k)) {
             this.cache.delete(k);
             size -= v.length;
           }

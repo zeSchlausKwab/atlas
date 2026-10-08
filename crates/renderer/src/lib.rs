@@ -1121,6 +1121,16 @@ impl CellWalkingRouter {
             inner: atlas_routing::cells::PagedRouter::new(32 * 1024 * 1024, 250_000),
         }
     }
+    pub fn set_profile(&mut self, profile: u32) -> Result<(), JsValue> {
+        self.inner
+            .set_profile(profile)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn begin_isochrone(&mut self, lon: f64, lat: f64, bands: &[f64]) -> Result<(), JsValue> {
+        self.inner
+            .begin_isochrone([lon, lat], bands.to_vec())
+            .map_err(|e| JsValue::from_str(&e))
+    }
     pub fn begin(&mut self, ax: f64, ay: f64, bx: f64, by: f64) -> Result<(), JsValue> {
         self.inner
             .begin([ax, ay], [bx, by])

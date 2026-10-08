@@ -1,5 +1,6 @@
+import { project } from "../../format/src/index";
 import { AtlasReader } from "../../format/src/reader";
-import { projectScreen, cameraBounds, type Camera } from "./camera";
+import { worldProjector, cameraBounds, type Camera } from "./camera";
 import type { MapStyle } from "./style";
 import {
   decodeLabels,
@@ -119,6 +120,45 @@ export class MapLabels {
   roads = true;
   pois = true;
   private dead = false;
+  private widths = new Map<string, number>();
+  private geometry = new WeakMap<
+    RoadLabel,
+    { points: Position[]; bounds: Box }
+  >();
+  private candidates = {
+    signature: "",
+    roads: [] as RoadLabel[],
+    pois: [] as Location[],
+  };
+  private measure(ctx: CanvasRenderingContext2D, text: string) {
+    const key = ctx.font + "|" + text;
+    let width = this.widths.get(key);
+    if (width === undefined) {
+      width = ctx.measureText(text).width;
+      if (this.widths.size >= 8192) this.widths.clear();
+      this.widths.set(key, width);
+    }
+    return width;
+  }
+  private roadGeometry(road: RoadLabel) {
+    let geometry = this.geometry.get(road);
+    if (!geometry) {
+      const points = road.coordinates.map((p) => project(...p));
+      let w = Infinity,
+        n = Infinity,
+        e = -Infinity,
+        s = -Infinity;
+      for (const [x, y] of points) {
+        w = Math.min(w, x);
+        n = Math.min(n, y);
+        e = Math.max(e, x);
+        s = Math.max(s, y);
+      }
+      geometry = { points, bounds: [w, n, e, s] };
+      this.geometry.set(road, geometry);
+    }
+    return geometry;
+  }
   private blocks = new Map<string, LabelBlock>();
   private pending = new Set<string>();
   private failed = new Set<string>();
@@ -130,6 +170,13 @@ export class MapLabels {
     readonly invalidate: () => void,
     readonly error: (message: string) => void,
   ) {
+    if (typeof document !== "undefined")
+      document.fonts?.ready.then(() => {
+        if (!this.dead) {
+          this.widths.clear();
+          this.invalidate();
+        }
+      });
     this.keys = new Set(
       reader.index.blocks
         .filter((b) => b.key.startsWith("labels/"))
@@ -208,16 +255,34 @@ export class MapLabels {
     }
     stats.loading = this.pending.size;
     stats.missing = this.wanted.filter((k) => !this.blocks.has(k)).length;
-    const screen = (p: Position): Position => projectScreen(p, camera);
-    const roads: RoadLabel[] = [],
-      pois: Location[] = [];
-    for (const key of this.wanted) {
-      const b = this.blocks.get(key);
-      if (b) {
-        roads.push(...b.roads);
-        pois.push(...b.pois);
+    const toScreen = worldProjector(camera);
+    const screen = (p: Position) => toScreen(project(...p));
+    const signature = this.wanted
+      .map((k) => `${k}:${this.blocks.has(k)}`)
+      .join("|");
+    if (signature !== this.candidates.signature) {
+      const roads: RoadLabel[] = [],
+        pois: Location[] = [];
+      for (const key of this.wanted) {
+        const b = this.blocks.get(key);
+        if (b) {
+          roads.push(...b.roads);
+          pois.push(...b.pois);
+        }
       }
+      roads.sort(
+        (a, b) =>
+          roadMinZoom(a.category) - roadMinZoom(b.category) ||
+          a.id.localeCompare(b.id),
+      );
+      pois.sort(
+        (a, b) =>
+          poiMinZoom(a.category) - poiMinZoom(b.category) ||
+          a.id.localeCompare(b.id),
+      );
+      this.candidates = { signature, roads, pois };
     }
+    const { roads, pois } = this.candidates;
     ctx.save();
     ctx.font = `500 ${12 * style.scale}px "Avenir Next", sans-serif`;
     ctx.textAlign = "center";
@@ -225,15 +290,20 @@ export class MapLabels {
     ctx.lineJoin = "round";
     const named = new Map<string, Position[]>();
     if (this.roads)
-      for (const road of roads.sort(
-        (a, b) =>
-          roadMinZoom(a.category) - roadMinZoom(b.category) ||
-          a.id.localeCompare(b.id),
-      )) {
+      for (const road of roads) {
         if (zoom < roadMinZoom(road.category)) continue;
+        const geometry = this.roadGeometry(road),
+          bounds = geometry.bounds;
+        if (
+          bounds[2] < west ||
+          bounds[0] > east ||
+          bounds[3] < north ||
+          bounds[1] > south
+        )
+          continue;
         const placement = roadPlacement(
-          road.coordinates.map(screen),
-          ctx.measureText(road.name).width,
+          geometry.points.map(toScreen),
+          this.measure(ctx, road.name),
           width,
           height,
           style.scale,
@@ -264,15 +334,13 @@ export class MapLabels {
     ctx.textAlign = "left";
     const seen = new Set<string>();
     if (this.pois)
-      for (const poi of pois.sort(
-        (a, b) =>
-          poiMinZoom(a.category) - poiMinZoom(b.category) ||
-          a.id.localeCompare(b.id),
-      )) {
+      for (const poi of pois) {
         if (zoom < poiMinZoom(poi.category) || seen.has(poi.id)) continue;
-        const [x, y] = screen(poi.coordinates),
-          text = poi.name.length > 45 ? poi.name.slice(0, 42) + "…" : poi.name,
-          w = ctx.measureText(text).width;
+        const [x, y] = screen(poi.coordinates);
+        if (x < 6 || y < 6 || x > width - 6 || y > height - 6) continue;
+        const text =
+            poi.name.length > 45 ? poi.name.slice(0, 42) + "…" : poi.name,
+          w = this.measure(ctx, text);
         const box: Box = [
           x - 7,
           y - 9 * style.scale,

@@ -20,7 +20,7 @@ self.onmessage = (event: MessageEvent) => {
     else p.resolve(m.value);
     return;
   }
-  if (m.type === "route") {
+  if (m.type === "route" || m.type === "isochrone") {
     job = m.id;
     router ??= new PagedRouter(
       m.snapshot,
@@ -32,7 +32,15 @@ self.onmessage = (event: MessageEvent) => {
         }),
       (progress) => self.postMessage({ type: "progress", id: job, progress }),
     );
-    router.route(m.start as Position, m.end as Position).then(
+    (m.type === "route"
+      ? router.route(
+          m.start as Position,
+          m.end as Position,
+          m.profile,
+          m.prefix,
+        )
+      : router.isochrone(m.start, m.bands, m.profile, m.prefix)
+    ).then(
       (result) => self.postMessage({ type: "result", id: m.id, result }),
       (e) => self.postMessage({ type: "error", id: m.id, error: String(e) }),
     );

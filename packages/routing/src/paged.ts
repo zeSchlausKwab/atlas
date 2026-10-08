@@ -1,6 +1,14 @@
 import init, { CellWalkingRouter } from "../../renderer/pkg/atlas_renderer";
 import type { AtlasReader } from "../../format/src/reader";
-import type { Position, RouteResult, WalkingResult } from "./index";
+import {
+  validateTransport,
+  type Position,
+  type RouteResult,
+  type WalkingResult,
+  type Reachable,
+  type IsochroneResult,
+  type TransportMode,
+} from "./index";
 export interface CellRead {
   bytes?: Uint8Array;
   empty?: boolean;
@@ -28,18 +36,21 @@ export async function readRoutingCell(
 ): Promise<CellRead> {
   if (reader.options.purposes && !reader.options.purposes.includes("routing"))
     throw new Error("Routing is disabled");
-  const m = /^routing\/cells\/14\/(\d+)\/(\d+)$/.exec(key);
-  if (!m || +m[1]! >= 16384 || +m[2]! >= 16384)
+  const m =
+    /^(routing\/(?:(?:walking|cycling|driving)\/)?cells)\/14\/(\d+)\/(\d+)$/.exec(
+      key,
+    );
+  if (!m || +m[2]! >= 16384 || +m[3]! >= 16384)
     throw new Error("Invalid cell request");
   const before = reader.bytesByPurpose.routing;
   try {
     const blocks = await reader.spatial(
-      "routing/cells",
+      m[1]!,
       14,
-      +m[1]!,
-      +m[1]!,
       +m[2]!,
       +m[2]!,
+      +m[3]!,
+      +m[3]!,
     );
     if (!blocks.length) return { empty: true, fetchedBytes: 0 };
     return {
@@ -66,9 +77,15 @@ export async function readRoutingCell(
 type Step =
   | { status: "need-blocks"; keys: string[]; visited: number }
   | { status: "running" | "budget-exceeded"; visited: number }
-  | { status: "complete"; result: WalkingResult };
+  | { status: "complete"; result: WalkingResult }
+  | { status: "reachable"; result: Reachable };
 /** Host-independent orchestration; the browser supplies cell bytes over worker RPC. */
 export class PagedRouter {
+  private prefix = "routing/cells";
+  private profile: TransportMode = "walking";
+  private address(key: string) {
+    return key.replace("routing/cells", this.prefix);
+  }
   private kernel?: CellWalkingRouter;
   private pending?: string;
   private dead = false;
@@ -86,7 +103,12 @@ export class PagedRouter {
       init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" }),
   ) {}
   private progress(phase: RoutingProgress["phase"]): RoutingProgress {
-    const used = this.kernel?.used_keys().split(",").filter(Boolean) ?? [];
+    const used =
+      this.kernel
+        ?.used_keys()
+        .split(",")
+        .filter(Boolean)
+        .map((k) => this.address(k)) ?? [];
     for (const key of used)
       if (!this.states.has(key)) this.states.set(key, "cached");
     const progress = {
@@ -103,21 +125,63 @@ export class PagedRouter {
     this.onProgress(progress);
     return progress;
   }
-  route(a: Position, b: Position): Promise<RouteResult> {
-    const work = this.tail.then(() => this.run(a, b));
+  route(
+    a: Position,
+    b: Position,
+    profile: TransportMode = "walking",
+    prefix = "routing/cells",
+  ): Promise<RouteResult> {
+    return this.enqueue(a, b, profile, prefix) as Promise<RouteResult>;
+  }
+  isochrone(
+    a: Position,
+    bands: number[],
+    profile: TransportMode = "walking",
+    prefix = "routing/cells",
+  ): Promise<IsochroneResult> {
+    validateTransport(profile, bands);
+    return this.enqueue(
+      a,
+      a,
+      profile,
+      prefix,
+      bands,
+    ) as Promise<IsochroneResult>;
+  }
+  private enqueue(
+    a: Position,
+    b: Position,
+    profile: TransportMode,
+    prefix: string,
+    bands?: number[],
+  ) {
+    validateTransport(profile, bands);
+    const work = this.tail.then(() => this.run(a, b, profile, prefix, bands));
     this.tail = work.catch(() => {});
     return work;
   }
-  private async run(a: Position, b: Position): Promise<RouteResult> {
+  private async run(
+    a: Position,
+    b: Position,
+    profile: TransportMode,
+    prefix: string,
+    bands?: number[],
+  ): Promise<RouteResult | IsochroneResult> {
     if (this.dead) throw new Error("Router disposed");
     if (!this.kernel) {
       await this.initialize();
       if (this.dead) throw new Error("Router disposed");
       this.kernel = new CellWalkingRouter();
     }
-    const signature = JSON.stringify([a, b]);
+    const signature = JSON.stringify([a, b, profile, prefix, bands]);
+    this.prefix = prefix;
+    this.profile = profile;
     if (this.pending !== signature) {
-      this.kernel.begin(...a, ...b);
+      this.kernel.set_profile(
+        ["walking", "cycling", "driving"].indexOf(profile),
+      );
+      if (bands) this.kernel.begin_isochrone(...a, new Float64Array(bands));
+      else this.kernel.begin(...a, ...b);
       this.states.clear();
       this.fetched.clear();
       this.fetchedBytes = 0;
@@ -130,13 +194,14 @@ export class PagedRouter {
       const step = JSON.parse(this.kernel.step()) as Step;
       this.computeMs += performance.now() - before;
       if ("visited" in step) this.visited = step.visited;
-      if (step.status === "complete") {
+      if (step.status === "complete" || step.status === "reachable") {
         this.pending = undefined;
         if ("visited" in step.result) this.visited = step.result.visited;
         const progress = this.progress("complete");
         return {
           ...step.result,
           snapshot: this.snapshot,
+          profile,
           computeMs: this.computeMs,
           graphCached: this.fetchedBytes === 0,
           graphBytes: this.fetchedBytes,
@@ -148,6 +213,7 @@ export class PagedRouter {
         return {
           status: "budget-exceeded",
           snapshot: this.snapshot,
+          profile,
           computeMs: this.computeMs,
           graphCached: this.fetchedBytes === 0,
           graphBytes: this.fetchedBytes,
@@ -155,11 +221,12 @@ export class PagedRouter {
         };
       }
       if (step.status === "need-blocks") {
-        for (const key of step.keys) this.states.set(key, "loading");
+        const keys = step.keys.map((k) => this.address(k));
+        for (const key of keys) this.states.set(key, "loading");
         this.progress("searching");
         const missing: string[] = [];
         let reason = "";
-        for (const key of step.keys) {
+        for (const key of keys) {
           const data = await this.read(key);
           if (this.dead) throw new Error("Router disposed");
           this.fetchedBytes += data.fetchedBytes;
@@ -168,8 +235,8 @@ export class PagedRouter {
             reason = data.reason ?? "";
             this.states.set(key, "missing");
           } else if (data.empty) {
-            const p = key.split("/");
-            this.kernel.empty(+p[3]!, +p[4]!);
+            const p = key.split("/").slice(-2);
+            this.kernel.empty(+p[0]!, +p[1]!);
             this.states.delete(key);
           } else if (data.bytes) {
             const view = new DataView(
@@ -177,11 +244,11 @@ export class PagedRouter {
                 data.bytes.byteOffset,
                 data.bytes.byteLength,
               ),
-              parts = key.split("/");
+              parts = key.split("/").slice(-2);
             if (
               data.bytes.length < 16 ||
-              view.getUint32(8, true) !== +parts[3]! ||
-              view.getUint32(12, true) !== +parts[4]!
+              view.getUint32(8, true) !== +parts[0]! ||
+              view.getUint32(12, true) !== +parts[1]!
             )
               throw new Error("Routing cell address mismatch");
             const t = performance.now();
@@ -197,6 +264,7 @@ export class PagedRouter {
             missing,
             reason,
             snapshot: this.snapshot,
+            profile,
             computeMs: this.computeMs,
             graphCached: this.fetchedBytes === 0,
             graphBytes: this.fetchedBytes,
