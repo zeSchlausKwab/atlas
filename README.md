@@ -52,7 +52,7 @@ The server prefers Vienna Plus when present. **Draw your offline world** selects
 
 ## Try the demo
 
-The wider sidebar has **Explore**, **Route**, **Extract**, **Offline**, and **Data** tabs. **Run tools on** switches between this device and the server for routing, forward/reverse geocoding, peak queries, feature extraction and offline export. Local files use this device. The Data tab enables each optional capability without preloading its data.
+The wider sidebar has **Explore**, **Route**, **Extract**, **Offline**, **Style**, and **Data** tabs. **Run tools on** switches between this device and the server for routing, forward/reverse geocoding, peak queries, feature extraction and offline export. Local files use this device. The Data tab enables each optional capability without preloading its data.
 
 **Extract** adds buildings, water, railways, roads or landscape areas from the current view as a selectable overlay. Click shapes or list entries, inspect their OSM tags, then download the selection as GeoJSON or polylines. Full source shapes and courtyard holes are preserved. Use an optional exact tag filter such as `water=lake`, `water=oxbow` or `railway=tram`. Source geometry loads only when requested.
 
@@ -117,7 +117,7 @@ CPU draw timing measures the synchronous render submission call, not complete GP
 
 - Renderer is currently a browser WebGL2 backend controlled by Rust/WASM. Native rendering and WebGPU are future work. Tile decoding and tessellation have native Rust tests.
 - Polygons include closed ways, building parts and flat multipolygon relations with courtyards. Incomplete/ambiguous rings and nested relation members are skipped and counted in the manifest. Source import keeps selected display ways, peaks, named location nodes and walking topology, not the complete OSM object graph.
-- Walking routing uses one graph block, linear nearest-segment snapping (150 m limit), and Dijkstra shortest distance. No driving/cycling profiles, turn relations/instructions, terrain/difficulty costs, conditional access evaluation, national access defaults, imagery, 3D, or Hashtree transport. Unsupported conditional/access values are conservatively excluded. See the exact [walking profile](docs/ROUTING.md).
+- Walking routing uses one graph block, linear nearest-segment snapping (150 m limit), and Dijkstra shortest distance. No driving/cycling profiles, turn relations/instructions, terrain/difficulty costs, conditional access evaluation, national access defaults, imagery, terrain, or Hashtree transport. Unsupported conditional/access values are conservatively excluded. See the exact [walking profile](docs/ROUTING.md).
 - Geocoding uses TypeScript, in-memory name scans and bounding-box-filtered street segment projection. No house-number matching, address interpolation, typo correction, administrative hierarchy or external search provider. Nearest street is scoped to retained road/pedestrian-street/track types within 1 km; it is not a postal address or accessibility claim. See [geocoding details](docs/GEOCODING.md).
 - Graph coverage is the retained source extract, not a complete worldwide network. A missing graph, an unsnappable point, and no path in the loaded graph are distinct outcomes. No-path is not proof of real-world disconnection. Graph partitioning and fetching missing graph regions during search are future work.
 - Peak results cover the source extract, which can include data beyond the political border. They are exact over retained peaks with known numeric elevations, not a claim about all physical terrain.
@@ -177,3 +177,9 @@ const reader = await new AtlasReader(new HttpSource(url), onRead, {
 ```
 
 While drawing, use the **Finish area** button over the map or **Enter** after three corners. **Space** adds the map center, **Undo** removes the last corner, and **Escape/Cancel** abandons the drawing. The toolbar stays with the map on mobile.
+
+## Live styling and 3D
+
+**Style** offers three palettes, individual colors, line-weight and label-size dials, validated style JSON import/export, and saved appearance. Paint changes update GPU uniforms without fetching tiles or re-uploading meshes. **Inspect in 3D** adds an orthographic tilted view with depth-tested, shaded building extrusions. All buildings use an explicitly illustrative height; OSM heights, terrain and perspective are future work. Picking and overlays share the ground camera.
+
+See [the styling contract and 3D roadmap](docs/STYLING-AND-3D.md). The proposed planet stack is budgeted at **1–2 TB per complete snapshot**, with substantial compiler/index/serving changes required first. [Planet storage, hardware estimates and evidence](docs/PLANET-SIZING.md).
