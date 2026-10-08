@@ -1,3 +1,4 @@
+import { TilePresentation, type TileView } from "./tile-presentation";
 import { PLACE_LABEL_KEY, decodePlaces } from "../../labels/src/places";
 import type { Place } from "../../format/src/index";
 import {
@@ -48,6 +49,7 @@ export interface MapStats {
   wanted: number;
   missing: number;
   triangles: number;
+  fallbackTiles: number;
   drawMs: number;
   loading: number;
   labels: LabelStats;
@@ -144,6 +146,7 @@ export class AtlasMap {
   private route: Extract<WalkingResult, { status: "found" }> | null = null;
   private layerMask = 255;
   private loaded = new Set<string>();
+  private presentation = new TilePresentation();
   private loading = new Set<string>();
   private failed = new Set<string>();
   private wanted: string[] = [];
@@ -597,7 +600,13 @@ export class AtlasMap {
           this.invalidate();
         });
     }
-    return known.blocks;
+    return {
+      blocks: known.blocks,
+      complete: known.complete,
+      zoom: z,
+      layers,
+      bounds: [w, north, e, south],
+    } satisfies TileView;
   }
   invalidate() {
     if (!this.frame && !this.dead)
@@ -618,15 +627,18 @@ export class AtlasMap {
       if (c.height !== Math.round(height * ratio))
         c.height = Math.round(height * ratio);
     }
-    const visible = this.visibleTiles();
+    const view = this.visibleTiles(),
+      visible = view.blocks;
     this.wanted = visible.map((b) => b.key);
+    const presented = this.presentation.select(view, this.loaded);
+    const retained = new Set([...this.wanted, ...presented.map((b) => b.key)]);
     for (const key of this.loaded) {
-      if (!this.wanted.includes(key)) {
+      if (!retained.has(key)) {
         this.renderer.remove_tile(key);
         this.loaded.delete(key);
       }
     }
-    this.renderer.set_visible(this.wanted.join(","));
+    this.renderer.set_visible(presented.map((b) => b.key).join(","));
     for (const block of visible) {
       if (this.loading.size >= 6) break;
       if (
@@ -683,6 +695,7 @@ export class AtlasMap {
         this.wanted.filter((key) => !this.loaded.has(key)).length +
         this.catalogMissing,
       triangles: this.triangles,
+      fallbackTiles: presented.filter((b) => b.z !== view.zoom).length,
       drawMs: this.lastDraw,
       loading: this.loading.size + this.catalogLoading.size,
       labels: this.labelStats,
@@ -751,7 +764,7 @@ export class AtlasMap {
     if (this.grid) {
       ctx.lineWidth = 1;
       ctx.font = "10px monospace";
-      for (const b of this.visibleTiles()) {
+      for (const b of this.visibleTiles().blocks) {
         const n = 2 ** b.z!;
         const corners = [
           [b.x! / n, b.y! / n],

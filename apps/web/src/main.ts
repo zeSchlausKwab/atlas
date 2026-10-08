@@ -161,9 +161,13 @@ function stats(s: MapStats) {
   el("draw-stat").textContent =
     s.drawMs < 0.1 ? "<0.1 ms" : `${s.drawMs.toFixed(1)} ms`;
   el("render-status").textContent = s.loading
-    ? "Loading map blocks"
+    ? s.fallbackTiles
+      ? "Updating detail · previous tiles visible"
+      : "Loading map blocks"
     : s.missing
-      ? "Some tiles are unavailable"
+      ? s.fallbackTiles
+        ? "Using cached detail · some tiles unavailable"
+        : "Some tiles are unavailable"
       : "WASM renderer active";
   el("ready-state").textContent = s.loading
     ? "READING"
