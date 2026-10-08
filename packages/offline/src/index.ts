@@ -309,6 +309,7 @@ export async function extract(
       bytes: graph.bytes.length,
       skippedWays: 0,
     };
+    delete routing.cells; // Child exports carry their clipped reference graph, not parent cells.
     await add({
       key: routing.block,
       bytes: graph.bytes,

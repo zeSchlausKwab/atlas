@@ -1108,3 +1108,41 @@ impl WalkingRouter {
         serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
+
+#[wasm_bindgen]
+pub struct CellWalkingRouter {
+    inner: atlas_routing::cells::PagedRouter,
+}
+#[wasm_bindgen]
+impl CellWalkingRouter {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: atlas_routing::cells::PagedRouter::new(32 * 1024 * 1024, 250_000),
+        }
+    }
+    pub fn begin(&mut self, ax: f64, ay: f64, bx: f64, by: f64) -> Result<(), JsValue> {
+        self.inner
+            .begin([ax, ay], [bx, by])
+            .map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn load(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.inner.load(bytes).map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn empty(&mut self, x: u32, y: u32) {
+        self.inner.empty(x, y);
+    }
+    pub fn step(&mut self) -> Result<String, JsValue> {
+        let value = self.inner.step(2048).map_err(|e| JsValue::from_str(&e))?;
+        serde_json::to_string(&value).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+    pub fn used_keys(&self) -> String {
+        self.inner.used_keys().join(",")
+    }
+    pub fn memory_bytes(&self) -> u32 {
+        self.inner.memory() as u32
+    }
+    pub fn cell_count(&self) -> u32 {
+        self.inner.cell_count() as u32
+    }
+}

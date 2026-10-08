@@ -1,4 +1,5 @@
 //! A small, deterministic, distance-weighted walking graph. No display geometry is used.
+pub mod cells;
 use serde::Serialize;
 use std::{
     cmp::Ordering,

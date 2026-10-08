@@ -54,6 +54,7 @@ export interface Place {
   coordinates: [number, number];
 }
 export interface RoutingMetadata {
+  cells?: { zoom: 14; count: number; codec: "rcl1" };
   profile: "walking-v1";
   block: "routing/walking";
   nodes: number;
@@ -116,7 +117,7 @@ export interface Block {
 export const INDEX_PAGE_SIZE = 32;
 export function spatialAddress(key: string) {
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land))\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|routing\/cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -278,6 +279,8 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   }
   if (manifest.routing) {
     const r = manifest.routing;
+    if (r.cells && (r.cells.zoom !== 14 || r.cells.codec !== "rcl1" || !Number.isSafeInteger(r.cells.count) || r.cells.count < 1))
+      throw new Error("Invalid routing cell metadata");
     if (
       r.profile !== "walking-v1" ||
       r.block !== "routing/walking" ||
@@ -320,7 +323,9 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
             (p.prefix
               ? !manifest.tileLayers?.includes(p.prefix.slice(5) as MapLayer)
               : !!manifest.tileLayers)
-          : !/^features\/(buildings|water|railways|roads|land)$/.test(
+          : p.prefix === "routing/cells"
+            ? p.z !== manifest.routing?.cells?.zoom
+            : !/^features\/(buildings|water|railways|roads|land)$/.test(
               p.prefix!,
             ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
@@ -413,6 +418,11 @@ export function validateBlocks(
         a.y >= 2 ** a.z
       )
         throw new Error("Invalid feature address");
+    }
+    if (block.key.startsWith("routing/cells/")) {
+      const a = spatialAddress(block.key);
+      if (!a || a.z !== manifest.routing?.cells?.zoom || a.x >= 2 ** a.z || a.y >= 2 ** a.z)
+        throw new Error("Invalid routing cell address");
     }
     if (block.key.startsWith("tile/")) {
       if (

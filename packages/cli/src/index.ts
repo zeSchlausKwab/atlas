@@ -4,6 +4,7 @@ import { encodeTile } from "./tile-codec";
 import { buildingHeight } from "../../format/src/heights";
 import { MAP_LAYERS } from "../../format/src/index";
 import { splitTile } from "../../format/src/tiles";
+import { addRoutingCells, partitionPackageRouting } from "./routing-cells";
 import { splitPackageLayers } from "./split-layers";
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -102,8 +103,16 @@ async function main() {
     throw new Error("--format must be md or json");
   if (command === "help" || flags.help) {
     console.log(
-      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
+      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli routing-cells --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
     );
+    return;
+  }
+  if (command === "routing-cells") {
+    const input = resolve(text(flags, "input", DEFAULT_OUTPUT)), output = resolve(text(flags, "output", input));
+    const maxBytes = Number(text(flags, "max-bytes", "2000000000"));
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error("Invalid --max-bytes");
+    if (flags["dry-run"]) report({action:"partition-routing",input,output,maxBytes},format);
+    else report(await partitionPackageRouting(input,output,maxBytes),format);
     return;
   }
   if (command === "split-layers") {
@@ -346,6 +355,8 @@ async function main() {
         await Bun.file(`${importedPath}.routing.bin`).arrayBuffer(),
       ),
     });
+    console.log("Partitioning routing cells…");
+    imported.routing.cells = await addRoutingCells(writer, new Uint8Array(await Bun.file(`${importedPath}.routing.bin`).arrayBuffer()));
     console.log("Building search and street indexes…");
     const geocoding = buildGeocoding(imported.locations, imported.geojson);
     await writer.add({
@@ -420,6 +431,7 @@ async function main() {
         ...(flags.features ? ["feature-extraction"] : []),
         "map-labels",
         "walking-routing",
+        "paged-walking-routing",
         "location-search",
         "reverse-street",
         "peak-query",
