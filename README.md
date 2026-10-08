@@ -27,7 +27,7 @@ The server watches TypeScript changes and rebuilds the frontend on restart. Refr
 
 ## Vienna Plus and offline drawing
 
-**Vienna Plus is ready: 600.3 MB, 118,490 stored tiles across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
+**Vienna Plus is ready: 619.6 MB, 118,490 spatial tile addresses across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
 
 ```sh
 bun run data:vienna # needs osmium-tool, uses verified cached sources when present
@@ -103,7 +103,7 @@ bun test
 cargo test --workspace
 ```
 
-39 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 15 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings and rendering codecs. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
+43 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 15 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings and rendering codecs. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
 
 ## Original small sample
 
@@ -131,13 +131,41 @@ Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright
 
 ## Request data for a purpose
 
-The Vienna map-only browser path (1440×1000 viewport, default center, z11 → z17 without panning) now reads about **1.75 MB initially / 7.49 MB cumulatively**, versus **30.03 MB / 53.88 MB** before this change. Measurements count `.atlas` range payloads, excluding the small app shell/WASM. Root metadata fell from 24.10 MB to about 0.52 MB. Per-purpose transfer counters are shown in the inspector.
+The **Data → On the map** checkboxes configure downloads as well as visibility. Choose any combination of landscape, water, buildings, roads, railways and peaks, plus separate street-name and POI labels. Choices are saved before the next page load. Buildings first appear at z14. Offline exports use the same selection.
 
-- Tile-directory pages are fetched only for the current region and zoom.
+With only buildings + water, a cold 1600×1000 Vienna view through z11–17 read **2.64 MB including metadata**: **1.50 MB buildings**, **105.8 KB water**, and **zero bytes of other geometry or labels**. Enabling roads afterward fetched only road blocks. Previously downloaded bytes remain in cumulative counters; disabling a layer stops future requests but does not undo completed or in-flight transfers.
+
+Consumer code can choose layers at creation or change them later:
+
+```ts
+const map = await AtlasMap.create(canvas, reader, onStats, onError, {
+  layers: ["buildings", "water"],
+  streetNames: false,
+  pois: false,
+});
+map.setLayers(["water", "railways"]);
+// For a reader without the renderer:
+const blocks = await reader.tiles(z, xmin, xmax, ymin, ymax, [
+  "buildings",
+  "water",
+]);
+```
+
+New CLI builds separate layers by default. Existing packages can be converted without importing OSM again:
+
+```sh
+bun run cli split-layers --input data/region.atlas --output data/region.layered.atlas
+```
+
+Older combined packages still render, but the UI explicitly identifies their visibility-only switches. [Layer layout and verified Vienna counts](docs/VIENNA-PLUS.md#selective-display-layers).
+
+Before layer separation, the directory/geometry optimization reduced the Vienna all-layer browser path (1440×1000, default center, z11 → z17 without panning) to **1.75 MB initially / 7.49 MB cumulatively**, versus **30.03 MB / 53.88 MB** before this change. Measurements count `.atlas` range payloads, excluding the small app shell/WASM. That revision reduced root metadata from 24.10 MB to about 0.52 MB; the new layer catalog uses 0.706 MB. Per-purpose transfer counters are shown in the inspector.
+
+- Tile-directory pages are fetched only for the selected layers, region and zoom.
 - Display geometry has zoom-appropriate detail; stored z16 retains full detail and all levels z0–16 remain present.
 - Street names and POIs have separate first-visible zoom tiers. Turning either off avoids its future payload requests.
 - Routing, geocoding, queries and source geometry load only on explicit use. Disable them in Data to block tool use and future payload reads. Routing/search remain regional blocks; source geometry is paged by category and region. Server mode returns results without downloading these source blocks.
-- Offline export defaults to geometry and labels. Add routing, search or peak queries explicitly.
+- Offline export includes selected display layers and labels. Add routing, search or peak queries explicitly.
 
 A restricted consumer can make the contract explicit:
 

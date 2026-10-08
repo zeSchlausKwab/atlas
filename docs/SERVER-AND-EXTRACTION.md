@@ -39,14 +39,14 @@ Example route request:
 
 Inputs by endpoint:
 
-| Endpoint        | `input`                                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------------------- |
-| `/api/route`    | `{start: [lon,lat], end: [lon,lat]}`                                                                       |
-| `/api/search`   | `{query: "Stephansplatz", limit: 10}`                                                                      |
-| `/api/reverse`  | `{point: [16.3731,48.2085]}`                                                                               |
-| `/api/peak`     | `{}`                                                                                                       |
-| `/api/features` | `{kind: "buildings", bounds: [west,south,east,north], limit: 200, tag: "building=apartments"}`             |
-| `/api/offline`  | `{name, polygon: [[lon,lat],...], minZoom: 0, maxZoom: 16, routing: false, search: false, queries: false}` |
+| Endpoint        | `input`                                                                                                                                                                     |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/route`    | `{start: [lon,lat], end: [lon,lat]}`                                                                                                                                        |
+| `/api/search`   | `{query: "Stephansplatz", limit: 10}`                                                                                                                                       |
+| `/api/reverse`  | `{point: [16.3731,48.2085]}`                                                                                                                                                |
+| `/api/peak`     | `{}`                                                                                                                                                                        |
+| `/api/features` | `{kind: "buildings", bounds: [west,south,east,north], limit: 200, tag: "building=apartments"}`                                                                              |
+| `/api/offline`  | `{name, polygon: [[lon,lat],...], minZoom: 0, maxZoom: 16, routing: false, search: false, queries: false, layers: ["water", "buildings"], streetNames: false, pois: false}` |
 
 JSON responses wrap `{result, execution}`. Execution records side, operation, elapsed computation time and uncached source bytes read on that host. `RemoteOperations` measures actual response body bytes in the browser. Time includes source acquisition/decoding when cold and excludes queue wait and network latency. The inspector shows **API responses** separately from **package bytes**; server source reads are not browser downloads.
 
@@ -65,7 +65,7 @@ Generate source geometry with `bun run cli generate ... --features`. The Vienna 
 
 Extraction returns full retained source shapes, including multipolygons and courtyard holes. It does not reverse-engineer display tiles. Shapes crossing the viewport remain complete; line objects correspond to OSM ways rather than assembled route relations. The prototype supports one extraction overlay at a time and at most 500 results, with explicit truncation. Zoom in when the viewport exceeds 0.25° in either direction. Filters use actual tags: Alte Donau is tagged `water=oxbow`, so `water=lake` intentionally excludes it.
 
-Source geometry is paged by category and fixed z12 cells, independently of display zoom. Querying on the device loads intersecting cells, then deduplicates full objects. Server querying sends only result GeoJSON. Water/rail/building display switches still hide geometry within shared base tiles; they do not split those display payloads. Street-name and POI labels do have separate payloads. Offline child `.atlas` exports currently omit the extraction index; selected objects can be saved separately as GeoJSON.
+Source geometry is paged by category and fixed z12 cells, independently of display zoom. Querying on the device loads intersecting cells, then deduplicates full objects. Server querying sends only result GeoJSON. Display switches now choose independently stored geometry layers as well as visibility. Street-name and POI labels remain separate. Older combined packages retain visibility-only behavior until converted with `split-layers`. Offline child `.atlas` exports currently omit the extraction index; selected objects can be saved separately as GeoJSON.
 
 ## Proof and validation
 

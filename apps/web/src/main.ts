@@ -19,13 +19,58 @@ import {
 import { RouteControls } from "./routing";
 import { SearchControls } from "./search";
 import { OfflineControls } from "./offline";
-import { project } from "../../../packages/format/src/index";
+import {
+  project,
+  MAP_LAYERS,
+  LAYER_MASKS,
+  type MapLayer,
+} from "../../../packages/format/src/index";
 let world: OfflineControls | undefined;
 let search: SearchControls | undefined;
 let routing: RouteControls | undefined;
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
+const LAYER_SETTINGS = "atlas-map-layers-v1";
+function selectedLayers(): MapLayer[] {
+  const mask = [...document.querySelectorAll<HTMLInputElement>("[data-mask]")]
+    .filter((e) => e.checked)
+    .reduce((mask, e) => mask | Number(e.dataset.mask), 0);
+  return MAP_LAYERS.filter((l) => (mask & LAYER_MASKS[l]) !== 0);
+}
+function saveLayers() {
+  try {
+    localStorage.setItem(
+      LAYER_SETTINGS,
+      JSON.stringify({
+        layers: selectedLayers(),
+        streetNames: el<HTMLInputElement>("street-labels").checked,
+        pois: el<HTMLInputElement>("poi-labels").checked,
+      }),
+    );
+  } catch {}
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(LAYER_SETTINGS) ?? "null");
+  if (
+    saved &&
+    Array.isArray(saved.layers) &&
+    saved.layers.every((l: string) => MAP_LAYERS.includes(l as MapLayer)) &&
+    typeof saved.streetNames === "boolean" &&
+    typeof saved.pois === "boolean"
+  ) {
+    const mask = saved.layers.reduce(
+      (m: number, l: MapLayer) => m | LAYER_MASKS[l],
+      0,
+    );
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-mask]",
+    ))
+      input.checked = (mask & Number(input.dataset.mask)) !== 0;
+    el<HTMLInputElement>("street-labels").checked = saved.streetNames;
+    el<HTMLInputElement>("poi-labels").checked = saved.pois;
+  }
+} catch {}
 let reader: AtlasReader;
 let map: AtlasMap | undefined;
 let sourceLabel = "server";
@@ -67,6 +112,10 @@ function telemetry(event?: ReadEvent) {
         (purpose === "streetNames" ? reader.bytesByPurpose.labels : 0),
     );
   }
+  for (const layer of [...MAP_LAYERS, "combined"] as const)
+    el(`bytes-layer-${layer}`).textContent = formatBytes(
+      reader.bytesByLayer[layer],
+    );
   if (reader.index) {
     const percent = (reader.bytesRead / reader.index.header.fileLength) * 100;
     el("transfer-meter").style.width = `${Math.min(percent, 100)}%`;
@@ -127,6 +176,7 @@ function stats(s: MapStats) {
   telemetry();
 }
 async function open(source: ByteSource) {
+  el("render-status").textContent = "Opening map package…";
   extractor?.destroy();
   extractor = undefined;
   world?.destroy();
@@ -154,6 +204,9 @@ async function open(source: ByteSource) {
   try {
     await reader.open();
     const m = reader.index.manifest;
+    el("layer-transport").textContent = m.tileLayers
+      ? "Choose any combination. Only selected layers are requested."
+      : "This older package has combined geometry tiles. Switches hide geometry; convert the package with split-layers for selective downloads.";
     el("dataset-name").textContent = m.name;
     el("dataset-subtitle").textContent =
       `OSM EXTRACT · Z${m.minZoom}–${m.maxZoom}`;
@@ -176,6 +229,11 @@ async function open(source: ByteSource) {
       reader,
       stats,
       error,
+      {
+        layers: selectedLayers(),
+        streetNames: el<HTMLInputElement>("street-labels").checked,
+        pois: el<HTMLInputElement>("poi-labels").checked,
+      },
     );
     map.onPickModeChange = (hint) => {
       el("pick-banner").hidden = hint === null;
@@ -212,6 +270,11 @@ async function open(source: ByteSource) {
         await open(new FileSource(file));
       },
       operations,
+      () => ({
+        layers: selectedLayers(),
+        streetNames: el<HTMLInputElement>("street-labels").checked,
+        pois: el<HTMLInputElement>("poi-labels").checked,
+      }),
     );
     configureOperations();
     if (m.selection) map.setSelection(m.selection.polygon);
@@ -262,6 +325,8 @@ for (const input of document.querySelectorAll<HTMLInputElement>(
 ))
   input.addEventListener("change", configureOperations);
 function setLabels() {
+  saveLayers();
+  world?.refresh();
   map?.setLabels(
     el<HTMLInputElement>("street-labels").checked,
     el<HTMLInputElement>("poi-labels").checked,
@@ -270,13 +335,9 @@ function setLabels() {
 for (const id of ["street-labels", "poi-labels"])
   el<HTMLInputElement>(id).onchange = setLabels;
 function setLayers() {
-  let mask = 0;
-  document
-    .querySelectorAll<HTMLInputElement>("[data-mask]")
-    .forEach((input) => {
-      if (input.checked) mask |= Number(input.dataset.mask);
-    });
-  map?.setLayers(mask);
+  map?.setLayers(selectedLayers());
+  saveLayers();
+  world?.refresh();
 }
 el("zoom-in").onclick = () => map?.zoomBy(1);
 el("zoom-out").onclick = () => map?.zoomBy(-1);

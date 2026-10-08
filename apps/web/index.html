@@ -408,8 +408,8 @@
                 >
               </div>
               <p class="search-scope">
-                Map and labels by default. Add routing or search when you need
-                them.
+                Uses your selected map layers, street names and POIs from Data.
+                Add routing or search when needed.
               </p>
               <button id="world-export" class="primary-button" disabled>
                 Build offline file <span>↓</span>
@@ -458,23 +458,40 @@
                 <span class="tiny-note">LIVE</span>
               </div>
               <label class="layer"
-                ><span class="swatch land"></span><span>Landscape & water</span
+                ><span class="swatch land"></span><span>Landscape</span
                 ><input
                   type="checkbox"
-                  data-mask="3"
+                  data-mask="1"
                   checked
-                  aria-label="Landscape and water"
+                  aria-label="Landscape"
+              /></label>
+              <label class="layer"
+                ><span class="swatch water"></span><span>Water</span
+                ><input
+                  type="checkbox"
+                  data-mask="2"
+                  checked
+                  aria-label="Water"
               /></label>
               <label class="layer"
                 ><span class="swatch roads"></span><span>Roads & paths</span
                 ><input
                   type="checkbox"
-                  data-mask="120"
+                  data-mask="56"
                   checked
                   aria-label="Roads and paths"
               /></label>
               <label class="layer"
-                ><span class="swatch buildings"></span><span>Buildings</span
+                ><span class="swatch railways"></span><span>Rail lines</span
+                ><input
+                  type="checkbox"
+                  data-mask="64"
+                  checked
+                  aria-label="Rail lines"
+              /></label>
+              <label class="layer"
+                ><span class="swatch buildings"></span
+                ><span>Buildings <small class="muted">z14+</small></span
                 ><input
                   type="checkbox"
                   data-mask="4"
@@ -505,6 +522,13 @@
                   checked
                   aria-label="Mountain peaks"
               /></label>
+              <p id="layer-transport" class="search-scope">
+                Choose any combination. Only selected layers are requested.
+              </p>
+              <p class="search-scope">
+                Choices are saved for the next load. Previously read bytes
+                remain in the session counter.
+              </p>
             </section>
             <section
               class="capability-section"
@@ -554,8 +578,8 @@
               /></label>
               <p class="search-scope">
                 Turning a tool off keeps already downloaded bytes in memory. Map
-                geometry is shared by the base layers; their switches control
-                visibility. Street names and POIs have independent downloads.
+                geometry, street names and POIs load independently in packages
+                with separate layers.
               </p>
             </section>
             <section class="dataset-section" aria-labelledby="dataset-label">
@@ -576,7 +600,7 @@
                   <dd id="feature-count">—</dd>
                 </div>
                 <div>
-                  <dt>Vector tiles</dt>
+                  <dt>Map tile blocks</dt>
                   <dd id="tile-count">—</dd>
                 </div>
                 <div>
@@ -728,6 +752,39 @@
             <dd id="bytes-features">0 KB</dd>
           </div>
         </dl>
+        <details class="map-layer-bytes">
+          <summary>Map bytes by layer</summary>
+          <dl class="purpose-bytes">
+            <div>
+              <dt>Landscape</dt>
+              <dd id="bytes-layer-land">0 KB</dd>
+            </div>
+            <div>
+              <dt>Water</dt>
+              <dd id="bytes-layer-water">0 KB</dd>
+            </div>
+            <div>
+              <dt>Buildings</dt>
+              <dd id="bytes-layer-buildings">0 KB</dd>
+            </div>
+            <div>
+              <dt>Roads & paths</dt>
+              <dd id="bytes-layer-roads">0 KB</dd>
+            </div>
+            <div>
+              <dt>Rail lines</dt>
+              <dd id="bytes-layer-railways">0 KB</dd>
+            </div>
+            <div>
+              <dt>Mountain peaks</dt>
+              <dd id="bytes-layer-peaks">0 KB</dd>
+            </div>
+            <div>
+              <dt>Legacy combined tiles</dt>
+              <dd id="bytes-layer-combined">0 KB</dd>
+            </div>
+          </dl>
+        </details>
         <p class="transfer-note">
           Cumulative reads across all visited zooms, including cached data.
         </p>

@@ -26,6 +26,10 @@ export class OfflineControls {
     readonly map: AtlasMap,
     readonly open: (file: Blob) => Promise<void>,
     readonly operations: OperationSession,
+    readonly mapData: () => Pick<
+      Selection,
+      "layers" | "streetNames" | "pois"
+    > = () => ({}),
   ) {
     const m = reader.index.manifest;
     el<HTMLInputElement>("name").value = `My ${m.name}`;
@@ -115,6 +119,7 @@ export class OfflineControls {
   }
   private selection(): Selection {
     return {
+      ...this.mapData(),
       polygon: this.polygon,
       minZoom: Number(el<HTMLSelectElement>("min").value),
       maxZoom: Number(el<HTMLSelectElement>("max").value),

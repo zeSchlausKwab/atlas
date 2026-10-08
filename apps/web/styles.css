@@ -1613,3 +1613,24 @@ button:disabled {
   font-weight: normal;
   letter-spacing: -0.8px;
 }
+
+.swatch.water {
+  background: #85b5c2;
+}
+.swatch.railways {
+  height: 5px;
+  border-top: 1px solid #738280;
+  border-bottom: 1px solid #738280;
+}
+.map-layer-bytes {
+  margin: 0 22px 18px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.map-layer-bytes summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.map-layer-bytes .purpose-bytes {
+  margin: 0;
+}
