@@ -1,0 +1,140 @@
+# ATLAS experimental wire formats / 1 and 2
+
+Status: prototype. There is no compatibility promise. All binary integers are little-endian.
+
+## File layout
+
+```
+[32-byte header][UTF-8 JSON manifest][UTF-8 JSON root directory][block payloads][directory pages]
+```
+
+| Offset | Type    | Meaning                                               |
+| ------ | ------- | ----------------------------------------------------- |
+| 0      | 8 bytes | ASCII `ATLAS001`                                      |
+| 8      | u32     | Wire version: 1 (flat) or 2 (paged)                             |
+| 12     | u32     | Manifest byte length                                  |
+| 16     | u32     | Directory byte length                                 |
+| 20     | u32     | Payload start (32 + both JSON lengths)                |
+| 24     | u64     | Total file length (reader requires a safe JS integer) |
+
+The reader supports both versions and caps root metadata at 64 MiB. CLI generation and browser extraction write v2. Directory leaves are independently compressed and hashed. Malformed headers, unsupported versions, truncated metadata, duplicate keys, overlapping entries within a directory and out-of-bounds blocks fail explicitly. The manifest schema version remains 1; the header selects the directory layout.
+
+## Manifest
+
+Contains format/version, display name, source URL and PBF SHA-256, OSM attribution, longitude/latitude bounds, min/max stored tile zoom, retained feature and peak counts, a small place-label list, capabilities, limitations, and a snapshot digest. Bounds are the envelope of retained source features, not an authoritative country polygon. Dateline-spanning sources are not specially handled.
+
+Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `location-search`, `reverse-street`, `map-labels`.
+
+Routing-enabled packages also declare `routing: {profile: "walking-v1", block: "routing/walking", nodes, segments, bytes, skippedWays, snapLimitMeters: 150, scope: "retained-source-extract"}`. Routing is optional; older packages without the capability still render. Display zoom ranges do not govern routing detail.
+
+The snapshot is SHA-256 of UTF-8 `JSON.stringify({manifest, blocks})`, where the manifest excludes `snapshot` and `blocks` is the ordered list of `{key, hash}` for uncompressed blocks and `{key, hash, codec, rawLength}` for compressed blocks. This prototype uses the writer's field order; it is not a language-independent canonical JSON standard. V1 excludes offsets from snapshot identity. V2 hashes `JSON.stringify({manifest, pages, blocks})`, with complete ordered page descriptors in `pages` and the same reduced descriptors for root `blocks`; page hashes cover all tile descriptors, including offsets. The reader checks per-block hashes and HTTP version consistency; it does not independently recompute or authenticate the snapshot digest.
+
+## Block directory
+
+V1 stores the complete JSON array. V2 stores `{blocks, pages}`: `blocks` holds non-tile entries (labels, routing, search, queries), while `pages` points to gzip-compressed tile directory arrays at the end of the payload. Each page covers a 32 × 32 tile-address region at one zoom and has key `index/tiles/z/pageX/pageY`, where pageX/Y are floor(tileX/Y / 32). It adds `z`, `x`, `y` (page coordinates), and `count` to a regular compressed-block descriptor. Page contents must belong to that region, match its count and precede the directory-page payloads.
+
+The root contains every page pointer and label descriptor; neither is recursively paged yet. `reader.index.blocks` means root entries, not all blocks. Use `reader.tiles(z, xmin, xmax, ymin, ymax)` for a region or explicitly `reader.allBlocks()` for an audit. `index.tileCount` and `index.blockCount` give totals without loading leaves. Cached directory pages and pending reads are shared across callers; an uncached page in cache-only mode is a missing-data error.
+
+Each data-block entry has:
+
+- `key`: unique logical identity, e.g. `tile/12/2156/1439`, `query/peaks`, `features/geojson`.
+- `offset`: relative to the payload start.
+- `length`: exact stored byte length.
+- `hash`: SHA-256 of stored bytes as lowercase hex.
+- `features`: number of features represented.
+- `z`, `x`, `y`: present for tiles, in the Web Mercator XYZ scheme.
+
+Blocks optionally carry `codec: "gzip"` and `rawLength` (exact decoded length). Hashes and byte offsets describe the stored compressed bytes. The reader checks SHA-256 first, decompresses with a streaming length bound, and caches decoded bytes. A missing codec means uncompressed data, so existing packages remain readable. Decoded blocks are capped at 768 MiB. Routing `bytes` describes the decoded RTE1 block and is checked against `rawLength ?? length`. HTTP content encoding must preserve range offsets.
+
+The CLI spools compressed blocks to disk and writes the header/index plus payload to a temporary file before atomic rename. `--max-bytes` checks the complete file, including metadata. Browser extraction writes the same paged layout with Blob parts. The in-memory `encodePackage` helper accepts `{paged: true}`; its default remains the legacy fixture layout.
+
+## Vector tile block
+
+Tile identity lives in the directory. The tile stores display geometry, not a routing graph.
+
+```
+magic:          4 bytes ASCII TIL1
+feature_count:  u32
+repeat feature_count times:
+  class:        u8
+  geometry:     u8 (1 point, 2 line, 3 polygon)
+  part_count:   u16
+  repeat part_count times:
+    point_count: u32
+    repeat point_count times:
+      x:        u16
+      y:        u16
+```
+
+Coordinates occupy `[0, 65535]` in tile space; x increases east, y south. Point features use one part containing their points. Line parts are independent paths. Polygon parts contain closed rings; outer rings share a winding direction, and opposite-winding holes follow their outer ring. A new outer ring starts another polygon. The decoder limits tiles to 500,000 features and 3,000,000 points and rejects trailing bytes, bad geometry classes, and truncation.
+
+Classes: 0 landscape, 1 water, 2 buildings, 3 local roads, 4 major roads, 5 paths, 6 rail, 7 peaks. The prototype style is compiled into the renderer. Buildings, service roads and paths enter at z14, residential roads at z12 and tertiary roads at z11. Major roads appear progressively by class. Normal map zooms use geojson-vt tolerance `65535 / 512`, equivalent to half a CSS pixel on a 256px tile. Overview z0–5 uses tolerance 5 and overview classes to retain the small regional footprint. At the stored maximum geojson-vt preserves unsimplified geometry. Tile buffer is zero. The WASM renderer decodes, tessellates polygons, expands line segments into screen-width triangle strips, creates peak triangles, and submits WebGL2 draw calls. Line joins are independent segment quads; sophisticated joins, labels, and styling remain separate work.
+
+The camera can zoom to 20 independently of the stored maximum. Beyond that maximum, it uses the stored highest-zoom tile geometry with larger transforms (overzoom). No additional higher-resolution source geometry is implied. Vienna Plus stores through z16 and overzooms only z17–20.
+
+## Query blocks
+
+`query/peaks` is a JSON array of `{id, name, coordinates: [lon,lat], elevation: number|null}`. Elevations accept numeric metres and an explicit `m` suffix. Other units and non-finite values stay unknown. The current operation reads the whole small query block, chooses the maximum known elevation, and returns known/unknown counts, snapshot, and scope. No spatial maximum tree exists yet.
+
+`features/geojson` is the retained source feature collection. It preserves identifiers and tags for selected ways, and basic name/elevation properties for peak points. Display tiles omit these properties. The map does not fetch this block for rendering. `--no-source-features` omits it and its capability; the Vienna recipe uses this option.
+
+## Geocoding blocks
+
+`location-search` requires `search/locations`, UTF-8 JSON with `{schema: "locations-v1", records: [...]}`. Each record has `id` (OSM node/way/relation reference), `name`, string-array `aliases`, `kind` (`place`, `street`, `poi`, `peak`), `category`, representative `[longitude, latitude]` coordinates, and optional `context` such as `near Vaduz`. Context is proximity to a retained settlement, not an administrative assertion. Records are sorted by identity. Named street fragments are grouped by normalized name and nearest retained settlement (within 10 km); the chosen representative retains an actual OSM way ID and lies on one source segment.
+
+`reverse-street` requires `search/streets`, UTF-8 JSON with `{schema: "streets-v1", streets: [...]}`. Each street is `{id, name: string|null, aliases: string[], category, coordinates: [[longitude,latitude],...]}`. It retains each eligible source way independently, including unnamed ways, with unsimplified coordinates. The source compiler includes non-area highway values motorway/trunk/primary/secondary/tertiary and their links, unclassified, residential, living_street, service, pedestrian, road and track. Other types, including standalone footways and paths, are excluded. No walking-access policy is applied to this lookup index.
+
+The reader verifies a block hash before JSON decoding, then validates schema, IDs, coordinates, names/aliases and bounded record counts. Name blocks allow at most 1 million records; street blocks allow at most 1 million ways / 10 million points. Coordinates are finite with longitude ±180° and latitude ±85°. The prototype assumes a regional, non-dateline-spanning extract.
+
+Name and street blocks load independently and are reusable in cache-only mode. Search returns ranked name matches with snapshot/scope; reverse lookup returns the nearest eligible segment within 1,000 m or a scoped null result. Missing/corrupt bytes remain errors. See [GEOCODING.md](GEOCODING.md) for algorithms, API and limits.
+
+## Walking graph block
+
+`routing/walking` is a topology block, independent of vector tile geometry and zoom. The importer retains every eligible way segment between consecutive OSM node IDs, using original coordinates before tile simplification. Shared node IDs create junctions; geometric intersections alone do not. Nodes are sorted by OSM ID, segments follow source way order.
+
+```
+magic:          4 bytes ASCII RTE1
+node_count:     u32
+segment_count:  u32
+repeat node_count times (24 bytes):
+  osm_node_id:   i64
+  longitude:     f64
+  latitude:      f64
+repeat segment_count times (20 bytes):
+  a:             u32 node-array index
+  b:             u32 node-array index
+  osm_way_id:     i64
+  directions:    u8 (bit 0: a → b, bit 1: b → a)
+  reserved:      3 bytes, zero
+```
+
+Only direction values 1, 2, and 3 are valid. The decoder requires exact length, unique node IDs, finite coordinates within ±180° longitude / ±85° latitude, in-bounds distinct node indices, zero reserved bytes, and at most 8 million nodes / 12 million segments. Distinct nodes may have equal coordinates. Distances are calculated using a spherical haversine metric at load time. There are no precomputed shortcut edges, turn tables, names, or spatial snap index.
+
+The client verifies the block hash before decoding into Rust adjacency lists. `AtlasRouter.route([startLon,startLat], [endLon,endLat])` lazily loads this block and returns `found`, `no-route`, or `unsnappable`, plus snapshot and computation metadata. Missing/corrupt bytes throw a separate error. Found routes include snapped endpoints, snap offsets, coordinate geometry, meters, explored-node count, and OSM way references. Routing does not fetch or derive connectivity from display tiles. See [ROUTING.md](ROUTING.md) for the exact access profile and limitations.
+
+## Delivery and reads
+
+1. Read bytes 0–31.
+2. Read the JSON metadata range.
+3. Request the directory leaves intersecting the viewport at its zoom, then only visible tile blocks, the query block needed, the walking graph on the first route request, or the name/street block on its first geocoding operation.
+4. Verify each block before caching or decoding.
+
+The HTTP reader requires 206 responses, exact Content-Range and length, and a strong ETag. It sends If-Match on later reads. The Bun server pins an immutable Blob at startup and returns 412 if a client's ETag differs. Closed, open-ended, and suffix single ranges are supported; invalid or multipart ranges receive 416. HEAD, OPTIONS, and CORS headers are supported. The local-file adapter uses Blob.slice with the same range semantics.
+
+Cache-only mode reads existing session blocks and throws explicit cache-miss errors. It never interprets missing bytes as an empty tile or a negative query result. Empty geographic space outside the directory means no stored display tile; it does not establish completeness of the underlying real-world data.
+
+## Polygon extracts
+
+Optional `selection` metadata records `polygon` (unclosed lon/lat ring), `parentSnapshot`, and `boundaryPolicy`. Display blocks are complete intersecting tiles; walking and street segments are clipped to the polygon. New routing boundary nodes use unique negative i64 IDs and are never joined merely by equal coordinates. Search and peak records retain interior representative points when explicitly selected for export. Routing, search and peak queries are opt-in; map geometry and labels are the default. `featureCountKind: "tile-records"` means the manifest feature count sums display records across selected tiles and zooms. It is not a unique-source-feature count. See [VIENNA-PLUS.md](VIENNA-PLUS.md).
+
+## Street and POI labels
+
+`map-labels` declares `labelZoom: 12`. New blocks use `labels/12/x/y/roads/minZoom` or `labels/12/x/y/pois/minZoom`. Each record appears once, in its first-visible zoom tier (13, 14, 15, 16 or 17). Only the enabled purpose and visible tiers are fetched. Legacy combined `labels/12/x/y` blocks remain readable. The fixed spatial grid is independent of display zoom. Their JSON schema is `{schema: "labels-v1", roads: [{id, name, category, coordinates}], pois: [Location]}`. Roads are split at cell boundaries; POIs occupy the cell containing their anchor. Label blocks have no directory `z/x/y` display-tile fields. The reader validates schema, identities, geometry and bounded record counts after hash verification and decompression.
+
+The client chooses cells intersecting its viewport and applies zoom-dependent visibility, text fitting, upright road rotation and collision suppression. It does not fetch the whole geocoder for display. Labels and POI hit targets use Canvas2D over the WASM/WebGL map. Offline export clips road label geometry and selects interior POI anchors; it retains labels independently of the full search-index toggle.
+
+Optional `areas: {assembledRelations, skippedRelations}` records importer diagnostics. Flat multipolygon outer and inner way chains are joined by original OSM node identity. Inner rings remain holes; independently tagged outer fills are suppressed when their corresponding relation was successfully assembled. Nested relation members and incomplete/ambiguous rings remain unsupported. See [BUILDINGS-AND-LABELS.md](BUILDINGS-AND-LABELS.md).
+
+## Client data-purpose policy
+
+`new AtlasReader(source, onRead, {purposes: ["map", "labels"]})` prevents optional payload reads before they start. Available purposes are `map`, `labels`, `routing`, `search`, `queries`, `source`. Metadata is always permitted. Omitting the option allows all purposes, but they are still lazy. `bytesByPurpose` separates directory, map, street names, POIs and semantic data; byte totals are cumulative, not current resident/view bytes. A policy is a client guard against accidental reads, not server access control. Base geometry classes still share each display tile; their visibility toggles do not yet reduce transport.

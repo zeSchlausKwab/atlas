@@ -1,0 +1,9 @@
+[package]
+name = "atlas-osm-import"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+atlas-routing = { path = "../routing" }
+osmpbfreader = "0.19"
+serde_json = "1"

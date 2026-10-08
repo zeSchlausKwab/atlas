@@ -1,0 +1,10 @@
+node_modules/
+target/
+dist/
+data/*
+!data/.gitkeep
+packages/renderer/pkg/*
+!packages/renderer/pkg/.gitkeep
+.DS_Store
+
+*.routing.bin

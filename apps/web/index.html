@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f3f1e9" />
+    <title>Atlas — a geographic format experiment</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="brand" href="/" aria-label="Atlas home"
+        ><span class="brand-mark" aria-hidden="true">◭</span> atlas<span
+          class="brand-dot"
+          >.</span
+        ></a
+      >
+      <span class="masthead-note">A geographic format experiment</span>
+      <div class="masthead-right">
+        <span class="prototype">PROTOTYPE 005</span
+        ><a
+          href="https://www.openstreetmap.org/copyright"
+          target="_blank"
+          rel="noreferrer"
+          >Built on open data ↗</a
+        >
+      </div>
+    </header>
+    <main class="workspace">
+      <aside class="sidebar">
+        <div class="intro">
+          <p class="eyebrow">FIELD NOTES / 01</p>
+          <h1>
+            A wider world.<br />
+            A whole new map.
+          </h1>
+          <p class="description">
+            One file. A map you can explore,<br />
+            search, and find a route through.
+          </p>
+        </div>
+        <section class="search-section" aria-labelledby="search-label">
+          <p class="eyebrow">FIND YOUR PLACE</p>
+          <div class="search-heading">
+            <h2 id="search-label">Somewhere, here.</h2>
+            <button
+              id="search-clear"
+              class="text-button"
+              aria-label="Clear search results"
+            >
+              Clear
+            </button>
+          </div>
+          <form id="location-form">
+            <label for="location-query">Find a place or street</label>
+            <div class="search-input-row">
+              <input
+                id="location-query"
+                type="search"
+                placeholder="Wien, Stephansplatz…"
+                maxlength="120"
+                autocomplete="off"
+                disabled
+              /><button
+                id="location-submit"
+                type="submit"
+                aria-label="Search locations"
+                disabled
+              >
+                →
+              </button>
+            </div>
+          </form>
+          <ul
+            id="location-results"
+            class="location-results"
+            aria-label="Location results"
+            hidden
+          ></ul>
+          <details class="reverse-controls" open>
+            <summary>Coordinates → nearest street</summary>
+            <form id="reverse-form">
+              <label for="reverse-coordinates">Latitude, longitude</label>
+              <input
+                id="reverse-coordinates"
+                type="text"
+                value="47.13929, 9.52280"
+                placeholder="47.13929, 9.52280"
+                autocomplete="off"
+                disabled
+              />
+              <div class="reverse-actions">
+                <button
+                  id="reverse-submit"
+                  type="submit"
+                  class="text-button"
+                  disabled
+                >
+                  Find nearest street</button
+                ><button
+                  id="reverse-pick"
+                  type="button"
+                  class="text-button"
+                  aria-pressed="false"
+                  disabled
+                >
+                  Pick on map ⌖
+                </button>
+              </div>
+            </form>
+          </details>
+          <p id="search-status" role="status" aria-live="polite">
+            Search inside this map’s extract.
+          </p>
+          <div id="search-detail" hidden></div>
+          <div id="search-route-actions" class="reverse-actions" hidden>
+            <button id="search-route-start" class="text-button">
+              Route from here</button
+            ><button id="search-route-end" class="text-button">
+              Route to here
+            </button>
+          </div>
+          <p class="search-scope">
+            Nearest street, not a house-number address. Covers retained OSM
+            streets within 1 km.
+          </p>
+        </section>
+        <section class="world-section" aria-labelledby="world-label">
+          <p class="eyebrow">TAKE A PIECE WITH YOU</p>
+          <h2 id="world-label">Draw your offline world.</h2>
+          <p>
+            Choose a boundary. Keep the map, the streets, and the paths between
+            them.
+          </p>
+          <button id="world-draw" class="primary-button">
+            Draw an area <span>◇</span>
+          </button>
+          <div class="reverse-actions">
+            <button id="world-finish" class="text-button" disabled>
+              Finish area</button
+            ><button id="world-undo" class="text-button" disabled>
+              Undo corner</button
+            ><button id="world-clear" class="text-button" disabled>
+              Clear area
+            </button>
+          </div>
+          <label for="world-name">Name your world</label
+          ><input id="world-name" maxlength="80" value="My offline world" />
+          <div class="world-zooms">
+            <label
+              >From zoom
+              <select
+                id="world-min"
+                aria-label="Minimum offline zoom"
+              ></select></label
+            ><label
+              >To zoom
+              <select id="world-max" aria-label="Maximum offline zoom"></select
+            ></label>
+          </div>
+          <div class="world-options">
+            <label
+              ><input id="world-routing" type="checkbox" /> Walking
+              routes</label
+            ><label
+              ><input id="world-search" type="checkbox" /> Search &
+              streets</label
+            ><label
+              ><input id="world-queries" type="checkbox" /> Peak queries</label
+            >
+          </div>
+          <p class="search-scope">
+            Map and labels by default. Add routing or search when you need them.
+          </p>
+          <button id="world-export" class="primary-button" disabled>
+            Build offline file <span>↓</span>
+          </button>
+          <p id="world-status" role="status" aria-live="polite">
+            Open a package to start drawing.
+          </p>
+          <div id="world-ready" class="reverse-actions" hidden>
+            <button id="world-download" class="text-button">
+              Save offline file ↓</button
+            ><button id="world-open" class="text-button">
+              Open this world ↗
+            </button>
+          </div>
+          <details class="route-scope">
+            <summary>What stays inside the boundary?</summary>
+            <p>
+              Whole display tiles intersecting your shape are retained, so the
+              map can show beyond its edges. Routing and street segments are cut
+              at the boundary. Search keeps places with a representative point
+              inside. A simple polygon is supported; holes are not yet
+              supported.
+            </p>
+            <p>
+              After this app is saved for offline use, reopen it at this address
+              and choose your downloaded .atlas file. Browser export is limited
+              to 256 MB per file.
+            </p>
+          </details>
+          <p id="shell-status" class="search-scope">
+            Preparing the app for offline use…
+          </p>
+        </section>
+        <section class="dataset-section" aria-labelledby="dataset-label">
+          <div class="section-heading">
+            <h2 id="dataset-label">The dataset</h2>
+            <span class="pill">.atlas</span>
+          </div>
+          <div class="dataset-title">
+            <span class="dataset-icon" aria-hidden="true">↗</span>
+            <div>
+              <h3 id="dataset-name">Opening map…</h3>
+              <p id="dataset-subtitle">Opening geographic package…</p>
+            </div>
+          </div>
+          <dl class="dataset-facts">
+            <div>
+              <dt id="feature-label">Features</dt>
+              <dd id="feature-count">—</dd>
+            </div>
+            <div>
+              <dt>Vector tiles</dt>
+              <dd id="tile-count">—</dd>
+            </div>
+            <div>
+              <dt>Package size</dt>
+              <dd id="package-size">—</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>OpenStreetMap</dd>
+            </div>
+          </dl>
+          <div class="file-actions">
+            <button id="open-file" class="text-button">
+              Open a local file ↗</button
+            ><a
+              id="download"
+              href="/maps/demo.atlas"
+              download="liechtenstein.atlas"
+              >Download ↓</a
+            >
+          </div>
+          <input id="file-input" type="file" accept=".atlas" hidden />
+        </section>
+        <section class="routing-section" aria-labelledby="routing-label">
+          <p class="eyebrow">A PATH THROUGH THE DATA</p>
+          <h2 id="routing-label">Go somewhere.</h2>
+          <p class="routing-intro">A walking route, calculated here.</p>
+          <button id="route-example" class="primary-button" disabled>
+            Try Vaduz → Schaan <span>↗</span>
+          </button>
+          <div class="route-endpoints">
+            <button
+              id="route-start"
+              class="endpoint"
+              disabled
+              aria-label="Choose start on map"
+              aria-pressed="false"
+            >
+              <b>A</b><span id="route-start-label">Choose start on map</span>
+            </button>
+            <button
+              id="route-end"
+              class="endpoint"
+              disabled
+              aria-label="Choose destination on map"
+              aria-pressed="false"
+            >
+              <b>B</b
+              ><span id="route-end-label">Choose destination on map</span>
+            </button>
+          </div>
+          <p id="route-hint" class="route-hint">
+            Pick A and B on the map, or try the example.
+          </p>
+          <div class="route-actions">
+            <button id="route-calculate" class="text-button" disabled>
+              Find route
+            </button>
+            <button id="route-reverse" class="text-button" disabled>
+              Reverse
+            </button>
+            <button id="route-clear" class="text-button" disabled>Clear</button>
+          </div>
+          <div id="route-result" role="status" aria-live="polite" hidden></div>
+          <details class="route-scope">
+            <summary>Walking profile & coverage</summary>
+            <p>
+              Shortest distance on retained OSM ways. Basic foot access,
+              barriers and foot one-way rules. No terrain, difficulty, live
+              closures or turn restrictions. Routes stay in this extract; they
+              may be incomplete near its edges. Time assumes 4.8 km/h.
+              Experimental, not navigation guidance.
+            </p>
+          </details>
+        </section>
+        <section class="layers-section" aria-labelledby="layers-label">
+          <div class="section-heading">
+            <h2 id="layers-label">On the map</h2>
+            <span class="tiny-note">LIVE</span>
+          </div>
+          <label class="layer"
+            ><span class="swatch land"></span><span>Landscape & water</span
+            ><input
+              type="checkbox"
+              data-mask="3"
+              checked
+              aria-label="Landscape and water"
+          /></label>
+          <label class="layer"
+            ><span class="swatch roads"></span><span>Roads & paths</span
+            ><input
+              type="checkbox"
+              data-mask="120"
+              checked
+              aria-label="Roads and paths"
+          /></label>
+          <label class="layer"
+            ><span class="swatch buildings"></span><span>Buildings</span
+            ><input
+              type="checkbox"
+              data-mask="4"
+              checked
+              aria-label="Buildings"
+          /></label>
+          <label class="layer"
+            ><span class="swatch">Aa</span><span>Street names</span
+            ><input
+              id="street-labels"
+              type="checkbox"
+              checked
+              aria-label="Street names"
+          /></label>
+          <label class="layer"
+            ><span class="swatch">●</span><span>Points of interest</span
+            ><input
+              id="poi-labels"
+              type="checkbox"
+              checked
+              aria-label="Points of interest"
+          /></label>
+          <label class="layer"
+            ><span class="swatch peaks">△</span><span>Mountain peaks</span
+            ><input
+              type="checkbox"
+              data-mask="128"
+              checked
+              aria-label="Mountain peaks"
+          /></label>
+        </section>
+        <section class="query-section" aria-labelledby="query-label">
+          <p class="eyebrow">BEYOND THE VIEWPORT</p>
+          <h2 id="query-label">Ask the map.</h2>
+          <p>The answer lives in the data,<br />even when it’s out of view.</p>
+          <button id="highest-peak" class="primary-button" disabled>
+            Find the highest peak <span>↗</span>
+          </button>
+          <div id="query-result" role="status" hidden></div>
+        </section>
+        <div class="sidebar-foot">
+          <span class="status-dot"></span><span>Rust / WASM renderer</span
+          ><span>v0.1</span>
+        </div>
+      </aside>
+      <section class="map-area" aria-label="Interactive map">
+        <canvas
+          id="map"
+          tabindex="0"
+          aria-label="Map. Drag to pan, scroll to zoom, or use arrow and plus/minus keys."
+        ></canvas>
+        <div id="pick-banner" class="pick-banner" hidden>
+          Click the map to choose a point.
+        </div>
+        <div
+          id="world-map-tools"
+          class="draw-toolbar"
+          role="group"
+          aria-label="Finish drawing your offline area"
+          hidden
+        >
+          <span id="world-map-status" role="status"
+            >Click at least three corners.</span
+          >
+          <div>
+            <button id="world-map-finish" class="primary-button" disabled>
+              Finish area ✓
+            </button>
+            <button id="world-map-undo" class="text-button" disabled>
+              Undo
+            </button>
+            <button id="world-map-cancel" class="text-button">Cancel</button>
+          </div>
+        </div>
+        <div class="map-heading">
+          <span class="eyebrow">47° N / 9° E</span
+          ><span>Liechtenstein & surroundings</span>
+        </div>
+        <div class="map-tools">
+          <button id="zoom-in" aria-label="Zoom in">+</button
+          ><button id="zoom-out" aria-label="Zoom out">−</button
+          ><span class="tool-divider"></span
+          ><button id="fit" aria-label="Fit dataset" title="Fit dataset">
+            ⌖
+          </button>
+        </div>
+        <div class="compass" aria-hidden="true"><span>N</span>↑</div>
+        <div class="transport-card">
+          <div class="transport-top">
+            <span class="status-dot" id="connection-dot"></span
+            ><strong id="connection-label">Reading from server</strong
+            ><span id="ready-state">Opening</span>
+          </div>
+          <p id="transport-detail">Only the bytes needed for this view.</p>
+          <div class="transport-toggles">
+            <label
+              ><input id="tile-grid" type="checkbox" /> Tile boundaries</label
+            ><label><input id="offline" type="checkbox" /> Cache only</label>
+          </div>
+        </div>
+        <div id="error" class="error" role="alert" hidden></div>
+        <div class="map-attribution">
+          ©
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+            >OpenStreetMap contributors</a
+          >
+          · ODbL
+        </div>
+        <div class="map-hint">
+          DRAG TO EXPLORE <span>·</span> SCROLL TO ZOOM
+        </div>
+      </section>
+      <aside class="inspector" aria-label="Package inspector">
+        <div class="inspector-title">
+          <span class="eyebrow">UNDER THE SURFACE</span>
+          <h2>Follow the bytes.</h2>
+          <p>A living view of a single file.</p>
+        </div>
+        <div class="transfer">
+          <span class="tiny-note">READ THIS SESSION</span>
+          <div class="transfer-value" id="bytes-read">0 <span>KB</span></div>
+          <div class="meter"><span id="transfer-meter"></span></div>
+          <p id="transfer-percent">Waiting for package</p>
+        </div>
+        <dl class="purpose-bytes" aria-label="Bytes read by purpose">
+          <div>
+            <dt>Directory</dt>
+            <dd id="bytes-directory">0 KB</dd>
+          </div>
+          <div>
+            <dt>Map geometry</dt>
+            <dd id="bytes-map">0 KB</dd>
+          </div>
+          <div>
+            <dt>Street names</dt>
+            <dd id="bytes-streetNames">0 KB</dd>
+          </div>
+          <div>
+            <dt>POIs</dt>
+            <dd id="bytes-pois">0 KB</dd>
+          </div>
+          <div>
+            <dt>Routing</dt>
+            <dd id="bytes-routing">0 KB</dd>
+          </div>
+          <div>
+            <dt>Search</dt>
+            <dd id="bytes-search">0 KB</dd>
+          </div>
+          <div>
+            <dt>Queries</dt>
+            <dd id="bytes-queries">0 KB</dd>
+          </div>
+        </dl>
+        <p class="transfer-note">
+          Cumulative reads across all visited zooms, including cached data.
+        </p>
+        <div class="inspector-stats">
+          <div>
+            <strong id="request-count">0</strong><span>range reads</span>
+          </div>
+          <div>
+            <strong id="cached-count">0</strong><span>cached blocks</span>
+          </div>
+        </div>
+        <div class="ledger-title">
+          <h3>Recent reads</h3>
+          <span>OFFSET → SIZE</span>
+        </div>
+        <ol id="read-log" class="read-log"></ol>
+        <div class="snapshot">
+          <span class="tiny-note">PINNED SNAPSHOT</span
+          ><code id="snapshot-id">—</code>
+          <p>Every fetched block is checked<br />against its SHA-256 hash.</p>
+        </div>
+        <details class="limitations">
+          <summary>What this prototype includes</summary>
+          <p>
+            Binary vector tiles, local-file and HTTP readers, peak queries and
+            local walking routes, location search and nearest-street lookup.
+            Data blocks are fetched on demand. Terrain, imagery, graph
+            partitioning and Hashtree delivery are future experiments.
+          </p>
+        </details>
+      </aside>
+    </main>
+    <footer class="statusbar">
+      <span
+        ><i class="status-dot"></i
+        ><b id="render-status">Initializing renderer</b></span
+      >
+      <div>
+        <span>ZOOM <b id="zoom-stat">—</b></span
+        ><span>TILES <b id="tiles-stat">—</b></span
+        ><span>TRIANGLES <b id="triangles-stat">—</b></span
+        ><span>CPU DRAW <b id="draw-stat">—</b></span
+        ><span class="label-metric">NAMES <b id="labels-stat">—</b></span>
+      </div>
+      <span class="footer-note">Geography, packaged.</span>
+    </footer>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

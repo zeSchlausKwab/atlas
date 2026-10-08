@@ -1,0 +1,31 @@
+{
+  "name": "geo-format",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch apps/server/index.ts",
+    "start": "bun apps/server/index.ts",
+    "build:wasm": "wasm-pack build crates/renderer --target web --out-dir ../../packages/renderer/pkg --release",
+    "build:web": "bun scripts/build-web.ts",
+    "build": "bun run build:wasm && bun run build:web",
+    "cli": "bun packages/cli/src/index.ts",
+    "data:fetch": "bun run cli fetch",
+    "data:build": "bun run cli generate",
+    "setup": "bun run data:fetch && bun run data:build && bun run build",
+    "test": "bun test",
+    "test:rust": "cargo test --workspace",
+    "typecheck": "tsc --noEmit",
+    "data:vienna": "bun scripts/vienna-plus.ts"
+  },
+  "dependencies": {
+    "geojson-vt": "4.0.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.11",
+    "@types/geojson": "7946.0.16",
+    "@types/geojson-vt": "3.2.5",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/osm-import", "crates/renderer", "crates/routing"]
+resolver = "2"
+
+[profile.release]
+lto = true
+opt-level = "s"
