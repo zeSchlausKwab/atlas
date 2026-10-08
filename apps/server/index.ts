@@ -24,6 +24,7 @@ const built = await Bun.build({
   entrypoints: [
     resolve(root, "apps/web/src/main.ts"),
     resolve(root, "apps/web/src/offline-worker.ts"),
+    resolve(root, "apps/web/src/routing-worker.ts"),
   ],
   outdir: resolve(root, "dist"),
   target: "browser",
@@ -42,6 +43,10 @@ const engine = new AtlasEngine(
 );
 const api = createApiHandler(engine);
 const routes = new Map([
+  [
+    "/routing-worker.js",
+    ["dist/routing-worker.js", "text/javascript; charset=utf-8"],
+  ],
   ["/sw.js", ["apps/web/sw.js", "text/javascript; charset=utf-8"]],
   [
     "/offline-worker.js",

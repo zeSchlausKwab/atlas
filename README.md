@@ -27,7 +27,7 @@ The server watches TypeScript changes and rebuilds the frontend on restart. Refr
 
 ## Vienna Plus and offline drawing
 
-**Vienna Plus is ready: 640.1 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
+**Vienna Plus is ready: 725.3 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
 
 ```sh
 bun run data:vienna # needs osmium-tool, uses verified cached sources when present
@@ -56,7 +56,7 @@ The wider sidebar has **Explore**, **Route**, **Extract**, **Offline**, **Style*
 
 **Extract** adds buildings, water, railways, roads or landscape areas from the current view as a selectable overlay. Click shapes or list entries, inspect their OSM tags, then download the selection as GeoJSON or polylines. Full source shapes and courtyard holes are preserved. Use an optional exact tag filter such as `water=lake`, `water=oxbow` or `railway=tram`. Source geometry loads only when requested.
 
-**Compare device & server** checks route distance, coordinates and OSM way sequence against the same snapshot. The Vienna example returned a **6.2 KB** server response and zero browser routing-block bytes; explicit device comparison then loaded the **69.45 MB** graph and matched exactly. See [server operations and extraction](docs/SERVER-AND-EXTRACTION.md) for the API, data boundaries and verification.
+**Compare device & server** checks route distance, coordinates and OSM way sequence against the same snapshot. The 5.91 km Schönbrunn example returned an **11.2 KB** server response and matched exactly. On the device, the shorter Praterstern example now reads **463 KB across 3 routing cells**, instead of the **69.45 MB** reference graph. See [server operations and extraction](docs/SERVER-AND-EXTRACTION.md) for the API, data boundaries and verification.
 
 The following local-data experiments assume **Run tools on → This device**:
 
@@ -69,12 +69,12 @@ The following local-data experiments assume **Run tools on → This device**:
 - **Coordinates → nearest street** accepts explicitly labelled **latitude, longitude**. Try `47.13929, 9.52280`: it finds **Städtle**, about **16 m** away. Or use **Pick on map**; Enter picks the center and Escape cancels.
 - A search result can become a routing endpoint using **Route from here** / **Route to here**. Search and routing share one active map-picking mode.
 - Location names and reverse street geometry are separate blocks, loaded only as needed. Test each operation in **Cache only** before and after its first successful lookup. Cached query results need no further server reads; map tiles still load independently.
-- **Try Vaduz → Schaan** in **Go somewhere** computes a walking route inside the browser. The first request fetches one verified `routing/walking` block; later routes reuse it.
+- **Try Stephansplatz → Praterstern** in **Route** runs resumable Rust/WASM routing in a worker, fetching only needed cells. The grid shows reused, fetched and missing coverage. Older packages without cells continue using their reference graph.
 - Choose **A** and **B** on the map to route between your own points. Pan/zoom while selecting; keyboard users can pan with arrows and press Enter to select the center. **Reverse**, **Find route**, and **Clear** are available.
-- Try **Cache only** before any route: the missing graph is reported explicitly. Load a route online, then enable it and reverse the route: no new graph request is made. Rendering tiles can still be missing while routing works.
+- Load the Praterstern route, enable **Cache only**, then reverse it without new routing reads. Try **Stephansplatz → Schönbrunn** to reach uncached coverage, then **Fetch missing cells & resume**. A missing cell pauses the frontier; it never means no route. [Algorithm, measured bytes and limits](docs/ROUTING.md).
 - Toggle individual map layers and tile boundaries. Roads, footways, rail lines and waterways widen smoothly with zoom. Roads and paths have subtle borders, and railways gain a twin-edge stroke. Their **Style** width controls adjust thickness without downloading more data.
 - **Find the highest peak** fetches `query/peaks`, computes the maximum locally, and moves the camera to the result. It works independently of which vector tiles are loaded.
-- Enable **Cache only**, then move to another zoom/area: missing tiles are reported as partial. Re-enable network reads to finish the view. This is a session memory cache, not a persistent offline download.
+- Enable **Cache only**, then move to another zoom/area: missing tiles are reported as partial. Re-enable network reads to finish the view. Viewed map blocks, directory pages and routing cells persist in a 128 MiB IndexedDB cache. It can be evicted; it is not a complete offline package.
 - Download the package, then use **Open a local file**. Data reads now use `Blob.slice`; the map package no longer comes from the server. After the app reports it is saved for offline use, its service worker also serves the HTML/JS/WASM without a network connection. You must explicitly reopen your saved map file.
 - Inspect byte counts, actual range reads, and a pinned snapshot in the right panel. The panel is hidden on narrow screens.
 
@@ -85,6 +85,7 @@ bun run cli --help
 bun run cli fetch --format json
 bun run cli generate --min-zoom 9 --max-zoom 14
 bun run cli inspect --format json
+bun run cli routing-cells --input data/region.atlas --output data/region-cells.atlas
 
 bun run cli fetch --url https://example.org/region.osm.pbf --out data/region.osm.pbf
 bun run cli generate --input data/region.osm.pbf --output data/region.atlas --name "My region"
@@ -104,7 +105,7 @@ bun test
 cargo test --workspace
 ```
 
-53 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 22 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings, rendering codecs, line joins, continuous stroke widths and unchanged water-area geometry. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
+58 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 28 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings, rendering codecs, line joins, continuous stroke widths and unchanged water-area geometry. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
 
 ## Original small sample
 
@@ -118,11 +119,11 @@ CPU draw timing measures the synchronous render submission call, not complete GP
 
 - Renderer is currently a browser WebGL2 backend controlled by Rust/WASM. Native rendering and WebGPU are future work. Tile decoding and tessellation have native Rust tests.
 - Polygons include closed ways, building parts and nested multipolygon relations with courtyards. Incomplete/ambiguous rings and cyclic or excessively deep relations are skipped and counted in the manifest. Source import keeps selected display ways, peaks, named location nodes and walking topology, not the complete OSM object graph.
-- Walking routing uses one graph block, linear nearest-segment snapping (150 m limit), and Dijkstra shortest distance. No driving/cycling profiles, turn relations/instructions, terrain/difficulty costs, conditional access evaluation, national access defaults, imagery, terrain, or Hashtree transport. Unsupported conditional/access values are conservatively excluded. See the exact [walking profile](docs/ROUTING.md).
+- Walking routing uses independently fetched cells, local segment snapping (150 m limit), and resumable A\*. Legacy packages and reference comparisons retain whole-graph Dijkstra. No driving/cycling profiles, turn relations/instructions, terrain/difficulty costs, conditional access evaluation, national access defaults, imagery, terrain, or Hashtree transport. Unsupported conditional/access values are conservatively excluded. See the exact [walking profile](docs/ROUTING.md).
 - Geocoding uses TypeScript, in-memory name scans and bounding-box-filtered street segment projection. No house-number matching, address interpolation, typo correction, administrative hierarchy or external search provider. Nearest street is scoped to retained road/pedestrian-street/track types within 1 km; it is not a postal address or accessibility claim. See [geocoding details](docs/GEOCODING.md).
-- Graph coverage is the retained source extract, not a complete worldwide network. A missing graph, an unsnappable point, and no path in the loaded graph are distinct outcomes. No-path is not proof of real-world disconnection. Graph partitioning and fetching missing graph regions during search are future work.
+- Graph coverage is the retained source extract, not a complete worldwide network. A missing graph, an unsnappable point, and no path in the loaded graph are distinct outcomes. No-path is not proof of real-world disconnection. Search fetches missing cells within the package; crossing into other packages and hierarchical routing remain future work.
 - Peak results cover the source extract, which can include data beyond the political border. They are exact over retained peaks with known numeric elevations, not a claim about all physical terrain.
-- Tile directories are paged by region and zoom. The root label catalog, query tables, and importer are still in-memory prototypes. Decoded-byte caches are not bounded for planet-scale use. GPU tiles are released when they leave the viewport. Server pins the entire selected package in memory at startup to prevent mixed-version range reads.
+- Tile directories are paged by region and zoom. The root label catalog, query tables, and importer are still in-memory prototypes. Routing caches are bounded; other decoded-byte caches are not bounded for planet-scale use. GPU tiles are released when they leave the viewport. Server pins the entire selected package in memory at startup to prevent mixed-version range reads.
 - Packages contain independent block hashes. Snapshot identity is a deterministic digest, not a signature or publisher trust system. Readers do not authenticate metadata against a trusted external root.
 - The reader supports experimental wire versions 1 (flat directory) and 2 (paged directory). CLI and browser exports now write v2. Breaking changes are expected.
 

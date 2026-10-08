@@ -23,17 +23,17 @@ The reader supports both versions and caps root metadata at 64 MiB. CLI generati
 
 Contains format/version, display name, source URL and PBF SHA-256, OSM attribution, longitude/latitude bounds, min/max stored tile zoom, retained feature and peak counts, a legacy place-label list (empty in new packages), capabilities, limitations, and a snapshot digest. Bounds are the envelope of retained source features, not an authoritative country polygon. Dateline-spanning sources are not specially handled.
 
-Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`, `building-heights`.
+Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `paged-walking-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`, `building-heights`.
 
-Routing-enabled packages also declare `routing: {profile: "walking-v1", block: "routing/walking", nodes, segments, bytes, skippedWays, snapLimitMeters: 150, scope: "retained-source-extract"}`. Routing is optional; older packages without the capability still render. Display zoom ranges do not govern routing detail.
+Routing-enabled packages also declare `routing: {profile: "walking-v1", block: "routing/walking", nodes, segments, bytes, skippedWays, snapLimitMeters: 150, scope: "retained-source-extract"}`. The optional `routing.cells: {zoom: 14, count, codec: "rcl1"}` and `paged-walking-routing` capability select paged search. The count must match the spatial directory. Routing is optional; older packages without the capability still render. Display zoom ranges do not govern routing detail.
 
 The snapshot is SHA-256 of UTF-8 `JSON.stringify({manifest, blocks})`, where the manifest excludes `snapshot` and `blocks` is the ordered list of `{key, hash}` for uncompressed blocks and `{key, hash, codec, rawLength}` for compressed blocks. This prototype uses the writer's field order; it is not a language-independent canonical JSON standard. V1 excludes offsets from snapshot identity. V2 hashes `JSON.stringify({manifest, pages, blocks})`, with complete ordered page descriptors in `pages` and the same reduced descriptors for root `blocks`; page hashes cover all tile descriptors, including offsets. The reader checks per-block hashes and HTTP version consistency; it does not independently recompute or authenticate the snapshot digest.
 
 ## Block directory
 
-V1 stores the complete JSON array. V2 stores `{blocks, pages}`: `blocks` holds non-spatial entries (labels, routing, search, queries), while `pages` points to gzip-compressed spatial directory arrays at the end of the payload. Each page covers a 32 × 32 tile-address region at one zoom and has key `index/tiles/z/pageX/pageY`, where pageX/Y are floor(tileX/Y / 32). It adds `z`, `x`, `y` (page coordinates), and `count` to a regular compressed-block descriptor. Source-geometry pages use `prefix: "features/<kind>"` and key `index/features/<kind>/z/pageX/pageY`. Absent `prefix` means legacy display tiles. Page contents must belong to the declared prefix and region, match its count and precede the directory-page payloads. The root cannot directly contain spatial block descriptors.
+V1 stores the complete JSON array. V2 stores `{blocks, pages}`: `blocks` holds non-spatial entries (labels, routing, search, queries), while `pages` points to gzip-compressed spatial directory arrays at the end of the payload. Each page covers a 32 × 32 tile-address region at one zoom and has key `index/tiles/z/pageX/pageY`, where pageX/Y are floor(tileX/Y / 32). It adds `z`, `x`, `y` (page coordinates), and `count` to a regular compressed-block descriptor. Source-geometry pages use `prefix: "features/<kind>"` and key `index/features/<kind>/z/pageX/pageY`. Routing pages use `prefix: "routing/cells"` and key `index/routing/cells/14/pageX/pageY`. Absent `prefix` means legacy display tiles. Page contents must belong to the declared prefix and region, match its count and precede the directory-page payloads. The root cannot directly contain spatial block descriptors.
 
-The root contains every page pointer and label descriptor; neither is recursively paged yet. `reader.index.blocks` means root entries, not all blocks. Use `reader.tiles(z, xmin, xmax, ymin, ymax, layers?)` for display geometry, `reader.spatial(prefix, z, xmin, xmax, ymin, ymax)` for source geometry, or explicitly `reader.allBlocks()` for an audit. `index.tileCount` counts physical display blocks (multiple layers can share one spatial tile address); `index.blockCount` counts all data blocks. Both totals are available without loading leaves. Cached directory pages and pending reads are shared across callers; an uncached page in cache-only mode is a missing-data error.
+The root contains every page pointer and label descriptor; neither is recursively paged yet. `reader.index.blocks` means root entries, not all blocks. Use `reader.tiles(z, xmin, xmax, ymin, ymax, layers?)` for display geometry, `reader.spatial(prefix, z, xmin, xmax, ymin, ymax)` for source geometry or routing cells, or explicitly `reader.allBlocks()` for an audit. `index.tileCount` counts physical display blocks (multiple layers can share one spatial tile address); `index.blockCount` counts all data blocks. Both totals are available without loading leaves. Cached directory pages and pending reads are shared across callers; an uncached page in cache-only mode is a missing-data error.
 
 Each data-block entry has:
 
@@ -44,7 +44,7 @@ Each data-block entry has:
 - `features`: number of features represented.
 - `z`, `x`, `y`: present for tiles, in the Web Mercator XYZ scheme.
 
-Blocks optionally carry `codec: "gzip"` and `rawLength` (exact decoded length). Hashes and byte offsets describe the stored compressed bytes. The reader checks SHA-256 first, decompresses with a streaming length bound, and caches decoded bytes. A missing codec means uncompressed data, so existing packages remain readable. Decoded blocks are capped at 768 MiB. Routing `bytes` describes the decoded RTE1 block and is checked against `rawLength ?? length`. HTTP content encoding must preserve range offsets.
+Blocks optionally carry `codec: "gzip"` and `rawLength` (exact decoded length). Hashes and byte offsets describe the stored compressed bytes. The reader checks SHA-256 first, decompresses with a streaming length bound, and caches decoded bytes. A missing codec means uncompressed data, so existing packages remain readable. Decoded blocks are capped at 768 MiB; routing cell descriptors have a tighter 16 MiB cap. Routing `bytes` describes the decoded RTE1 block and is checked against `rawLength ?? length`. HTTP content encoding must preserve range offsets.
 
 The CLI spools compressed blocks to disk and writes the header/index plus payload to a temporary file before atomic rename. `--max-bytes` checks the complete file, including metadata. Browser extraction writes the same paged layout with Blob parts. The in-memory `encodePackage` helper accepts `{paged: true}`; its default remains the legacy fixture layout.
 
@@ -130,18 +130,35 @@ repeat segment_count times (20 bytes):
 
 Only direction values 1, 2, and 3 are valid. The decoder requires exact length, unique node IDs, finite coordinates within ±180° longitude / ±85° latitude, in-bounds distinct node indices, zero reserved bytes, and at most 8 million nodes / 12 million segments. Distinct nodes may have equal coordinates. Distances are calculated using a spherical haversine metric at load time. There are no precomputed shortcut edges, turn tables, names, or spatial snap index.
 
-The client verifies the block hash before decoding into Rust adjacency lists. `AtlasRouter.route([startLon,startLat], [endLon,endLat])` lazily loads this block and returns `found`, `no-route`, or `unsnappable`, plus snapshot and computation metadata. Missing/corrupt bytes throw a separate error. Found routes include snapped endpoints, snap offsets, coordinate geometry, meters, explored-node count, and OSM way references. Routing does not fetch or derive connectivity from display tiles. See [ROUTING.md](ROUTING.md) for the exact access profile and limitations.
+The client verifies the block hash before decoding into Rust adjacency lists. For legacy packages, `AtlasRouter.route([startLon,startLat], [endLon,endLat])` lazily loads this block and returns `found`, `no-route`, or `unsnappable`, plus snapshot and computation metadata. Missing/corrupt bytes throw a separate error. Found routes include snapped endpoints, snap offsets, coordinate geometry, meters, explored-node count, and OSM way references. Routing does not fetch or derive connectivity from display tiles. See [ROUTING.md](ROUTING.md) for the exact access profile and limitations.
+
+## Routing cells
+
+New packages add `routing/cells/14/x/y` entries containing `RCL1` payloads. All numeric fields are little-endian:
+
+```
+magic:             4 bytes ASCII RCL1
+zoom, x, y:        3 × u32 (zoom must be 14)
+graph:             complete RTE1 payload
+segment_ids:       segment_count × u32, original reference-graph ordinal
+```
+
+Segment ordinals must be strictly increasing. Cell decoding requires exact length and at most 200,000 nodes / 300,000 segments, plus RTE1 validation. The directory address must match the payload. Original OSM node/way IDs, coordinates and direction flags are preserved.
+
+The compiler replicates each full segment into every cell covered by its endpoint bounding rectangle. This conservative coverage supports snapping even when neither endpoint lies in the clicked cell, and ensures a node's owner cell contains every incident edge. There are no clipped edges, invented junctions or synthetic portals. Repeated ordinals identify the same original segment and resolve snap ties deterministically.
+
+Cell zoom is independent of display zoom. Directory absence means no retained segment in that cell; an unavailable directory page means missing data. The retained `routing/walking` block remains the reference/export source, but ordinary paged routing never reads it. See [ROUTING.md](ROUTING.md) for the continuation protocol and budgets.
 
 ## Delivery and reads
 
 1. Read bytes 0–31.
 2. Read the JSON metadata range.
-3. Request the directory leaves intersecting the viewport at its zoom, then only visible tile blocks, the query block needed, the walking graph on the first route request, or the name/street block on its first geocoding operation.
+3. Request the directory leaves intersecting the viewport at its zoom, then only visible tile blocks, the query block needed, routing cells as the search frontier requires them (the full graph only for legacy/reference operations), or the name/street block on its first geocoding operation.
 4. Verify each block before caching or decoding.
 
 The HTTP reader requires 206 responses, exact Content-Range and length, and a strong ETag. It sends If-Match on later reads. The Bun server pins an immutable Blob at startup and returns 412 if a client's ETag differs. Closed, open-ended, and suffix single ranges are supported; invalid or multipart ranges receive 416. HEAD, OPTIONS, and CORS headers are supported. The local-file adapter uses Blob.slice with the same range semantics.
 
-Cache-only mode reads existing session blocks and throws explicit cache-miss errors. It never interprets missing bytes as an empty tile or a negative query result. Empty geographic space outside the directory means no stored display tile; it does not establish completeness of the underlying real-world data.
+Cache-only mode reads memory and the optional persistent block store, then reports explicit cache misses. The demo persists compressed display/label blocks, directory pages and routing cells in a 128 MiB LRU keyed by snapshot, block key and hash. Hash verification runs on persisted reads too. The saved root permits offline reopening; missing routing cells yield a resumable `missing-data` result. It never interprets missing bytes as an empty tile or a negative query result. Empty geographic space outside the directory means no stored display tile; it does not establish completeness of the underlying real-world data.
 
 ## Polygon extracts
 

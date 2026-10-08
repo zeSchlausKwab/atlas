@@ -104,6 +104,11 @@ export class AtlasMap {
   }
   center: [number, number] = [0.5, 0.5];
   zoom = 10;
+  private routingCells: Array<{ key: string; state: string }> = [];
+  setRoutingCells(cells: Array<{ key: string; state: string }>) {
+    this.routingCells = cells;
+    this.invalidate();
+  }
   grid = false;
   selected: Peak | null = null;
   onPoiSelect?: (poi: Location) => void;
@@ -476,10 +481,14 @@ export class AtlasMap {
   }
   fitRoute() {
     if (!this.route) return;
-    const points = [
+    this.fitPositions([
       ...this.route.coordinates,
       ...this.endpoints.filter((p): p is Position => p !== null),
-    ].map((p) => project(...p));
+    ]);
+  }
+  fitPositions(positions: Position[]) {
+    if (!positions.length) return;
+    const points = positions.map((p) => project(...p));
     let minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
@@ -737,6 +746,43 @@ export class AtlasMap {
     const world = 256 * 2 ** this.zoom;
     const screen = (lon: number, lat: number) =>
       projectScreen([lon, lat], this.camera);
+    for (const c of this.routingCells) {
+      const parts = c.key.split("/"),
+        z = Number(parts[2]),
+        x = Number(parts[3]),
+        y = Number(parts[4]),
+        n = 2 ** z;
+      const corners = [
+        [x / n, y / n],
+        [(x + 1) / n, y / n],
+        [(x + 1) / n, (y + 1) / n],
+        [x / n, (y + 1) / n],
+      ].map((p) => worldToScreen(p as [number, number], this.camera));
+      if (
+        corners.every((p) => p[0] < 0) ||
+        corners.every((p) => p[0] > width) ||
+        corners.every((p) => p[1] < 0) ||
+        corners.every((p) => p[1] > height)
+      )
+        continue;
+      const color =
+        (
+          {
+            cached: "#397657",
+            loaded: "#397ea2",
+            loading: "#bb842f",
+            missing: "#c34d40",
+          } as Record<string, string>
+        )[c.state] ?? "#397657";
+      ctx.beginPath();
+      corners.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+      ctx.fillStyle = color + "16";
+      ctx.fill();
+      ctx.strokeStyle = color + "b0";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
     if (this.selection?.points.length) {
       ctx.beginPath();
       this.selection.points.forEach((p, i) => {

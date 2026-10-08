@@ -1,3 +1,4 @@
+import type { BlockStore } from "./store";
 import {
   MAP_LAYERS,
   tileLayer,
@@ -131,15 +132,38 @@ export class AtlasReader {
   constructor(
     readonly source: ByteSource,
     readonly onRead?: (event: ReadEvent) => void,
-    readonly options: { purposes?: readonly DataPurpose[] } = {},
+    readonly options: {
+      purposes?: readonly DataPurpose[];
+      store?: BlockStore;
+      sourceId?: string;
+    } = {},
   ) {}
   async open() {
-    const header = parseHeader(await this.readRange("header", 0, HEADER_SIZE));
-    this.index = parseIndex(
-      header,
-      await this.readRange("index", HEADER_SIZE, header.payloadOffset),
-    );
+    let headerBytes: Uint8Array, indexBytes: Uint8Array;
+    try {
+      headerBytes = await this.readRange("header", 0, HEADER_SIZE);
+      const header = parseHeader(headerBytes);
+      indexBytes = await this.readRange(
+        "index",
+        HEADER_SIZE,
+        header.payloadOffset,
+      );
+    } catch (error) {
+      // Only transport failures permit using a previously validated snapshot.
+      if (!(error instanceof TypeError) || !this.options.sourceId) throw error;
+      const saved = await this.options.store?.getIndex(this.options.sourceId);
+      if (!saved) throw error;
+      headerBytes = saved.header;
+      indexBytes = saved.index;
+      this.offline = true;
+    }
+    this.index = parseIndex(parseHeader(headerBytes), indexBytes);
     this.byKey = new Map(this.index.blocks.map((b) => [b.key, b]));
+    if (this.options.sourceId)
+      await this.options.store?.putIndex(this.options.sourceId, {
+        header: headerBytes,
+        index: indexBytes,
+      });
     return this;
   }
   private async readRange(key: string, start: number, end: number) {
@@ -324,16 +348,51 @@ export class AtlasReader {
       return cached;
     }
     if (this.pending.has(key)) return this.pending.get(key)!;
-    if (this.offline) throw new Error(`Not cached: ${key}`);
     const request = (async () => {
-      const bytes = await this.readRange(key, start, start + block.length);
+      const stored = await this.options.store?.get(
+        this.index.manifest.snapshot,
+        block,
+      );
+      if (!stored && this.offline) throw new Error(`Not cached: ${key}`);
+      const bytes =
+        stored ?? (await this.readRange(key, start, start + block.length));
+      if (stored) {
+        this.cacheHits++;
+        this.onRead?.({
+          key,
+          start,
+          end: start + block.length,
+          bytes: 0,
+          cached: true,
+        });
+      }
       if ((await sha256(bytes)) !== block.hash)
         throw new Error(`Integrity check failed: ${key}`);
       const decoded =
         block.codec === "gzip"
           ? await decompress(bytes, block.rawLength!)
           : bytes;
+      if (!stored)
+        await this.options.store?.put(
+          this.index.manifest.snapshot,
+          block,
+          bytes,
+        );
       this.cache.set(key, decoded);
+      // Bound decoded routing bytes separately from the kernel's decoded-cell cache.
+      if (key.startsWith("routing/cells/")) {
+        let size = [...this.cache].reduce(
+          (n, [k, v]) => n + (k.startsWith("routing/cells/") ? v.length : 0),
+          0,
+        );
+        for (const [k, v] of this.cache) {
+          if (size <= 16 * 1024 * 1024) break;
+          if (k.startsWith("routing/cells/")) {
+            this.cache.delete(k);
+            size -= v.length;
+          }
+        }
+      }
       return decoded;
     })();
     this.pending.set(key, request);

@@ -1,3 +1,4 @@
+import type { RoutingProgress } from "../../../packages/routing/src/paged";
 import { OperationSession, executionText } from "./operations";
 import { type Position } from "../../../packages/routing/src/index";
 import { AtlasReader } from "../../../packages/format/src/reader";
@@ -22,6 +23,21 @@ export class RouteControls {
   private dead = false;
   private abort = new AbortController();
   private supported: boolean;
+  private cells = new Map<string, { key: string; state: string }>();
+  private progress(p: RoutingProgress) {
+    this.cells = new Map(p.cells.map((c) => [c.key, c]));
+    this.drawCells();
+    element("route-cell-metrics").textContent =
+      `${p.loadedCells} cells used · ${p.reusedCells} reused · ${(p.fetchedBytes / 1e6).toFixed(2)} MB downloaded · ${(p.memoryBytes / 1048576).toFixed(1)} MiB estimated engine memory · ${p.computeMs.toFixed(0)} ms compute. ${this.reader.options.store?.available ? "Cached on this device (128 MiB limit)." : "Persistent storage unavailable; keep this tab open."}`;
+  }
+  private drawCells() {
+    this.map.setRoutingCells(
+      element<HTMLInputElement>("route-cell-overlay").checked
+        ? [...this.cells.values()]
+        : [],
+    );
+  }
+
   constructor(
     readonly reader: AtlasReader,
     readonly map: AtlasMap,
@@ -59,10 +75,46 @@ export class RouteControls {
       this.points = [a.coordinates, b.coordinates];
       this.names = [a.name, b.name];
       this.map.setEndpoints(...this.points);
+      this.map.fitPositions([a.coordinates, b.coordinates]);
       void this.calculate();
     });
     button("example").hidden = !a || !b;
     this.clear();
+    element("route-cell-panel").hidden = !reader.index.manifest.routing?.cells;
+    operations.onRouteProgress = (p) => {
+      if (!this.dead) this.progress(p);
+    };
+    element("route-cell-overlay").addEventListener(
+      "change",
+      () => this.drawCells(),
+      { signal: this.abort.signal },
+    );
+    on("resume", () => {
+      const input = element<HTMLInputElement>("offline");
+      input.checked = false;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      void this.calculate();
+    });
+    on("beyond", () => {
+      this.points = [
+        [16.3731, 48.2085],
+        [16.3124, 48.1859],
+      ];
+      this.names = ["Stephansplatz", "Schönbrunn"];
+      map.setEndpoints(...this.points);
+      map.fitPositions(this.points.filter((p): p is Position => p !== null));
+      void this.calculate();
+    });
+    button("beyond").hidden = !vienna;
+    void reader.options.store
+      ?.keys(reader.index.manifest.snapshot)
+      .then((keys) => {
+        if (this.dead) return;
+        for (const key of keys)
+          if (key.startsWith("routing/cells/") && !this.cells.has(key))
+            this.cells.set(key, { key, state: "cached" });
+        this.drawCells();
+      });
     if (!this.supported)
       element("route-hint").textContent =
         "This package has no walking graph. Rebuild it with the current generator.";
@@ -92,6 +144,8 @@ export class RouteControls {
       element(`route-${id}-label`).textContent = this.names[i]!;
     }
     button("example").disabled = !this.supported || this.busy;
+    button("beyond").disabled = !this.supported || this.busy;
+    button("resume").disabled = !this.supported || this.busy;
     for (const id of ["calculate", "reverse"])
       button(id).disabled =
         !this.supported || this.busy || !this.points[0] || !this.points[1];
@@ -148,6 +202,8 @@ export class RouteControls {
     }
   }
   private clear() {
+    this.operations.cancelRoute();
+    button("resume").hidden = true;
     element("route-proof").hidden = true;
     this.revision++;
     this.busy = false;
@@ -162,10 +218,15 @@ export class RouteControls {
   }
   private async calculate() {
     element("route-proof").hidden = true;
+    button("resume").hidden = true;
     if (!this.points[0] || !this.points[1]) return;
     const revision = ++this.revision;
     this.picking = null;
     this.busy = true;
+    for (const [key, c] of this.cells)
+      if (c.state === "missing" || c.state === "loading")
+        this.cells.delete(key);
+    this.drawCells();
     this.map.setRoute(null);
     this.update();
     const box = element("route-result");
@@ -182,6 +243,11 @@ export class RouteControls {
     try {
       const result = await this.router.route(this.points[0], this.points[1]);
       if (this.dead || revision !== this.revision) return;
+      if (result.cells && result.execution.side === "device")
+        this.progress(result.cells);
+      else if (result.cells)
+        element("route-cell-metrics").textContent =
+          `Server used ${result.cells.loadedCells} routing cells · ${(result.cells.fetchedBytes / 1e6).toFixed(2)} MB read on server · ${(result.cells.memoryBytes / 1048576).toFixed(1)} MiB estimated engine memory. Coverage overlay shows this device's cache.`;
       box.replaceChildren();
       box.dataset.state = result.status;
       if (result.status === "found") {
@@ -193,7 +259,7 @@ export class RouteControls {
           result.meters < 1 ? 0 : Math.max(1, Math.round(result.meters / 80));
         time.textContent = `~${minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`} on foot · distance only`;
         const computation = document.createElement("p");
-        computation.textContent = `${executionText(result.execution)} · ${result.visited.toLocaleString()} nodes explored. ${result.execution.side === "server" ? "The walking graph stayed on the server." : result.graphCached ? "Using the cached walking graph." : "Walking graph is now available on this device."}`;
+        computation.textContent = `${executionText(result.execution)} · ${result.visited.toLocaleString()} nodes explored. ${result.execution.side === "server" ? "The walking graph stayed on the server." : result.cells ? "Using selectively loaded routing cells." : result.graphCached ? "Using the cached walking graph." : "Walking graph is now available on this device."}`;
         const snap = document.createElement("p");
         snap.textContent = `Snapped A ${Math.round(result.start.distanceMeters)} m / B ${Math.round(result.end.distanceMeters)} m to the network. Dotted offsets are excluded from distance and time.`;
         box.append(title, time, computation, snap);
@@ -202,6 +268,12 @@ export class RouteControls {
       } else if (result.status === "no-route") {
         box.textContent =
           "No path connects these snapped points in this extract’s walking graph. A connection may exist outside the extract or on ways excluded by this profile. Try different points.";
+      } else if (result.status === "missing-data") {
+        box.textContent = `Search paused: ${result.missing.length} routing ${result.missing.length === 1 ? "cell is" : "cells are"} missing. ${result.reason} Reconnect and resume; a missing cell does not mean there is no route.`;
+        button("resume").hidden = false;
+      } else if (result.status === "budget-exceeded") {
+        box.textContent =
+          "Search reached the prototype memory limit. Try a shorter route. This is not a no-route result.";
       } else {
         box.textContent = `No eligible walking segment within ${result.limitMeters} m of ${result.endpoint === "start" ? "A" : "B"}. Pick closer to a road or path in this extract.`;
       }
@@ -251,6 +323,9 @@ export class RouteControls {
     this.revision++;
     this.abort.abort();
 
+    this.operations.onRouteProgress = undefined;
+    this.operations.cancelRoute();
+    this.map.setRoutingCells([]);
     this.map.endPicking("route");
     for (const id of [
       "compare",

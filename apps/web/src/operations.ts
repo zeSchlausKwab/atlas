@@ -1,3 +1,5 @@
+import { WorkerRouter } from "./worker-router";
+import type { RoutingProgress } from "../../../packages/routing/src/paged";
 import {
   AtlasEngine,
   RemoteOperations,
@@ -29,6 +31,8 @@ export class OperationSession {
   apiBytes = 0;
   apiRequests = 0;
   private dead = false;
+  onRouteProgress?: (p: RoutingProgress) => void;
+  private workerRouter?: WorkerRouter;
   constructor(
     readonly reader: AtlasReader,
     readonly onExecution: (e: Execution) => void,
@@ -84,13 +88,19 @@ export class OperationSession {
       }) as T & { execution: Execution };
     }
     const start = performance.now(),
-      before = this.reader.bytesRead;
+      before =
+        op === "route"
+          ? this.reader.bytesByPurpose.routing
+          : this.reader.bytesRead;
     const result = await local();
     const execution: Execution = {
       side: "device",
       operation: op,
       computeMs: performance.now() - start,
-      sourceBytes: this.reader.bytesRead - before,
+      sourceBytes:
+        (op === "route"
+          ? this.reader.bytesByPurpose.routing
+          : this.reader.bytesRead) - before,
       responseBytes: 0,
     };
     this.record(execution);
@@ -98,10 +108,19 @@ export class OperationSession {
       execution: Execution;
     };
   }
-  route(start: Position, end: Position) {
-    return this.run("route", { start, end }, () =>
-      this.engine.route(start, end),
+  private localRoute(start: Position, end: Position) {
+    if (!this.reader.index.manifest.routing?.cells)
+      return this.engine.route(start, end);
+    this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
+      this.onRouteProgress?.(p),
     );
+    return this.workerRouter.route(start, end);
+  }
+  cancelRoute() {
+    this.workerRouter?.cancel();
+  }
+  route(start: Position, end: Position) {
+    return this.run("route", { start, end }, () => this.localRoute(start, end));
   }
   search(query: string) {
     return this.run("search", { query }, () => this.engine.search(query));
@@ -130,13 +149,13 @@ export class OperationSession {
     const device = await this.run(
       "route",
       { start, end },
-      () => this.engine.route(start, end),
+      () => this.localRoute(start, end),
       "device",
     );
     const server = await this.run(
       "route",
       { start, end },
-      () => this.engine.route(start, end),
+      () => this.localRoute(start, end),
       "server",
     );
     const same =
@@ -152,6 +171,7 @@ export class OperationSession {
   }
   destroy() {
     this.dead = true;
+    this.workerRouter?.cancel();
     this.engine.destroy();
   }
 }

@@ -25,6 +25,8 @@ impl Cell {
     pub fn new(address: (u32, u32), graph: Graph, ids: Vec<u32>) -> Result<Self, String> {
         if address.0 >= 1 << CELL_ZOOM
             || address.1 >= 1 << CELL_ZOOM
+            || graph.nodes.len() > 200_000
+            || graph.segments.len() > 300_000
             || ids.len() != graph.segments.len()
             || ids.windows(2).any(|v| v[0] >= v[1])
         {
@@ -217,6 +219,7 @@ pub struct PagedRouter {
     touched: HashSet<(u32, u32)>,
     budget: usize,
     search_limit: usize,
+    budget_exceeded: bool,
     input: Option<([f64; 2], [f64; 2])>,
     search: Option<Search>,
 }
@@ -229,6 +232,7 @@ impl PagedRouter {
             touched: HashSet::new(),
             budget,
             search_limit,
+            budget_exceeded: false,
             input: None,
             search: None,
         }
@@ -238,6 +242,7 @@ impl PagedRouter {
             return Err("Invalid route coordinates".into());
         }
         self.touched.clear();
+        self.budget_exceeded = false;
         self.input = Some((a, b));
         self.search = None;
         self.empty.clear();
@@ -262,14 +267,35 @@ impl PagedRouter {
     pub fn load(&mut self, bytes: &[u8]) -> Result<(), String> {
         let c = Cell::decode(bytes)?;
         if c.memory() > self.budget {
-            return Err("A routing cell exceeds the decoded-cache budget".into());
+            self.budget_exceeded = true;
+            return Ok(());
         }
         let address = c.address;
         self.tick += 1;
         self.cells.insert(address, (c, self.tick));
+        // Both snap neighborhoods must coexist until endpoint selection is complete.
+        // Evicting one to load the other would otherwise cycle NeedBlocks forever.
+        let pinned: HashSet<_> = if self.search.is_none() {
+            self.input
+                .map(|(a, b)| snap_cells(a).into_iter().chain(snap_cells(b)).collect())
+                .unwrap_or_default()
+        } else {
+            HashSet::new()
+        };
         while self.cells.values().map(|(c, _)| c.memory()).sum::<usize>() > self.budget {
-            let old = *self.cells.iter().min_by_key(|(_, (_, t))| *t).unwrap().0;
-            self.cells.remove(&old);
+            let old = self
+                .cells
+                .iter()
+                .filter(|(key, _)| !pinned.contains(key))
+                .min_by_key(|(_, (_, t))| *t)
+                .map(|(key, _)| *key);
+            if let Some(old) = old {
+                self.cells.remove(&old);
+            } else {
+                self.cells.remove(&address);
+                self.budget_exceeded = true;
+                break;
+            }
         }
         Ok(())
     }
@@ -308,6 +334,11 @@ impl PagedRouter {
     }
     pub fn step(&mut self, limit: usize) -> Result<Step, String> {
         let (a, b) = self.input.ok_or("Begin a route first")?;
+        if self.budget_exceeded {
+            return Ok(Step::BudgetExceeded {
+                visited: self.search.as_ref().map_or(0, |s| s.visited),
+            });
+        }
         if self.search.is_none() {
             let required: HashSet<_> = snap_cells(a).into_iter().chain(snap_cells(b)).collect();
             let mut missing: Vec<_> = required
@@ -316,14 +347,14 @@ impl PagedRouter {
                 .map(|c| key(*c))
                 .collect();
             missing.sort();
+            self.touched
+                .extend(required.iter().filter(|c| self.cells.contains_key(c)));
             if !missing.is_empty() {
                 return Ok(Step::NeedBlocks {
                     keys: missing,
                     visited: 0,
                 });
             }
-            self.touched
-                .extend(required.iter().filter(|c| self.cells.contains_key(c)));
             let Some(start) = self.snap(a) else {
                 return Ok(Step::Complete {
                     result: Route::Unsnappable {
@@ -675,6 +706,30 @@ mod tests {
                 _ => panic!("Budget limit must not produce no-route"),
             }
         }
+    }
+    #[test]
+    fn oversized_snap_working_set_reports_budget_instead_of_thrashing() {
+        let g = graph(&[[16., 48.], [16.2, 48.]], 3);
+        let data = payloads(&g);
+        let size = Cell::decode(data.values().next().unwrap())
+            .unwrap()
+            .memory();
+        let mut router = PagedRouter::new(size, 1000);
+        router.begin([16.001, 48.], [16.199, 48.]).unwrap();
+        let Step::NeedBlocks { keys, .. } = router.step(10).unwrap() else {
+            panic!()
+        };
+        supply(&mut router, keys, &data);
+        assert!(matches!(
+            router.step(10).unwrap(),
+            Step::BudgetExceeded { .. }
+        ));
+        assert!(router.memory() <= size);
+        router.begin([16.091, 48.], [16.092, 48.]).unwrap();
+        same(
+            g.route([16.091, 48.], [16.092, 48.]).unwrap(),
+            solve(&mut router, &data),
+        );
     }
     #[test]
     fn cell_codec_rejects_corruption_and_duplicate_edge_identity() {

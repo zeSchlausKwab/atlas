@@ -19,7 +19,7 @@ The five sidebar tabs organize Explore, Route, Extract, Offline and Data. The gl
 
 The browser initializes WASM from its bundled URL; Bun initializes the identical WASM binary from disk. The server uses a `FileSource` over the same pinned package Blob served by HTTP ranges. Map rendering remains in the browser. Server rasterization, driving directions and arbitrary Overpass-like queries are not implemented.
 
-Device mode fetches the required source blocks and retains them for this session. Server mode computes against server caches and returns the result. There is no silent fallback between modes. Cache only blocks server operations. Reopening a local file disables server mode.
+Device mode fetches only needed source blocks. Routing cells run in a browser worker; compressed cells, display blocks and directories also persist in the bounded IndexedDB cache. Other semantic payloads remain session-local. Server mode computes against server caches and returns the result. There is no silent fallback between modes. Cache only blocks server operations. Reopening a local file disables server mode.
 
 ## HTTP contract
 
@@ -48,7 +48,7 @@ Inputs by endpoint:
 | `/api/features` | `{kind: "buildings", bounds: [west,south,east,north], limit: 200, tag: "building=apartments"}`                                                                              |
 | `/api/offline`  | `{name, polygon: [[lon,lat],...], minZoom: 0, maxZoom: 16, routing: false, search: false, queries: false, layers: ["water", "buildings"], streetNames: false, pois: false}` |
 
-JSON responses wrap `{result, execution}`. Execution records side, operation, elapsed computation time and uncached source bytes read on that host. `RemoteOperations` measures actual response body bytes in the browser. Time includes source acquisition/decoding when cold and excludes queue wait and network latency. The inspector shows **API responses** separately from **package bytes**; server source reads are not browser downloads.
+JSON responses wrap `{result, execution}`. Execution records side, operation, elapsed computation time and uncached source bytes read on that host. Device route source bytes count routing payload only, avoiding concurrent display traffic; directory bytes remain in the inspector. Route `cells` metadata separately reports used/reused cells, routing payload, estimated engine memory and WASM compute time. `RemoteOperations` measures actual response body bytes in the browser. Time includes source acquisition/decoding when cold and excludes queue wait and network latency. The inspector shows **API responses** separately from **package bytes**; server source reads are not browser downloads.
 
 Every successful response includes `X-Atlas-Snapshot`. JSON results also include the snapshot, and the client checks both. Offline export returns the binary file with `X-Atlas-Compute-Ms` and `X-Atlas-Source-Bytes`; its response snapshot is the parent, while the exported file contains its own new snapshot and parent reference. Export planning in the UI still reads selected display-directory pages to show the estimate.
 
@@ -80,3 +80,7 @@ Visible Chromium verification against the Vienna package found:
 - Optional capability disabling, local-file mode, and tab layout at desktop and 390 px mobile width.
 
 The package audit verified every stored block and directory page. Source/runtime caches and importer memory are still regional prototypes. These results establish correctness for the tested cases, not planet-scale memory or throughput guarantees.
+
+## Paged routing proof
+
+The current Vienna snapshot uses routing cells on both hosts. Stephansplatz → Praterstern needs 462,553 routing payload bytes across three cells; the older 69.45 MB measurement above is the retained reference baseline. The longer Schönbrunn example matches device/server distance, coordinates and way IDs, with an 11.2 KB response. The browser worker pauses on unavailable cells and resumes its frontier after reads are enabled. A true offline reload reused persisted cells without package network reads. [Reproduction and limitations](ROUTING.md).

@@ -1,3 +1,6 @@
+import { BrowserBlockStore } from "../../../packages/format/src/store";
+const blockStore =
+  typeof indexedDB !== "undefined" ? new BrowserBlockStore() : undefined;
 import { StyleControls } from "./style";
 import { setupTabs } from "./tabs";
 import { OperationSession, executionText, type Capability } from "./operations";
@@ -206,12 +209,25 @@ async function open(source: ByteSource) {
   el<HTMLInputElement>("offline").checked = false;
   el("connection-label").textContent =
     sourceLabel === "server" ? "Reading from server" : "Reading a local file";
-  const nextReader = new AtlasReader(source, (event) => {
-    if (reader === nextReader) telemetry(event);
-  });
+  const nextReader = new AtlasReader(
+    source,
+    (event) => {
+      if (reader === nextReader) telemetry(event);
+    },
+    {
+      store: blockStore,
+      sourceId:
+        source instanceof HttpSource
+          ? new URL(source.url, location.href).href
+          : undefined,
+    },
+  );
   reader = nextReader;
   try {
     await reader.open();
+    el<HTMLInputElement>("offline").checked = reader.offline;
+    if (reader.offline)
+      el("connection-label").textContent = "Using cached blocks";
     const m = reader.index.manifest;
     el("layer-transport").textContent = m.tileLayers
       ? "Choose any combination. Only selected layers are requested."
@@ -237,7 +253,11 @@ async function open(source: ByteSource) {
       el<HTMLCanvasElement>("map"),
       reader,
       stats,
-      error,
+      (message) => {
+        // Cache misses already appear as partial map coverage in the status bar.
+        if (reader.offline && message.startsWith("Error: Not cached:")) return;
+        error(message);
+      },
       {
         style: appearance.style,
         scene: appearance.scene,
@@ -436,7 +456,7 @@ if ("serviceWorker" in navigator) {
     .then(() => navigator.serviceWorker.ready)
     .then(() => {
       el("shell-status").textContent =
-        "App saved for offline use. Save a .atlas file to bring your map along.";
+        "App ready offline. Viewed tiles and routing cells are cached up to 128 MiB; browser storage may be evicted. Save a .atlas file for a portable copy.";
     })
     .catch(() => {
       el("shell-status").textContent =

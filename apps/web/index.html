@@ -265,12 +265,34 @@
                 aria-live="polite"
                 hidden
               ></div>
+              <div id="route-cell-panel" hidden>
+                <label class="check-row"
+                  ><input type="checkbox" id="route-cell-overlay" checked />
+                  Show routing coverage</label
+                >
+                <p class="search-scope">
+                  This search: green reused · blue downloaded · amber needed ·
+                  red missing.
+                </p>
+                <p
+                  id="route-cell-metrics"
+                  role="status"
+                  class="search-scope"
+                ></p>
+                <button id="route-resume" class="secondary-button" hidden>
+                  Fetch missing cells &amp; resume
+                </button>
+                <button id="route-beyond" class="text-button">
+                  Try Stephansplatz → Schönbrunn
+                </button>
+              </div>
               <button id="route-compare" class="secondary-button" disabled>
                 Compare device & server
               </button>
               <p class="search-scope">
-                The comparison runs both engines. It downloads the local walking
-                graph once.
+                Runs the same request on this device and the server.
+                Cell-enabled packages fetch only the routing regions explored by
+                the search.
               </p>
               <p id="route-proof" role="status" hidden></p>
               <details class="route-scope">

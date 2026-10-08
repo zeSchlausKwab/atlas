@@ -1853,3 +1853,33 @@ button:disabled {
     top: 184px;
   }
 }
+
+#route-cell-panel {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+#route-cell-panel .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+#route-cell-panel input {
+  accent-color: var(--green);
+}
+#route-cell-panel .search-scope {
+  margin-top: 10px;
+  font-size: 11px;
+}
+#route-cell-panel #route-cell-metrics {
+  color: var(--ink);
+}
+#route-beyond {
+  display: block;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--green);
+  text-align: left;
+  line-height: 1.6;
+}

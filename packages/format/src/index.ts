@@ -279,7 +279,13 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   }
   if (manifest.routing) {
     const r = manifest.routing;
-    if (r.cells && (r.cells.zoom !== 14 || r.cells.codec !== "rcl1" || !Number.isSafeInteger(r.cells.count) || r.cells.count < 1))
+    if (
+      r.cells &&
+      (r.cells.zoom !== 14 ||
+        r.cells.codec !== "rcl1" ||
+        !Number.isSafeInteger(r.cells.count) ||
+        r.cells.count < 1)
+    )
       throw new Error("Invalid routing cell metadata");
     if (
       r.profile !== "walking-v1" ||
@@ -326,8 +332,8 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
           : p.prefix === "routing/cells"
             ? p.z !== manifest.routing?.cells?.zoom
             : !/^features\/(buildings|water|railways|roads|land)$/.test(
-              p.prefix!,
-            ) || p.z !== manifest.featureZoom) ||
+                p.prefix!,
+              ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -353,6 +359,18 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     )
       throw new Error("Invalid ATLAS root directory");
   }
+  const routingCells =
+    header.version === 1
+      ? blocks.filter((b) => b.key.startsWith("routing/cells/")).length
+      : pages
+          .filter((p) => p.prefix === "routing/cells")
+          .reduce((n, p) => n + p.count, 0);
+  if (
+    routingCells !== (manifest.routing?.cells?.count ?? 0) ||
+    manifest.capabilities.includes("paged-walking-routing") !==
+      !!manifest.routing?.cells
+  )
+    throw new Error("Routing cell directory does not match metadata");
   const tileCount =
     header.version === 1
       ? blocks.filter((b) => b.key.startsWith("tile/")).length
@@ -421,8 +439,15 @@ export function validateBlocks(
     }
     if (block.key.startsWith("routing/cells/")) {
       const a = spatialAddress(block.key);
-      if (!a || a.z !== manifest.routing?.cells?.zoom || a.x >= 2 ** a.z || a.y >= 2 ** a.z)
-        throw new Error("Invalid routing cell address");
+      if (
+        !a ||
+        a.z !== manifest.routing?.cells?.zoom ||
+        a.x >= 2 ** a.z ||
+        a.y >= 2 ** a.z ||
+        block.key !== `routing/cells/${a.z}/${a.x}/${a.y}` ||
+        (block.rawLength ?? block.length) > 16 * 1024 * 1024
+      )
+        throw new Error("Invalid routing cell address or size");
     }
     if (block.key.startsWith("tile/")) {
       if (
