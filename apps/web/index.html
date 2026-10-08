@@ -17,7 +17,7 @@
       >
       <span class="masthead-note">A geographic format experiment</span>
       <div class="masthead-right">
-        <span class="prototype">PROTOTYPE 006</span
+        <span class="prototype">PROTOTYPE 007</span
         ><a
           href="https://www.openstreetmap.org/copyright"
           target="_blank"
@@ -69,6 +69,15 @@
             tabindex="-1"
           >
             Offline</button
+          ><button
+            id="tab-style"
+            role="tab"
+            data-tab="style"
+            aria-controls="panel-style"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Style</button
           ><button
             id="tab-data"
             role="tab"
@@ -445,6 +454,254 @@
             </section>
           </div>
           <div
+            id="panel-style"
+            role="tabpanel"
+            data-panel="style"
+            aria-labelledby="tab-style"
+            tabindex="0"
+            hidden
+          >
+            <section class="style-section" aria-labelledby="style-title">
+              <p class="eyebrow">THE SAME WORLD, YOUR WAY</p>
+              <h2 id="style-title">Change the atmosphere.</h2>
+              <p class="style-intro">
+                A different palette. A quieter street. Make this map your own.
+              </p>
+              <div class="style-presets" aria-label="Style presets">
+                <button data-preset="paper" aria-pressed="true">
+                  <span
+                    class="preset-swatch swatch-paper"
+                    aria-hidden="true"
+                  ></span
+                  >Paper
+                </button>
+                <button data-preset="midnight" aria-pressed="false">
+                  <span
+                    class="preset-swatch swatch-midnight"
+                    aria-hidden="true"
+                  ></span
+                  >Midnight
+                </button>
+                <button data-preset="blueprint" aria-pressed="false">
+                  <span
+                    class="preset-swatch swatch-blueprint"
+                    aria-hidden="true"
+                  ></span
+                  >Blueprint
+                </button>
+              </div>
+              <div class="palette-grid">
+                <label class="paint-chip" for="color-background"
+                  ><span>Canvas</span
+                  ><input
+                    id="color-background"
+                    type="color"
+                    data-color="background"
+                /></label>
+                <label class="paint-chip" for="color-land"
+                  ><span>Landscape</span
+                  ><input id="color-land" type="color" data-color="land"
+                /></label>
+                <label class="paint-chip" for="color-water"
+                  ><span>Water</span
+                  ><input id="color-water" type="color" data-color="water"
+                /></label>
+                <label class="paint-chip" for="color-buildings"
+                  ><span>Buildings</span
+                  ><input
+                    id="color-buildings"
+                    type="color"
+                    data-color="buildings"
+                /></label>
+                <label class="paint-chip" for="color-majorRoads"
+                  ><span>Major roads</span
+                  ><input
+                    id="color-majorRoads"
+                    type="color"
+                    data-color="majorRoads"
+                /></label>
+                <label class="paint-chip" for="color-roads"
+                  ><span>Local roads</span
+                  ><input id="color-roads" type="color" data-color="roads"
+                /></label>
+              </div>
+              <details class="more-paint">
+                <summary>More colors</summary>
+                <div class="palette-grid">
+                  <label class="paint-chip" for="color-paths"
+                    ><span>Paths</span
+                    ><input id="color-paths" type="color" data-color="paths"
+                  /></label>
+                  <label class="paint-chip" for="color-railways"
+                    ><span>Railways</span
+                    ><input
+                      id="color-railways"
+                      type="color"
+                      data-color="railways"
+                  /></label>
+                  <label class="paint-chip" for="color-peaks"
+                    ><span>Peaks</span
+                    ><input id="color-peaks" type="color" data-color="peaks"
+                  /></label>
+                  <label class="paint-chip" for="color-labelColor"
+                    ><span>Label text</span
+                    ><input
+                      id="color-labelColor"
+                      type="color"
+                      data-color="labelColor"
+                  /></label>
+                  <label class="paint-chip" for="color-labelHalo"
+                    ><span>Label halo</span
+                    ><input
+                      id="color-labelHalo"
+                      type="color"
+                      data-color="labelHalo"
+                  /></label>
+                </div>
+              </details>
+              <div class="style-dials">
+                <label class="style-dial" for="paint-roads"
+                  ><span>Road weight</span
+                  ><output id="paint-roads-value" for="paint-roads"></output
+                  ><input
+                    id="paint-roads"
+                    type="range"
+                    min="0.25"
+                    max="4"
+                    step="0.05"
+                    data-paint="roads" /></label
+                ><label class="style-dial" for="paint-paths"
+                  ><span>Path weight</span
+                  ><output id="paint-paths-value" for="paint-paths"></output
+                  ><input
+                    id="paint-paths"
+                    type="range"
+                    min="0.25"
+                    max="4"
+                    step="0.05"
+                    data-paint="paths" /></label
+                ><label class="style-dial" for="paint-railways"
+                  ><span>Rail weight</span
+                  ><output
+                    id="paint-railways-value"
+                    for="paint-railways"
+                  ></output
+                  ><input
+                    id="paint-railways"
+                    type="range"
+                    min="0.25"
+                    max="4"
+                    step="0.05"
+                    data-paint="railways" /></label
+                ><label class="style-dial" for="paint-water"
+                  ><span>Waterway weight</span
+                  ><output id="paint-water-value" for="paint-water"></output
+                  ><input
+                    id="paint-water"
+                    type="range"
+                    min="0.25"
+                    max="4"
+                    step="0.05"
+                    data-paint="water" /></label
+                ><label class="style-dial" for="paint-labels"
+                  ><span>Label size</span
+                  ><output id="paint-labels-value" for="paint-labels"></output
+                  ><input
+                    id="paint-labels"
+                    type="range"
+                    min="0.75"
+                    max="1.75"
+                    step="0.05"
+                    data-paint="labels"
+                /></label>
+              </div>
+              <p class="style-note">
+                Paint changes use the tiles already loaded. Choose what to
+                download in Data.
+              </p>
+              <div class="style-actions">
+                <button id="style-export" class="text-button">
+                  Export style JSON ↗</button
+                ><button id="style-import" class="text-button">
+                  Import style</button
+                ><input
+                  id="style-file"
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                />
+              </div>
+              <p id="style-status" class="style-note" role="status"></p>
+            </section>
+            <section class="scene-section" aria-labelledby="scene-title">
+              <p class="eyebrow">THE THIRD DIMENSION / EXPERIMENT 01</p>
+              <h2 id="scene-title">Give the city depth.</h2>
+              <p class="style-intro">
+                Tilt the ground. Turn the city. Raise its footprints into light.
+              </p>
+              <div class="scene-actions">
+                <button id="scene-demo" class="primary-button">
+                  Inspect in 3D ↗</button
+                ><button id="scene-flat" class="text-button">Back to 2D</button>
+              </div>
+              <div class="style-dials">
+                <label class="style-dial" for="scene-pitch"
+                  ><span>Tilt</span
+                  ><output id="scene-pitch-value" for="scene-pitch"></output
+                  ><input
+                    id="scene-pitch"
+                    type="range"
+                    min="0"
+                    max="65"
+                    step="1"
+                    data-scene="pitch" /></label
+                ><label class="style-dial" for="scene-bearing"
+                  ><span>Bearing</span
+                  ><output id="scene-bearing-value" for="scene-bearing"></output
+                  ><input
+                    id="scene-bearing"
+                    type="range"
+                    min="-180"
+                    max="180"
+                    step="1"
+                    data-scene="bearing" /></label
+                ><label class="style-dial" for="scene-buildingHeight"
+                  ><span>Illustrative height</span
+                  ><output
+                    id="scene-buildingHeight-value"
+                    for="scene-buildingHeight"
+                  ></output
+                  ><input
+                    id="scene-buildingHeight"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    data-scene="buildingHeight" /></label
+                ><label class="style-dial" for="scene-shading"
+                  ><span>Face shading</span
+                  ><output id="scene-shading-value" for="scene-shading"></output
+                  ><input
+                    id="scene-shading"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    data-scene="shading"
+                /></label>
+              </div>
+              <p class="scene-disclosure">
+                All buildings use the same illustrative height, not measured OSM
+                heights. Buildings must be enabled in Data and available at this
+                zoom. Tilting reveals more ground and may load more tiles.
+              </p>
+              <p class="style-note">
+                Orthographic 3D · depth-tested roofs and walls · labels stay
+                above the scene.
+              </p>
+            </section>
+          </div>
+          <div
             id="panel-data"
             role="tabpanel"
             data-panel="data"
@@ -673,6 +930,7 @@
           </button>
         </div>
         <div class="compass" aria-hidden="true"><span>N</span>↑</div>
+        <div id="scene-badge" hidden>3D study · illustrative heights</div>
         <div class="transport-card">
           <div class="transport-top">
             <span class="status-dot" id="connection-dot"></span

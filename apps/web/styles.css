@@ -1634,3 +1634,175 @@ button:disabled {
 .map-layer-bytes .purpose-bytes {
   margin: 0;
 }
+
+/* A paint desk beside the map; compact controls keep the artwork in view. */
+.style-section h2,
+.scene-section h2 {
+  font:
+    28px/1.15 Georgia,
+    serif;
+  letter-spacing: -0.7px;
+  margin: 12px 0;
+}
+.style-intro {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 10px 0 20px;
+}
+.style-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 22px 0;
+}
+.style-presets button {
+  padding: 8px 7px 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 5px;
+  color: var(--ink);
+  font:
+    11px "Avenir Next",
+    sans-serif;
+}
+.style-presets button[aria-pressed="true"] {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green);
+}
+.preset-swatch {
+  display: block;
+  height: 34px;
+  border-radius: 2px;
+  margin-bottom: 8px;
+}
+.swatch-paper {
+  background: linear-gradient(
+    140deg,
+    #b8c79e 36%,
+    #e8e6d6 36% 52%,
+    #c97842 52% 56%,
+    #e8e6d6 56% 65%,
+    #baa88f 65%
+  );
+}
+.swatch-midnight {
+  background: linear-gradient(
+    140deg,
+    #243f3a 36%,
+    #18272e 36% 52%,
+    #e4b270 52% 56%,
+    #18272e 56% 65%,
+    #657a80 65%
+  );
+}
+.swatch-blueprint {
+  background: linear-gradient(
+    140deg,
+    #d9e6e9 36%,
+    #eaf2f5 36% 52%,
+    #2c627f 52% 56%,
+    #eaf2f5 56% 65%,
+    #527e95 65%
+  );
+}
+.palette-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 14px;
+}
+.paint-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  min-height: 35px;
+}
+.paint-chip input {
+  width: 35px;
+  height: 29px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+.more-paint {
+  margin: 10px 0 4px;
+  font-size: 11px;
+}
+.more-paint summary {
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px 0;
+}
+.style-dials {
+  display: grid;
+  gap: 15px;
+  margin: 23px 0;
+}
+.style-dial {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px;
+  font-size: 11px;
+}
+.style-dial output {
+  font: 11px monospace;
+  color: var(--green);
+}
+.style-dial input {
+  grid-column: 1/-1;
+  width: 100%;
+  margin: 0;
+  height: 16px;
+  accent-color: var(--green);
+  cursor: ew-resize;
+}
+.style-actions,
+.scene-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+.style-actions button,
+.scene-actions button {
+  font-size: 11px;
+}
+.style-note,
+.scene-disclosure {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 12px 0 0;
+}
+#style-status:empty {
+  display: none;
+}
+.scene-section {
+  background: #e9ecdf65;
+}
+.scene-disclosure {
+  border-left: 2px solid #b29a70;
+  padding-left: 10px;
+}
+#scene-badge {
+  position: absolute;
+  bottom: 55px;
+  right: 18px;
+  background: #f3f1e9ee;
+  color: #485148;
+  border: 1px solid #bcc7b5;
+  border-radius: 3px;
+  padding: 7px 10px;
+  font:
+    10px "Avenir Next",
+    sans-serif;
+  pointer-events: none;
+}
+.tool-tabs {
+  overflow-x: auto;
+}

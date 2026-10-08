@@ -86,9 +86,9 @@ fn vertex(out: &mut Vec<f32>, p: [f32; 2], offset: [f32; 2], class: usize) {
         p[1],
         offset[0],
         offset[1],
-        COLORS[class][0],
-        COLORS[class][1],
-        COLORS[class][2],
+        if class == 2 { 1. } else { 0. },
+        0.,
+        0.,
     ]);
 }
 fn polygon(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>], class: usize) -> Result<(), String> {
@@ -122,7 +122,26 @@ fn area(ring: &[[f32; 2]]) -> f64 {
         .map(|p| p[0][0] as f64 * p[1][1] as f64 - p[1][0] as f64 * p[0][1] as f64)
         .sum()
 }
-fn mesh(features: &[Feature]) -> Result<Vec<Vec<f32>>, String> {
+fn walls(out: &mut Vec<f32>, rings: &[Vec<[f32; 2]>]) {
+    let sign = rings.first().map(|r| area(r).signum() as f32).unwrap_or(1.);
+    for ring in rings {
+        for segment in ring.windows(2) {
+            let a = segment[0];
+            let b = segment[1];
+            let dx = b[0] - a[0];
+            let dy = b[1] - a[1];
+            let length = dx.hypot(dy);
+            if length < 1e-10 {
+                continue;
+            }
+            let normal = [dy / length * sign, -dx / length * sign];
+            for (p, z) in [(a, 0.), (b, 0.), (a, 1.), (a, 1.), (b, 0.), (b, 1.)] {
+                out.extend_from_slice(&[p[0], p[1], 0., 0., z, normal[0], normal[1]]);
+            }
+        }
+    }
+}
+fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
     let mut layers = vec![Vec::new(); 8];
     for f in features {
         let out = &mut layers[f.class];
@@ -179,11 +198,16 @@ fn mesh(features: &[Feature]) -> Result<Vec<Vec<f32>>, String> {
             }
         }
     }
-    Ok(layers)
+    let roof_vertices = layers[2].len() / 7;
+    for f in features.iter().filter(|f| f.class == 2 && f.kind == 3) {
+        walls(&mut layers[2], &f.rings);
+    }
+    Ok((layers, roof_vertices))
 }
 struct Layer {
     buffer: Option<WebGlBuffer>,
     count: i32,
+    flat_count: i32,
 }
 struct Tile {
     z: u32,
@@ -198,6 +222,14 @@ pub struct Renderer {
     origin: WebGlUniformLocation,
     scale: WebGlUniformLocation,
     view: WebGlUniformLocation,
+    paint: WebGlUniformLocation,
+    stroke: WebGlUniformLocation,
+    rotation: WebGlUniformLocation,
+    scene: WebGlUniformLocation,
+    depth: WebGlUniformLocation,
+    colors: [[f32; 3]; 8],
+    background: [f32; 3],
+    widths: [f32; 8],
     tiles: BTreeMap<String, Tile>,
     visible: Vec<String>,
     mask: u32,
@@ -217,11 +249,24 @@ impl Renderer {
             precision highp float;
             layout(location=0) in vec2 a_position;
             layout(location=1) in vec2 a_offset;
-            layout(location=2) in vec3 a_color;
+            // Height fraction + horizontal face normal; paint is never baked into vertices.
+            layout(location=2) in vec3 a_surface;
             uniform vec2 u_origin; uniform float u_scale; uniform vec2 u_view;
+            uniform vec3 u_paint; uniform float u_stroke; uniform vec2 u_rotation;
+            // sin(pitch), cos(pitch), height in pixels, shading strength
+            uniform vec4 u_scene; uniform float u_depth;
             out vec3 color;
-            void main() { vec2 p = u_origin + a_position * u_scale + a_offset;
-              gl_Position = vec4(p.x / u_view.x * 2.0, -p.y / u_view.y * 2.0, 0.0, 1.0); color = a_color; }
+            void main() {
+              vec2 p = u_origin + a_position * u_scale + a_offset * u_stroke;
+              vec2 q = vec2(u_rotation.y * p.x + u_rotation.x * p.y,
+                           -u_rotation.x * p.x + u_rotation.y * p.y);
+              float z = a_surface.x * u_scene.z;
+              float y = q.y * u_scene.y - z * u_scene.x;
+              float depth = -(q.y * u_scene.x + z * u_scene.y) / u_depth;
+              gl_Position = vec4(q.x / u_view.x * 2.0, -y / u_view.y * 2.0, depth, 1.0);
+              float light = length(a_surface.yz) > 0.5 ? 0.68 + 0.24 * dot(a_surface.yz, normalize(vec2(-0.6, -0.8))) : 1.0;
+              color = u_paint * mix(1.0, light, u_scene.w);
+            }
         "#,
         )?;
         let fs = compile(
@@ -256,6 +301,11 @@ impl Renderer {
         let origin = uniform("u_origin")?;
         let scale = uniform("u_scale")?;
         let view = uniform("u_view")?;
+        let paint = uniform("u_paint")?;
+        let stroke = uniform("u_stroke")?;
+        let rotation = uniform("u_rotation")?;
+        let scene = uniform("u_scene")?;
+        let depth = uniform("u_depth")?;
         gl.use_program(Some(&program));
         gl.disable(Gl::DEPTH_TEST);
         Ok(Renderer {
@@ -264,6 +314,14 @@ impl Renderer {
             origin,
             scale,
             view,
+            paint,
+            stroke,
+            rotation,
+            scene,
+            depth,
+            colors: COLORS,
+            background: [0.91, 0.90, 0.84],
+            widths: [1.; 8],
             tiles: BTreeMap::new(),
             visible: Vec::new(),
             mask: 255,
@@ -284,13 +342,14 @@ impl Renderer {
             return Err(JsValue::from_str("Invalid tile address"));
         }
         let features = decode(bytes).map_err(|e| JsValue::from_str(&e))?;
-        let meshes = mesh(&features).map_err(|e| JsValue::from_str(&e))?;
+        let (meshes, roof_vertices) = mesh(&features).map_err(|e| JsValue::from_str(&e))?;
         let mut layers = Vec::new();
-        for data in meshes {
+        for (class, data) in meshes.into_iter().enumerate() {
             if data.is_empty() {
                 layers.push(Layer {
                     buffer: None,
                     count: 0,
+                    flat_count: 0,
                 });
                 continue;
             }
@@ -305,6 +364,11 @@ impl Renderer {
             layers.push(Layer {
                 buffer: Some(buffer),
                 count: (data.len() / 7) as i32,
+                flat_count: if class == 2 {
+                    roof_vertices
+                } else {
+                    data.len() / 7
+                } as i32,
             });
         }
         if let Some(old) = self.tiles.remove(key) {
@@ -332,6 +396,32 @@ impl Renderer {
     pub fn set_layers(&mut self, mask: u32) {
         self.mask = mask;
     }
+    pub fn set_style(
+        &mut self,
+        background: &[f32],
+        colors: &[f32],
+        widths: &[f32],
+    ) -> Result<(), JsValue> {
+        if background.len() != 3
+            || colors.len() != 24
+            || widths.len() != 8
+            || background
+                .iter()
+                .chain(colors)
+                .any(|v| !v.is_finite() || !(0. ..=1.).contains(v))
+            || widths
+                .iter()
+                .any(|v| !v.is_finite() || !(0.25..=4.).contains(v))
+        {
+            return Err(JsValue::from_str("Invalid style uniforms"));
+        }
+        self.background.copy_from_slice(background);
+        for (target, color) in self.colors.iter_mut().zip(colors.chunks_exact(3)) {
+            target.copy_from_slice(color);
+        }
+        self.widths.copy_from_slice(widths);
+        Ok(())
+    }
     pub fn clear(&mut self) {
         for tile in self.tiles.values() {
             for layer in &tile.layers {
@@ -349,6 +439,10 @@ impl Renderer {
         width: f64,
         height: f64,
         pixel_ratio: f64,
+        pitch: f64,
+        bearing: f64,
+        building_height: f64,
+        shading: f64,
     ) -> u32 {
         self.gl.viewport(
             0,
@@ -356,17 +450,63 @@ impl Renderer {
             (width * pixel_ratio) as i32,
             (height * pixel_ratio) as i32,
         );
-        self.gl.clear_color(0.91, 0.90, 0.84, 1.0);
-        self.gl.clear(Gl::COLOR_BUFFER_BIT);
+        self.gl.clear_color(
+            self.background[0],
+            self.background[1],
+            self.background[2],
+            1.0,
+        );
+        self.gl.depth_mask(true);
+        self.gl.clear(Gl::COLOR_BUFFER_BIT | Gl::DEPTH_BUFFER_BIT);
+        self.gl.disable(Gl::DEPTH_TEST);
         self.gl.use_program(Some(&self.program));
         self.gl
             .uniform2f(Some(&self.view), width as f32, height as f32);
         let world = 256.0 * 2.0_f64.powf(zoom);
+        let pitch = pitch.clamp(0., 65.).to_radians();
+        let bearing = bearing.to_radians();
+        let latitude = (std::f64::consts::PI * (1. - 2. * cy)).sinh().atan();
+        let height_px =
+            (building_height.clamp(0., 100.) * world / (40075016.686 * latitude.cos())) as f32;
+        let extruded = height_px > 0.;
+        self.gl.uniform2f(
+            Some(&self.rotation),
+            bearing.sin() as f32,
+            bearing.cos() as f32,
+        );
+        self.gl.uniform4f(
+            Some(&self.scene),
+            pitch.sin() as f32,
+            pitch.cos() as f32,
+            height_px,
+            if extruded {
+                shading.clamp(0., 1.) as f32
+            } else {
+                0.
+            },
+        );
+        self.gl.uniform1f(
+            Some(&self.depth),
+            width.max(height) as f32 * 8. + height_px * 4.,
+        );
+        let order = if extruded {
+            [0, 1, 5, 6, 3, 4, 7, 2]
+        } else {
+            [0, 1, 2, 5, 6, 3, 4, 7]
+        };
         let mut triangles = 0;
-        for layer_id in [0, 1, 2, 5, 6, 3, 4, 7] {
+        for layer_id in order {
             if self.mask & (1 << layer_id) == 0 {
                 continue;
             }
+            if layer_id == 2 && extruded {
+                self.gl.enable(Gl::DEPTH_TEST);
+                self.gl.depth_func(Gl::LEQUAL);
+            }
+            let color = self.colors[layer_id];
+            self.gl
+                .uniform3f(Some(&self.paint), color[0], color[1], color[2]);
+            self.gl.uniform1f(Some(&self.stroke), self.widths[layer_id]);
             for key in &self.visible {
                 let Some(tile) = self.tiles.get(key) else {
                     continue;
@@ -394,10 +534,16 @@ impl Renderer {
                         offset,
                     );
                 }
-                self.gl.draw_arrays(Gl::TRIANGLES, 0, layer.count);
-                triangles += layer.count as u32 / 3;
+                let count = if extruded {
+                    layer.count
+                } else {
+                    layer.flat_count
+                };
+                self.gl.draw_arrays(Gl::TRIANGLES, 0, count);
+                triangles += count as u32 / 3;
             }
         }
+        self.gl.disable(Gl::DEPTH_TEST);
         triangles
     }
 }
@@ -441,7 +587,39 @@ mod tests {
             84, 73, 76, 49, 1, 0, 0, 0, 4, 2, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255,
         ];
         let features = decode(&bytes).unwrap();
-        assert_eq!(mesh(&features).unwrap()[4].len(), 6 * 7);
+        assert_eq!(mesh(&features).unwrap().0[4].len(), 6 * 7);
+    }
+    #[test]
+    fn building_roofs_keep_courtyards_and_walls_close_both_boundaries() {
+        let features = vec![Feature {
+            class: 2,
+            kind: 3,
+            rings: vec![
+                vec![[0., 0.], [1., 0.], [1., 1.], [0., 1.], [0., 0.]],
+                vec![
+                    [0.25, 0.25],
+                    [0.25, 0.75],
+                    [0.75, 0.75],
+                    [0.75, 0.25],
+                    [0.25, 0.25],
+                ],
+            ],
+        }];
+        let (meshes, roofs) = mesh(&features).unwrap();
+        let m = &meshes[2];
+        let area: f32 = m[..roofs * 7]
+            .chunks_exact(21)
+            .map(|t| ((t[7] - t[0]) * (t[15] - t[1]) - (t[14] - t[0]) * (t[8] - t[1])).abs() / 2.)
+            .sum();
+        assert!((area - 0.75).abs() < 1e-6);
+        assert_eq!(m.len() / 7 - roofs, 8 * 6);
+        for v in m[..roofs * 7].chunks_exact(7) {
+            assert_eq!(&v[4..], &[1., 0., 0.]);
+        }
+        for v in m[roofs * 7..].chunks_exact(7) {
+            assert!(v[4] == 0. || v[4] == 1.);
+            assert!((v[5].hypot(v[6]) - 1.).abs() < 1e-6);
+        }
     }
     #[test]
     fn polygon_hole_does_not_get_filled() {
@@ -459,7 +637,7 @@ mod tests {
                 ],
             ],
         }];
-        let meshes = mesh(&features).unwrap();
+        let (meshes, _) = mesh(&features).unwrap();
         let mut total = 0.;
         for t in meshes[0].chunks_exact(21) {
             total += ((t[7] - t[0]) * (t[15] - t[1]) - (t[14] - t[0]) * (t[8] - t[1])).abs() / 2.;

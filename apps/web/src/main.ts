@@ -1,3 +1,4 @@
+import { StyleControls } from "./style";
 import { setupTabs } from "./tabs";
 import { OperationSession, executionText, type Capability } from "./operations";
 import { ExtractControls } from "./extract";
@@ -73,6 +74,7 @@ try {
 } catch {}
 let reader: AtlasReader;
 let map: AtlasMap | undefined;
+const appearance = new StyleControls(() => map);
 let sourceLabel = "server";
 let events: ReadEvent[] = [];
 const formatBytes = (bytes: number) =>
@@ -230,6 +232,8 @@ async function open(source: ByteSource) {
       stats,
       error,
       {
+        style: appearance.style,
+        scene: appearance.scene,
         layers: selectedLayers(),
         streetNames: el<HTMLInputElement>("street-labels").checked,
         pois: el<HTMLInputElement>("poi-labels").checked,

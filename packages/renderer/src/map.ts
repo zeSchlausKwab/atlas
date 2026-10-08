@@ -1,3 +1,21 @@
+import {
+  PAPER,
+  FLAT_SCENE,
+  compileStyle,
+  parseScene,
+  type MapStyle,
+  type MapScene,
+} from "./style";
+import {
+  cameraBounds,
+  fitZoom,
+  groundDelta,
+  metersPerPixel,
+  projectScreen,
+  worldToScreen,
+  screenToWorld,
+  type Camera,
+} from "./camera";
 import { FeatureOverlay } from "./features";
 import type { MapFeature, Bounds } from "../../features/src/index";
 import { MapLabels, type LabelStats } from "./labels";
@@ -15,6 +33,8 @@ import {
 import type { Position, WalkingResult } from "../../routing/src/index";
 export const MAX_VIEW_ZOOM = 20;
 export interface MapOptions {
+  style?: MapStyle;
+  scene?: MapScene;
   layers?: readonly MapLayer[];
   streetNames?: boolean;
   pois?: boolean;
@@ -38,12 +58,36 @@ export class AtlasMap {
     this.featureOverlay.selected = new Set(selected);
     this.invalidate();
   }
+  private style = compileStyle(PAPER).style;
+  private scene: MapScene = { ...FLAT_SCENE };
+  get camera(): Camera {
+    return {
+      center: this.center,
+      zoom: this.zoom,
+      width: this.canvas.clientWidth,
+      height: this.canvas.clientHeight,
+      pitch: this.scene.pitch,
+      bearing: this.scene.bearing,
+    };
+  }
+  setStyle(style: MapStyle) {
+    const compiled = compileStyle(style);
+    this.renderer.set_style(
+      compiled.background,
+      compiled.colors,
+      compiled.widths,
+    );
+    this.style = compiled.style;
+    this.invalidate();
+  }
+  setScene(scene: MapScene) {
+    this.scene = parseScene(scene);
+    this.invalidate();
+  }
   viewBounds(): Bounds {
-    const scale = 256 * 2 ** this.zoom,
-      dx = this.canvas.clientWidth / 2 / scale,
-      dy = this.canvas.clientHeight / 2 / scale;
-    const sw = unproject(this.center[0] - dx, this.center[1] + dy),
-      ne = unproject(this.center[0] + dx, this.center[1] - dy);
+    const [w, n, e, south] = cameraBounds(this.camera);
+    const sw = unproject(w, south),
+      ne = unproject(e, n);
     return [
       Math.max(-180, sw[0]),
       Math.max(-85, sw[1]),
@@ -133,6 +177,8 @@ export class AtlasMap {
     await init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
     const map = new AtlasMap(canvas, reader, onStats, onError);
     map.renderer = new Renderer(canvas);
+    map.setStyle(options.style ?? PAPER);
+    map.setScene(options.scene ?? FLAT_SCENE);
     map.setLayers(options.layers ?? 255);
     map.setLabels(options.streetNames ?? true, options.pois ?? true);
     map.events();
@@ -169,9 +215,15 @@ export class AtlasMap {
           this.drag.moved = true;
         if (!this.drag.moved) return;
         const scale = 256 * 2 ** this.zoom;
+        const [dx, dy] = groundDelta(
+          event.clientX - this.drag.x,
+          event.clientY - this.drag.y,
+          this.scene.pitch,
+          this.scene.bearing,
+        );
         this.center = [
-          this.center[0] - (event.clientX - this.drag.x) / scale,
-          this.center[1] - (event.clientY - this.drag.y) / scale,
+          this.center[0] - dx / scale,
+          this.center[1] - dy / scale,
         ];
         this.drag.x = event.clientX;
         this.drag.y = event.clientY;
@@ -185,13 +237,12 @@ export class AtlasMap {
         const wasPicking = !!this.picker;
         if (this.drag && !this.drag.moved && this.picker) {
           const box = this.canvas.getBoundingClientRect();
-          const world = 256 * 2 ** this.zoom;
           this.picker?.choose(
             unproject(
-              this.center[0] +
-                (event.clientX - box.left - box.width / 2) / world,
-              this.center[1] +
-                (event.clientY - box.top - box.height / 2) / world,
+              ...screenToWorld(
+                [event.clientX - box.left, event.clientY - box.top],
+                this.camera,
+              ),
             ),
           );
         }
@@ -260,7 +311,11 @@ export class AtlasMap {
           cancel();
         } else if (shifts[event.key]) {
           event.preventDefault();
-          const [x, y] = shifts[event.key]!;
+          const [x, y] = groundDelta(
+            ...shifts[event.key]!,
+            this.scene.pitch,
+            this.scene.bearing,
+          );
           this.center = [
             this.center[0] + x / (256 * 2 ** this.zoom),
             this.center[1] + y / (256 * 2 ** this.zoom),
@@ -281,11 +336,12 @@ export class AtlasMap {
       this.reader.index.manifest.minZoom,
       Math.min(
         this.reader.index.manifest.maxZoom,
-        Math.log2(
-          Math.min(
-            (this.canvas.clientWidth - 90) / ((b[0] - a[0]) * 256),
-            (this.canvas.clientHeight - 100) / ((b[1] - a[1]) * 256),
-          ),
+        fitZoom(
+          [a[0], a[1], b[0], b[1]],
+          this.canvas.clientWidth - 90,
+          this.canvas.clientHeight - 100,
+          this.scene.pitch,
+          this.scene.bearing,
         ),
       ),
     );
@@ -364,13 +420,12 @@ export class AtlasMap {
       this.reader.index.manifest.minZoom,
       Math.min(
         this.reader.index.manifest.maxZoom + 1,
-        Math.log2(
-          Math.min(
-            Math.max(100, this.canvas.clientWidth - 140) /
-              (Math.max(maxX - minX, 0.00001) * 256),
-            Math.max(100, this.canvas.clientHeight - 340) /
-              (Math.max(maxY - minY, 0.00001) * 256),
-          ),
+        fitZoom(
+          [minX, minY, maxX, maxY],
+          this.canvas.clientWidth - 140,
+          this.canvas.clientHeight - 340,
+          this.scene.pitch,
+          this.scene.bearing,
         ),
       ),
     );
@@ -385,6 +440,7 @@ export class AtlasMap {
       Math.max(0, this.reader.index.manifest.minZoom - 1),
       Math.min(MAX_VIEW_ZOOM, zoom),
     );
+    [x, y] = groundDelta(x, y, this.scene.pitch, this.scene.bearing);
     const before = 256 * 2 ** this.zoom;
     const after = 256 * 2 ** zoom;
     this.center = [
@@ -425,15 +481,17 @@ export class AtlasMap {
     const { minZoom, maxZoom } = this.reader.index.manifest;
     const z = Math.max(minZoom, Math.min(maxZoom, Math.floor(this.zoom)));
     const n = 2 ** z;
-    const scale = 256 * 2 ** this.zoom;
-    const dx = this.canvas.clientWidth / 2 / scale;
-    const dy = this.canvas.clientHeight / 2 / scale;
+    // Include bases just outside the view whose roofs rise into it.
+    const padding =
+      (this.scene.buildingHeight / metersPerPixel(this.camera)) *
+      Math.sin((this.scene.pitch * Math.PI) / 180);
+    const [w, north, e, south] = cameraBounds(this.camera, padding);
     const range: [number, number, number, number, number] = [
       z,
-      Math.max(0, Math.floor((this.center[0] - dx) * n)),
-      Math.min(n - 1, Math.floor((this.center[0] + dx) * n)),
-      Math.max(0, Math.floor((this.center[1] - dy) * n)),
-      Math.min(n - 1, Math.floor((this.center[1] + dy) * n)),
+      Math.max(0, Math.floor(w * n)),
+      Math.min(n - 1, Math.floor(e * n)),
+      Math.max(0, Math.floor(north * n)),
+      Math.min(n - 1, Math.floor(south * n)),
     ];
     const layers = MAP_LAYERS.filter(
       (l) => (this.layerMask & LAYER_MASKS[l]) !== 0,
@@ -531,6 +589,10 @@ export class AtlasMap {
       width,
       height,
       ratio,
+      this.scene.pitch,
+      this.scene.bearing,
+      this.scene.buildingHeight,
+      this.scene.shading,
     );
     this.lastDraw = performance.now() - start;
     this.drawOverlay(width, height, ratio);
@@ -552,13 +614,8 @@ export class AtlasMap {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
     const world = 256 * 2 ** this.zoom;
-    const screen = (lon: number, lat: number) => {
-      const p = project(lon, lat);
-      return [
-        (p[0] - this.center[0]) * world + width / 2,
-        (p[1] - this.center[1]) * world + height / 2,
-      ];
-    };
+    const screen = (lon: number, lat: number) =>
+      projectScreen([lon, lat], this.camera);
     if (this.selection?.points.length) {
       ctx.beginPath();
       this.selection.points.forEach((p, i) => {
@@ -588,18 +645,30 @@ export class AtlasMap {
       ctx.font = "10px monospace";
       for (const b of this.visibleTiles()) {
         const n = 2 ** b.z!;
-        const x = (b.x! / n - this.center[0]) * world + width / 2;
-        const y = (b.y! / n - this.center[1]) * world + height / 2;
-        const size = world / n;
+        const corners = [
+          [b.x! / n, b.y! / n],
+          [(b.x! + 1) / n, b.y! / n],
+          [(b.x! + 1) / n, (b.y! + 1) / n],
+          [b.x! / n, (b.y! + 1) / n],
+        ].map((p) => worldToScreen(p as [number, number], this.camera));
         ctx.strokeStyle = this.loaded.has(b.key) ? "#65897688" : "#c65b47";
-        ctx.strokeRect(x, y, size, size);
-        ctx.fillStyle = "#375648";
-        ctx.fillText(`${b.z}/${b.x}/${b.y}`, x + 6, y + 15);
+        ctx.beginPath();
+        corners.forEach(([x, y], i) =>
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y),
+        );
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = this.style.labels.color;
+        ctx.fillText(
+          `${b.z}/${b.x}/${b.y}`,
+          corners[0]![0] + 6,
+          corners[0]![1] + 15,
+        );
       }
     }
-    ctx.font = '500 12px "Avenir Next", sans-serif';
+    ctx.font = `500 ${12 * this.style.labels.scale}px "Avenir Next", sans-serif`;
     ctx.textAlign = "center";
-    this.featureOverlay.draw(ctx, this.center, this.zoom, width, height);
+    this.featureOverlay.draw(ctx, this.camera);
     const occupied: Array<[number, number]> = [];
     for (const place of this.reader.index.manifest.places) {
       const [x, y] = screen(...place.coordinates);
@@ -609,24 +678,29 @@ export class AtlasMap {
         x! > width - 25 ||
         y! > height - 25 ||
         occupied.some(
-          ([a, b]) => Math.abs(a - x!) < 85 && Math.abs(b - y!) < 23,
+          ([a, b]) =>
+            Math.abs(a - x!) < 85 * this.style.labels.scale &&
+            Math.abs(b - y!) < 23 * this.style.labels.scale,
         )
       )
         continue;
       occupied.push([x!, y!]);
-      ctx.strokeStyle = "#efeee2";
+      ctx.strokeStyle = this.style.labels.halo;
       ctx.lineWidth = 3;
       ctx.strokeText(place.name, x!, y!);
-      ctx.fillStyle = "#485148";
+      ctx.fillStyle = this.style.labels.color;
       ctx.fillText(place.name, x!, y!);
     }
     this.labelStats = this.labels.draw(
       ctx,
-      this.center,
-      this.zoom,
-      width,
-      height,
-      occupied.map(([x, y]) => [x - 44, y - 12, x + 44, y + 5]),
+      this.camera,
+      this.style.labels,
+      occupied.map(([x, y]) => [
+        x - 44 * this.style.labels.scale,
+        y - 12 * this.style.labels.scale,
+        x + 44 * this.style.labels.scale,
+        y + 5 * this.style.labels.scale,
+      ]),
     );
     if (this.route) {
       ctx.lineJoin = "round";
@@ -749,7 +823,7 @@ export class AtlasMap {
         .filter((n) => n <= ideal)
         .pop() ?? base;
     const pixels = distance / metersPerPixel;
-    ctx.strokeStyle = "#4a5147";
+    ctx.strokeStyle = this.style.labels.color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(24, height - 39);
@@ -759,7 +833,7 @@ export class AtlasMap {
     ctx.stroke();
     ctx.font = "10px monospace";
     ctx.textAlign = "left";
-    ctx.fillStyle = "#4a5147";
+    ctx.fillStyle = this.style.labels.color;
     ctx.fillText(
       distance >= 1000 ? `${distance / 1000} km` : `${distance} m`,
       24,

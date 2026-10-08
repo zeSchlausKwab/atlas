@@ -1,26 +1,13 @@
 import type { Geometry, Position } from "geojson";
 import type { MapFeature } from "../../features/src/index";
-import { project } from "../../format/src/index";
+import { projectScreen, type Camera, type Point } from "./camera";
 /** Canvas overlay preserves the complete source shapes; map and polygon holes share even-odd hit testing. */
 export class FeatureOverlay {
   features: MapFeature[] = [];
   selected = new Set<string>();
   private hits: { feature: MapFeature; path: Path2D; area: boolean }[] = [];
-  draw(
-    ctx: CanvasRenderingContext2D,
-    center: [number, number],
-    zoom: number,
-    width: number,
-    height: number,
-  ) {
-    const scale = 256 * 2 ** zoom;
-    const screen = (v: Position) => {
-      const p = project(v[0]!, v[1]!);
-      return [
-        (p[0] - center[0]) * scale + width / 2,
-        (p[1] - center[1]) * scale + height / 2,
-      ];
-    };
+  draw(ctx: CanvasRenderingContext2D, camera: Camera) {
+    const screen = (v: Position) => projectScreen(v as Point, camera);
     this.hits = [];
     ctx.save();
     for (const f of [

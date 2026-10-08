@@ -1,0 +1,185 @@
+import type { AtlasMap } from "../../../packages/renderer/src/map";
+import {
+  PAPER,
+  FLAT_SCENE,
+  STYLE_PRESETS,
+  parseStyle,
+  parseScene,
+  type MapStyle,
+  type MapScene,
+  type PaintClass,
+} from "../../../packages/renderer/src/style";
+const STORAGE = "atlas-appearance-v1";
+const el = <T extends HTMLElement = HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
+/** One controller survives package changes; appearance never changes data permissions. */
+export class StyleControls {
+  style: MapStyle = parseStyle(PAPER);
+  scene: MapScene = { ...FLAT_SCENE };
+  constructor(private readonly map: () => AtlasMap | undefined) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
+      if (saved) {
+        this.style = parseStyle(saved.style);
+        this.scene = parseScene(saved.scene);
+      }
+    } catch {
+      /* Ignore stale or invalid preferences. */
+    }
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      "[data-preset]",
+    ))
+      button.onclick = () => {
+        this.style = parseStyle(STYLE_PRESETS[button.dataset.preset!]!);
+        this.apply();
+      };
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-color]",
+    ))
+      input.oninput = () => {
+        const key = input.dataset.color!;
+        if (key === "background") this.style.background = input.value;
+        else if (key === "labelColor") this.style.labels.color = input.value;
+        else if (key === "labelHalo") this.style.labels.halo = input.value;
+        else this.style.colors[key as PaintClass] = input.value;
+        this.style.name = "Custom";
+        this.apply();
+      };
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-paint]",
+    ))
+      input.oninput = () => {
+        const key = input.dataset.paint!;
+        if (key === "labels") this.style.labels.scale = Number(input.value);
+        else
+          this.style.widths[key as keyof MapStyle["widths"]] = Number(
+            input.value,
+          );
+        this.style.name = "Custom";
+        this.apply();
+      };
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-scene]",
+    ))
+      input.oninput = () => {
+        this.scene[input.dataset.scene as keyof MapScene] = Number(input.value);
+        this.applyScene();
+      };
+    el("scene-demo").onclick = () => {
+      this.scene = {
+        pitch: 52,
+        bearing: -25,
+        buildingHeight: 18,
+        shading: 0.8,
+      };
+      const map = this.map();
+      if (map) map.zoom = Math.max(map.zoom, 17);
+      this.applyScene();
+    };
+    el("scene-flat").onclick = () => {
+      this.scene = { ...FLAT_SCENE };
+      this.applyScene();
+    };
+    el("style-export").onclick = () => {
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(this.style, null, 2) + "\n"], {
+          type: "application/json",
+        }),
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `atlas-${this.style.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.style.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      el("style-status").textContent =
+        "Style exported. Data choices and camera stay separate.";
+    };
+    el("style-import").onclick = () =>
+      el<HTMLInputElement>("style-file").click();
+    el<HTMLInputElement>("style-file").onchange = async (e) => {
+      const input = e.target as HTMLInputElement,
+        file = input.files?.[0];
+      if (!file) return;
+      try {
+        if (file.size > 16384)
+          throw new Error("Style files must be 16 KB or smaller");
+        this.style = parseStyle(JSON.parse(await file.text()));
+        this.apply();
+        el("style-status").textContent = `Imported ${this.style.name}.`;
+      } catch (e) {
+        el("style-status").textContent =
+          `Could not import: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      input.value = "";
+    };
+    this.sync();
+  }
+  private save() {
+    try {
+      localStorage.setItem(
+        STORAGE,
+        JSON.stringify({ style: this.style, scene: this.scene }),
+      );
+    } catch {}
+  }
+  private apply() {
+    this.map()?.setStyle(this.style);
+    this.save();
+    this.sync();
+    el("style-status").textContent = "";
+  }
+  private applyScene() {
+    this.map()?.setScene(this.scene);
+    this.save();
+    this.sync();
+  }
+  private sync() {
+    for (const b of document.querySelectorAll<HTMLButtonElement>(
+      "[data-preset]",
+    ))
+      b.setAttribute(
+        "aria-pressed",
+        String(this.style.name === STYLE_PRESETS[b.dataset.preset!]!.name),
+      );
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-color]",
+    )) {
+      const k = input.dataset.color!;
+      input.value =
+        k === "background"
+          ? this.style.background
+          : k === "labelColor"
+            ? this.style.labels.color
+            : k === "labelHalo"
+              ? this.style.labels.halo
+              : this.style.colors[k as PaintClass];
+    }
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-paint]",
+    )) {
+      const k = input.dataset.paint!,
+        value =
+          k === "labels"
+            ? this.style.labels.scale
+            : this.style.widths[k as keyof MapStyle["widths"]];
+      input.value = String(value);
+      el(`${input.id}-value`).textContent = `${value.toFixed(2)}×`;
+    }
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "[data-scene]",
+    )) {
+      const k = input.dataset.scene as keyof MapScene,
+        value = this.scene[k];
+      input.value = String(value);
+      el(`${input.id}-value`).textContent =
+        k === "buildingHeight"
+          ? `${value} m`
+          : k === "shading"
+            ? `${Math.round(value * 100)}%`
+            : `${value}°`;
+    }
+    const compass = document.querySelector<HTMLElement>(".compass")!;
+    compass.style.transform = `rotate(${-this.scene.bearing}deg)`;
+    el("scene-badge").hidden = this.scene.buildingHeight === 0;
+  }
+}

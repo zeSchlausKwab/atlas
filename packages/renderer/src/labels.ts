@@ -1,5 +1,6 @@
 import { AtlasReader } from "../../format/src/reader";
-import { project } from "../../format/src/index";
+import { projectScreen, cameraBounds, type Camera } from "./camera";
+import type { MapStyle } from "./style";
 import {
   decodeLabels,
   roadMinZoom,
@@ -25,6 +26,7 @@ export function roadPlacement(
   textWidth: number,
   width: number,
   height: number,
+  fontScale = 1,
 ): { x: number; y: number; angle: number; box: Box } | null {
   const visible: Position[][] = [];
   for (let i = 1; i < points.length; i++) {
@@ -100,11 +102,11 @@ export function roadPlacement(
     if (Math.hypot(mid[0] - x, mid[1] - y) > 4) continue;
     const w =
         (Math.abs(Math.cos(angle)) * textWidth) / 2 +
-        Math.abs(Math.sin(angle)) * 7 +
+        Math.abs(Math.sin(angle)) * 7 * fontScale +
         5,
       h =
         (Math.abs(Math.sin(angle)) * textWidth) / 2 +
-        Math.abs(Math.cos(angle)) * 7 +
+        Math.abs(Math.cos(angle)) * 7 * fontScale +
         5;
     if (x - w < 5 || y - h < 5 || x + w > width - 5 || y + h > height - 5)
       continue;
@@ -143,32 +145,29 @@ export class MapLabels {
   }
   draw(
     ctx: CanvasRenderingContext2D,
-    center: Position,
-    zoom: number,
-    width: number,
-    height: number,
+    camera: Camera,
+    style: MapStyle["labels"],
     occupied: Box[],
   ): LabelStats {
     this.hits = [];
+    const { zoom, width, height } = camera;
     const stats: LabelStats = { roads: 0, pois: 0, loading: 0, missing: 0 };
     const z = this.reader.index.manifest.labelZoom;
     if (z === undefined || zoom < 13 || (!this.roads && !this.pois)) {
       this.wanted = [];
       return stats;
     }
-    const world = 256 * 2 ** zoom,
-      n = 2 ** z,
-      dx = width / 2 / world,
-      dy = height / 2 / world;
+    const n = 2 ** z,
+      [west, north, east, south] = cameraBounds(camera);
     this.wanted = [];
     for (
-      let x = Math.max(0, Math.floor((center[0] - dx) * n));
-      x <= Math.min(n - 1, Math.floor((center[0] + dx) * n));
+      let x = Math.max(0, Math.floor(west * n));
+      x <= Math.min(n - 1, Math.floor(east * n));
       x++
     )
       for (
-        let y = Math.max(0, Math.floor((center[1] - dy) * n));
-        y <= Math.min(n - 1, Math.floor((center[1] + dy) * n));
+        let y = Math.max(0, Math.floor(north * n));
+        y <= Math.min(n - 1, Math.floor(south * n));
         y++
       ) {
         const key = `labels/${z}/${x}/${y}`;
@@ -209,13 +208,7 @@ export class MapLabels {
     }
     stats.loading = this.pending.size;
     stats.missing = this.wanted.filter((k) => !this.blocks.has(k)).length;
-    const screen = (p: Position): Position => {
-      const q = project(...p);
-      return [
-        (q[0] - center[0]) * world + width / 2,
-        (q[1] - center[1]) * world + height / 2,
-      ];
-    };
+    const screen = (p: Position): Position => projectScreen(p, camera);
     const roads: RoadLabel[] = [],
       pois: Location[] = [];
     for (const key of this.wanted) {
@@ -226,7 +219,7 @@ export class MapLabels {
       }
     }
     ctx.save();
-    ctx.font = '500 12px "Avenir Next", sans-serif';
+    ctx.font = `500 ${12 * style.scale}px "Avenir Next", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
@@ -243,6 +236,7 @@ export class MapLabels {
           ctx.measureText(road.name).width,
           width,
           height,
+          style.scale,
         );
         if (!placement) continue;
         const { x, y, angle, box } = placement;
@@ -256,17 +250,17 @@ export class MapLabels {
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(angle);
-        ctx.strokeStyle = "#f9f6eb";
+        ctx.strokeStyle = style.halo;
         ctx.lineWidth = 3;
         ctx.strokeText(road.name, 0, 0);
-        ctx.fillStyle = "#55594c";
+        ctx.fillStyle = style.color;
         ctx.fillText(road.name, 0, 0);
         ctx.restore();
         occupied.push(box);
         named.set(road.name, [...(named.get(road.name) ?? []), [x, y]]);
         stats.roads++;
       }
-    ctx.font = '500 11px "Avenir Next", sans-serif';
+    ctx.font = `500 ${11 * style.scale}px "Avenir Next", sans-serif`;
     ctx.textAlign = "left";
     const seen = new Set<string>();
     if (this.pois)
@@ -279,7 +273,12 @@ export class MapLabels {
         const [x, y] = screen(poi.coordinates),
           text = poi.name.length > 45 ? poi.name.slice(0, 42) + "…" : poi.name,
           w = ctx.measureText(text).width;
-        const box: Box = [x - 7, y - 9, x + w + 16, y + 9];
+        const box: Box = [
+          x - 7,
+          y - 9 * style.scale,
+          x + w + 16,
+          y + 9 * style.scale,
+        ];
         if (
           box[0] < 6 ||
           box[1] < 6 ||
@@ -297,13 +296,13 @@ export class MapLabels {
         ctx.arc(x, y, 4, 0, Math.PI * 2);
         ctx.fillStyle = poiColor(poi.category);
         ctx.fill();
-        ctx.strokeStyle = "#fffaf0";
+        ctx.strokeStyle = style.halo;
         ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.strokeStyle = "#fffaf0";
+        ctx.strokeStyle = style.halo;
         ctx.lineWidth = 3;
         ctx.strokeText(text, x + 10, y);
-        ctx.fillStyle = poiColor(poi.category);
+        ctx.fillStyle = style.color;
         ctx.fillText(text, x + 10, y);
         occupied.push(box);
         this.hits.push({ box, poi });
