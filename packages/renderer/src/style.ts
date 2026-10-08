@@ -15,7 +15,13 @@ export interface MapStyle {
   name: string;
   background: string;
   colors: Record<PaintClass, string>;
-  widths: { roads: number; paths: number; railways: number; water: number };
+  widths: {
+    roads: number;
+    paths: number;
+    railways: number;
+    water: number;
+    buildingEdges: number;
+  };
   labels: { color: string; halo: string; scale: number };
 }
 export const PAPER: MapStyle = {
@@ -32,7 +38,7 @@ export const PAPER: MapStyle = {
     railways: "#737d75",
     peaks: "#63664d",
   },
-  widths: { roads: 1, paths: 1, railways: 1, water: 1 },
+  widths: { roads: 1, paths: 1, railways: 1, water: 1, buildingEdges: 0.6 },
   labels: { color: "#485148", halo: "#f9f6eb", scale: 1 },
 };
 export const STYLE_PRESETS: Record<string, MapStyle> = {
@@ -106,7 +112,17 @@ export function parseStyle(value: unknown): MapStyle {
   if (typeof o.name !== "string" || !o.name.trim() || o.name.length > 80)
     throw new Error("Style name must contain 1–80 characters");
   const c = object(o.colors, PAINT_CLASSES, "colors"),
-    w = object(o.widths, ["roads", "paths", "railways", "water"], "widths"),
+    w = object(
+      // Styles saved before roof outlines use the new subtle default.
+      o.widths &&
+        typeof o.widths === "object" &&
+        !Array.isArray(o.widths) &&
+        !("buildingEdges" in o.widths)
+        ? { ...o.widths, buildingEdges: 0.6 }
+        : o.widths,
+      ["roads", "paths", "railways", "water", "buildingEdges"],
+      "widths",
+    ),
     l = object(o.labels, ["color", "halo", "scale"], "labels");
   return {
     version: 1,
@@ -120,6 +136,7 @@ export function parseStyle(value: unknown): MapStyle {
       paths: number(w.paths, 0.25, 4, "widths.paths"),
       railways: number(w.railways, 0.25, 4, "widths.railways"),
       water: number(w.water, 0.25, 4, "widths.water"),
+      buildingEdges: number(w.buildingEdges, 0, 2, "widths.buildingEdges"),
     },
     labels: {
       color: color(l.color, "labels.color"),
@@ -142,7 +159,7 @@ export function compileStyle(input: MapStyle) {
     widths: new Float32Array([
       1,
       style.widths.water,
-      1,
+      style.widths.buildingEdges,
       style.widths.roads,
       style.widths.roads,
       style.widths.paths,

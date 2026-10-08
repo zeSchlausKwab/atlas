@@ -244,6 +244,35 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
     }
     Ok((layers, roof_vertices))
 }
+/// Roof/footprint outlines, including courtyard rims, with a one-pixel unit width.
+/// Boundaries introduced by tile clipping are omitted to avoid drawing the tile grid.
+fn building_edges(features: &[Feature]) -> Vec<f32> {
+    let mut out = Vec::new();
+    for f in features.iter().filter(|f| f.class == 2 && f.kind == 3) {
+        for ring in &f.rings {
+            for segment in ring.windows(2) {
+                let (a, b) = (segment[0], segment[1]);
+                if (a[0] == b[0] && (a[0] == 0. || a[0] == 1.))
+                    || (a[1] == b[1] && (a[1] == 0. || a[1] == 1.))
+                {
+                    continue;
+                }
+                let dx = b[0] - a[0];
+                let dy = b[1] - a[1];
+                let length = dx.hypot(dy);
+                if length < 1e-10 {
+                    continue;
+                }
+                let n = [-dy / length / 2., dx / length / 2.];
+                let m = [-n[0], -n[1]];
+                for (p, o) in [(a, n), (a, m), (b, n), (b, n), (a, m), (b, m)] {
+                    vertex(&mut out, p, o, roof_height(f));
+                }
+            }
+        }
+    }
+    out
+}
 struct Layer {
     buffer: Option<WebGlBuffer>,
     count: i32,
@@ -385,7 +414,9 @@ impl Renderer {
             return Err(JsValue::from_str("Invalid tile address"));
         }
         let features = decode(bytes).map_err(|e| JsValue::from_str(&e))?;
-        let (meshes, roof_vertices) = mesh(&features).map_err(|e| JsValue::from_str(&e))?;
+        let (mut meshes, roof_vertices) = mesh(&features).map_err(|e| JsValue::from_str(&e))?;
+        // Internal layer 8 is an independently styled roof-edge buffer.
+        meshes.push(building_edges(&features));
         let mut layers = Vec::new();
         for (class, data) in meshes.into_iter().enumerate() {
             if data.is_empty() {
@@ -452,9 +483,14 @@ impl Renderer {
                 .iter()
                 .chain(colors)
                 .any(|v| !v.is_finite() || !(0. ..=1.).contains(v))
-            || widths
-                .iter()
-                .any(|v| !v.is_finite() || !(0.25..=4.).contains(v))
+            || widths.iter().enumerate().any(|(i, v)| {
+                !v.is_finite()
+                    || if i == 2 {
+                        !(0. ..=2.).contains(v)
+                    } else {
+                        !(0.25..=4.).contains(v)
+                    }
+            })
         {
             return Err(JsValue::from_str("Invalid style uniforms"));
         }
@@ -548,6 +584,9 @@ impl Renderer {
             if layer_id == 2 && extruded {
                 self.gl.enable(Gl::DEPTH_TEST);
                 self.gl.depth_func(Gl::LEQUAL);
+                // Push filled faces slightly back so coplanar roof edges remain stable.
+                self.gl.enable(Gl::POLYGON_OFFSET_FILL);
+                self.gl.polygon_offset(1., 1.);
             }
             let color = self.colors[layer_id];
             self.gl
@@ -557,40 +596,67 @@ impl Renderer {
                 let Some(tile) = self.tiles.get(key) else {
                     continue;
                 };
-                let layer = &tile.layers[layer_id];
-                if layer.count == 0 {
-                    continue;
-                }
-                let n = 2.0_f64.powi(tile.z as i32);
-                self.gl.uniform2f(
-                    Some(&self.origin),
-                    ((tile.x as f64 / n - cx) * world) as f32,
-                    ((tile.y as f64 / n - cy) * world) as f32,
-                );
-                self.gl.uniform1f(Some(&self.scale), (world / n) as f32);
-                self.gl.bind_buffer(Gl::ARRAY_BUFFER, layer.buffer.as_ref());
-                for (slot, size, offset) in [(0, 2, 0), (1, 2, 8), (2, 3, 16)] {
-                    self.gl.enable_vertex_attrib_array(slot);
-                    self.gl.vertex_attrib_pointer_with_i32(
-                        slot,
-                        size,
-                        Gl::FLOAT,
-                        false,
-                        28,
-                        offset,
+                triangles += self.draw_layer(tile, &tile.layers[layer_id], cx, cy, world, extruded);
+            }
+            if layer_id == 2 {
+                self.gl.disable(Gl::POLYGON_OFFSET_FILL);
+                // Draw after all building fills, so hidden roof edges stay occluded in 3D.
+                let contrast = ((zoom - 13.) / 2.).clamp(0., 1.) as f32 * 0.24;
+                if self.widths[2] > 0. && contrast > 0. {
+                    self.gl.uniform3f(
+                        Some(&self.paint),
+                        color[0] * (1. - contrast),
+                        color[1] * (1. - contrast),
+                        color[2] * (1. - contrast),
                     );
+                    self.gl.depth_mask(false);
+                    for key in &self.visible {
+                        if let Some(tile) = self.tiles.get(key) {
+                            triangles +=
+                                self.draw_layer(tile, &tile.layers[8], cx, cy, world, true);
+                        }
+                    }
+                    self.gl.depth_mask(true);
                 }
-                let count = if extruded {
-                    layer.count
-                } else {
-                    layer.flat_count
-                };
-                self.gl.draw_arrays(Gl::TRIANGLES, 0, count);
-                triangles += count as u32 / 3;
             }
         }
         self.gl.disable(Gl::DEPTH_TEST);
         triangles
+    }
+}
+impl Renderer {
+    fn draw_layer(
+        &self,
+        tile: &Tile,
+        layer: &Layer,
+        cx: f64,
+        cy: f64,
+        world: f64,
+        extruded: bool,
+    ) -> u32 {
+        let count = if extruded {
+            layer.count
+        } else {
+            layer.flat_count
+        };
+        if count == 0 {
+            return 0;
+        }
+        let n = 2.0_f64.powi(tile.z as i32);
+        self.gl.uniform2f(
+            Some(&self.origin),
+            ((tile.x as f64 / n - cx) * world) as f32,
+            ((tile.y as f64 / n - cy) * world) as f32,
+        );
+        self.gl.uniform1f(Some(&self.scale), (world / n) as f32);
+        self.gl.bind_buffer(Gl::ARRAY_BUFFER, layer.buffer.as_ref());
+        for (slot, size, offset) in [(0, 2, 0), (1, 2, 8), (2, 3, 16)] {
+            self.gl.enable_vertex_attrib_array(slot);
+            self.gl
+                .vertex_attrib_pointer_with_i32(slot, size, Gl::FLOAT, false, 28, offset);
+        }
+        self.gl.draw_arrays(Gl::TRIANGLES, 0, count);
+        count as u32 / 3
     }
 }
 impl Drop for Renderer {
@@ -621,6 +687,42 @@ fn compile(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn building_edges_keep_courtyards_and_height_but_omit_tile_cuts() {
+        let f = Feature {
+            class: 2,
+            kind: 3,
+            height: 24.,
+            min_height: 6.,
+            rings: vec![
+                vec![[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9], [0.1, 0.1]],
+                vec![[0.3, 0.3], [0.3, 0.7], [0.7, 0.7], [0.7, 0.3], [0.3, 0.3]],
+            ],
+        };
+        let edges = building_edges(&[f]);
+        assert_eq!(edges.len() / 7, 8 * 6);
+        assert!(edges
+            .chunks_exact(7)
+            .all(|v| v[4] == 24. && (v[2].hypot(v[3]) - 0.5).abs() < 1e-6));
+        let cut = Feature {
+            class: 2,
+            kind: 3,
+            height: -1.,
+            min_height: 3.,
+            rings: vec![vec![[0., 0.], [0.5, 0.], [0.5, 0.5], [0., 0.5], [0., 0.]]],
+        };
+        let edges = building_edges(&[cut]);
+        assert_eq!(edges.len() / 7, 2 * 6);
+        assert!(edges.chunks_exact(7).all(|v| v[4] == -4.));
+        let water = Feature {
+            class: 1,
+            kind: 3,
+            height: -1.,
+            min_height: 0.,
+            rings: vec![vec![[0., 0.], [0.5, 0.], [0.5, 0.5], [0., 0.]]],
+        };
+        assert!(building_edges(&[water]).is_empty());
+    }
     #[test]
     fn heights_survive_decode_into_roofs_and_elevated_wall_bases() {
         let mut bytes = b"TIL2".to_vec();

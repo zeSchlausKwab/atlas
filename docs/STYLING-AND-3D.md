@@ -28,7 +28,7 @@ Keep three independent descriptions:
 
 **JSON remains a good exchange format.** [MapLibre's specification](https://maplibre.org/maplibre-style-spec/) is an existing example of declarative map styling. The improvement belongs in the model and execution, not in replacing JSON syntax. A small validated semantic document is easy to save, diff, share through Nostr or content-address, and compile on web/native/server. We do not need to clone a large vendor style specification or let style files execute arbitrary JavaScript or trigger arbitrary data requests.
 
-The implemented v1 describes background color, the eight existing display classes, line-width multipliers and label paint. `parseStyle()` owns validation and returns an independent copy; `compileStyle()` lowers it to RGB and width arrays. Rust/WASM draws the same uploaded geometry with changed uniforms. Label size affects text measurement and collision boxes, not label data acquisition. JSON does not contain URLs, camera state, data subscriptions or scripts.
+The implemented v1 describes background color, the eight existing display classes, line-width multipliers, building-edge width and label paint. `parseStyle()` owns validation and returns an independent copy; `compileStyle()` lowers it to RGB and width arrays. Rust/WASM draws the same uploaded geometry with changed uniforms. Label size affects text measurement and collision boxes, not label data acquisition. JSON does not contain URLs, camera state, data subscriptions or scripts.
 
 ```ts
 import { AtlasMap } from "../packages/renderer/src/map";
@@ -51,7 +51,7 @@ map.resetView(); // Top-down and north-up; keep center and zoom.
 // Moving/tilting the camera can expose additional tiles; height also expands roof coverage.
 ```
 
-The typed source of truth is `packages/renderer/src/style.ts`. An exported document is a complete style, not a patch; the app's controls edit a copy and submit it. Widths are multipliers on the prototype's class widths, and are compressed by tilt with the ground. View zoom and styles do not change routing geometry or source geometry precision.
+The typed source of truth is `packages/renderer/src/style.ts`. An exported document is a complete style, not a patch; the app's controls edit a copy and submit it. Road/path/rail/water widths multiply the prototype's class widths; building-edge width is in CSS pixels. Both are compressed by tilt with the ground. View zoom and styles do not change routing geometry or source geometry precision.
 
 ## Next contract, without inventing a giant language
 
@@ -73,3 +73,13 @@ Next worthwhile demos: shade buildings by height provenance; make height attribu
 - A visible Chromium check measures map HTTP ranges and WebGL `bufferData` calls around palette, line-weight, label-size and shading edits. Both remain unchanged while rendered pixels change. It also checks JSON round-trip/rejection, persisted appearance, tilted coordinate picking against an independent calculation, polygon finishing, mobile overflow and tab keyboard navigation.
 
 The draw-time counter remains CPU submission time, not a GPU frame-time benchmark. No performance comparison with MapLibre/deck.gl is claimed.
+
+## Continuous zooms and building edges
+
+The download target and presented geometry now have separate lifetimes. At an integer zoom boundary, the current intersecting meshes continue to render under the changing camera while the target directory pages and tile meshes load. The renderer swaps to the target coverage together when it is ready. First loads and same-level pans remain progressive. Missing or failed reads retain available previous detail and report the missing data; a known-empty target clears it. Disabled layers disappear immediately. Only the current target and presented fallback meshes are retained, and fallback never triggers extra data requests. This avoids mixing parent and child geometry, which would double road widths or cover more detailed fills.
+
+`TilePresentation` owns this policy, separate from HTTP scheduling and GPU upload. Tests cover missing directory pages, partial payloads, zoom-in/out, rapid reversals, known-empty coverage, layer removal and panning. A visible-browser reproduction held new map responses at **14.9 → 15**: before the fix the draw count fell from 164,084 triangles to zero and 65 GPU buffers were deleted; after the fix the intersecting geometry stayed visible until the replacement detail was ready.
+
+Buildings have a subtle **0.6 px** footprint/roof outline. **Style → Building edges** accepts 0–2 px, with zero disabling outlines. The color follows the building fill at up to 24% darker, increasing contrast gradually from z13 to z15. Courtyard rims and roof height are preserved. Artificial edges along tile clipping boundaries are omitted. In 3D, edge passes use the building depth buffer so hidden roof edges remain occluded; they do not add an entire wireframe around walls.
+
+Style JSON keeps version 1 with `widths.buildingEdges`; older saved styles missing that field receive the subtle default. This field is a pixel width, unlike the existing line-weight multipliers. The edge mesh is built once from existing footprint coordinates, requiring no new package attributes. Changing its width or palette only updates uniforms. Browser checks confirm changed pixels in both flat and 3D views with zero additional range requests and zero buffer uploads.

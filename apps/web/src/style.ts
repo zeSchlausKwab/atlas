@@ -178,7 +178,10 @@ export class StyleControls {
             ? this.style.labels.scale
             : this.style.widths[k as keyof MapStyle["widths"]];
       input.value = String(value);
-      el(`${input.id}-value`).textContent = `${value.toFixed(2)}×`;
+      el(`${input.id}-value`).textContent =
+        k === "buildingEdges"
+          ? `${value.toFixed(1)} px`
+          : `${value.toFixed(2)}×`;
     }
     for (const input of document.querySelectorAll<HTMLInputElement>(
       "[data-scene]",

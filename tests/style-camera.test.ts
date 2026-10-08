@@ -33,7 +33,20 @@ test("portable styles round-trip, isolate mutable state and reject unsupported v
     expect(() => parseStyle(invalid)).toThrow();
   const compiled = compileStyle(style);
   expect(compiled.colors.length).toBe(24);
-  expect([...compiled.widths]).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+  expect([...compiled.widths].filter((_, i) => i !== 2)).toEqual([
+    1, 1, 1, 1, 1, 1, 1,
+  ]);
+  expect(compiled.widths[2]).toBeCloseTo(0.6);
+  const legacy = JSON.parse(JSON.stringify(PAPER));
+  delete legacy.widths.buildingEdges;
+  expect(parseStyle(legacy).widths.buildingEdges).toBe(0.6);
+  expect(
+    parseStyle({ ...PAPER, widths: { ...PAPER.widths, buildingEdges: 0 } })
+      .widths.buildingEdges,
+  ).toBe(0);
+  expect(() =>
+    parseStyle({ ...PAPER, widths: { ...PAPER.widths, buildingEdges: 3 } }),
+  ).toThrow();
   expect(() =>
     parseScene({ pitch: 90, bearing: 0, buildingHeight: 10, shading: 0.5 }),
   ).toThrow();
