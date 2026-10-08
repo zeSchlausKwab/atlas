@@ -181,7 +181,8 @@ export class ReachabilityControls {
           ? "Match: identical time bands and GeoJSON contours on device and server."
           : "The results differ or a search is incomplete.";
       box.dataset.state = r.status;
-      if (r.cells) this.operations.onRouteProgress?.(r.cells);
+      if (r.cells && r.execution.side === "device")
+        this.operations.onRouteProgress?.(r.cells);
       if (r.status === "reachable") {
         this.result = r;
         this.map.setReachable(r);

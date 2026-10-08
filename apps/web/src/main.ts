@@ -301,7 +301,7 @@ async function open(source: ByteSource) {
       el<HTMLSelectElement>("execution-mode").value = "device";
     routing = new RouteControls(reader, map, operations);
     reachability = new ReachabilityControls(map, operations, () =>
-      routing?.refresh(),
+      routing?.profileChanged(),
     );
     search = new SearchControls(reader, map, routing, operations);
     extractor = new ExtractControls(map, operations);

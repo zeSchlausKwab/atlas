@@ -12,3 +12,7 @@ User request: isochrones and routing for different transport modes, followed by 
 6. Document the architecture review with current module boundaries, measured tradeoffs, and recommended next changes. Do not do an unrelated sweeping rewrite.
 
 No public-transport timetable profile: the dataset has no GTFS service schedule. Travel times are modeled estimates, without traffic. Walking/cycling/driving must use their actual profile networks, not scale the walking graph.
+
+## Completed
+
+Three transport profiles, time-weighted routing, network isochrones, client/server parity, selective persistence, export and pause/resume are implemented. Vienna was upgraded without changing display/search payload hashes. The measured label/viewport bottlenecks were reduced; see STACK-REVIEW.md for evidence and proposed module boundaries. Portable polygon exports remain walking-only, explicitly documented.

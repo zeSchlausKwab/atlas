@@ -1,79 +1,66 @@
-# Walking routing prototype
+# Transport routing and isochrones
 
-OSM PBF → topology → independently hashed routing cells in one `.atlas` file → HTTP ranges or local file → resumable Rust/WASM A\*. Display tiles and routing cells are separate representations. The same engine runs in a browser worker and on the Bun server.
+OSM PBF → three access/cost networks → independently hashed cells in one `.atlas` file → selective range/local-file reads → shared Rust/WASM search. The browser runs it in a worker. Bun uses the identical WASM kernel and TypeScript orchestration. Display tiles do not determine graph detail.
 
-## Try the routing-cell demo
+## Try it
 
-The current Vienna Plus package has 5,542 z14 routing cells. Reload the app, choose **Route**, and leave **Run tools on → This device** selected.
+Open **Route** and choose **Travel mode**: walking, cycling or driving. Pick A/B, use search results, or run the supplied example. Walking/cycling use Stephansplatz → Praterstern; driving uses Schottentor → Praterstern because the nearest permitted road to the pedestrian-center origin is a small disconnected pocket. Nearest-segment snapping is intentionally explicit; it does not silently move the origin to a distant connected road.
 
-1. Choose **Try Stephansplatz → Praterstern**. Only the cells needed for snapping and search load.
-2. Enable **Cache only**, then **Reverse**: the route reuses cached cells.
-3. Choose **Try Stephansplatz → Schönbrunn**. With a fresh cache this pauses at missing coverage, shown in red. If previously visited, it may already be cached.
-4. Choose **Fetch missing cells & resume** to enable reads and continue the existing search frontier.
-5. Choose **Compare device & server**: the same snapshot produces matching route distance, coordinates and OSM way sequence.
-6. After the app shell is saved and map loading finishes, disconnect and reload. Viewed map blocks and routing cells are reused from IndexedDB.
+Under **How far can I go?**, select 5, 10, 15 or 30 minutes and **Show reachable area**. Each selection displays three nested bands. Choose an origin directly on the map; Enter selects the center, Escape cancels. The default is Schottentor. Export returns GeoJSON MultiPolygons plus snapshot, profile, origin and contour-resolution metadata.
 
-Select A and B yourself, or use search results as endpoints. Dragging pans; Enter chooses the center during picking; Escape cancels. Clear cancels the worker. Routing works independently of map zoom and can succeed while display coverage is partial.
+**Run tools on** selects device or server. Both comparison buttons check exact route/contour agreement. Server results do not download routing cells to the client. In device mode, **Cache only** uses existing verified cells. Missing coverage returns `missing-data`; **Fetch missing cells & resume area** continues the frontier. A disconnected browser reload can reuse persisted cells and the cached app shell. Storage eviction remains possible.
 
-## Measured on Vienna Plus
+## Real Vienna check
 
-Snapshot `f54574974b952b7d7440e5e6c520e30f589d1345a84d29b613d89cf6153d2f86`:
+Current archive: **863,817,861 bytes**, snapshot `855e4d74c55fe813fb7bda2605dfbb5e95f7b7fdd3cc2ada07cff3565ab95008`. All 348,408 non-cell payload hashes are unchanged by migration.
 
-| Route, in order                                   |    Distance |     Routing payload read | Cells used / reused |
-| ------------------------------------------------- | ----------: | -----------------------: | ------------------: |
-| Stephansplatz → Praterstern, cold                 | 2,062.523 m |            462,553 bytes |               3 / 0 |
-| Stephansplatz → Schönbrunn, after the first route | 5,910.583 m | 906,697 additional bytes |               9 / 2 |
-| Schönbrunn → Stephansplatz                        | 5,910.583 m |                  0 bytes |               8 / 8 |
+| Profile | Cells in package | Graph segments | Turn rules | Schottentor → Praterstern | Estimated time | 15-minute area cells |
+| ------- | ---------------: | -------------: | ---------: | ------------------------: | -------------: | -------------------: |
+| Walking |            5,542 |      3,547,639 |          0 |                   2.98 km |       37.3 min |                    4 |
+| Cycling |            5,520 |      2,869,920 |      6,077 |                   3.14 km |       10.5 min |                   23 |
+| Driving |            4,614 |      1,157,005 |      6,343 |                   4.29 km |        6.3 min |                   98 |
 
-The reference graph costs 69,445,864 compressed bytes. The first example reads about 99.3% less routing payload. Counts exclude directory pages and map tiles, which the inspector reports separately. These measurements are route-specific, not general throughput guarantees. Native search may explore well beyond the straight line between endpoints.
+The 15-minute queries, immediately after those routes, read an additional 0.22 / 1.06 / 3.04 MiB of routing payload and take approximately 15 / 58 / 185 ms of WASM load/search/contour time in the recorded Bun run. These exclude waiting and directory bytes. Browser total operation times depend on network, cache and device. Reproduce with `bun scripts/check-transport.ts`; it does not load the whole reference graph.
 
-The visible-browser test also confirmed a zero-network offline reload and a matching 5.91 km server result with an 11.2 KB response. Reproduce distance/status comparisons with `bun scripts/check-routing-cells.ts`; it explicitly loads the whole reference graph for validation.
+## Profile policies
 
-## Generation and compatibility
+These are explicit regional prototype policies, not full legal-access or navigation profiles. They are implemented in `crates/osm-import/src/transport.rs` and `walking.rs`.
 
-`generate` emits cells automatically for nonempty walking graphs. To add them to an existing package without repeating PBF import or tile generation:
+- Walking uses foot/access tags, pedestrian direction overrides, barriers, 4.8 km/h nominal speed, slower steps and rough surfaces.
+- Cycling uses access/vehicle/bicycle precedence, bicycle one-way overrides and opposite-cycleway exceptions. Nominal speed is 18 km/h, with slower rough/path/step categories. Footways and motorway/trunk families require appropriate explicit permission.
+- Driving uses access/vehicle/motor_vehicle/motorcar precedence, vehicle direction restrictions and implicit roundabout/motorway one-way rules. Road-class estimates range from 7 to 100 km/h, capped by supported numeric directional/common maxspeed tags. Foot/cycle/path/track families are excluded by default.
+- Yes/designated/permissive permit access; unsupported access values and relevant conditions exclude it. Blocked nodes remove incident segments. Graph edges preserve OSM node IDs; crossing geometries never create intersections.
+- Common via-node `no_*` and `only_*` restrictions are enforced, with mode exceptions and mode-specific relation tags. Same-way U-turns also track the previous node. Multiple only-turn alternatives form a union. Walking only receives explicit foot restrictions.
+- Via-way, conditional and structurally unsupported turn restrictions conservatively exclude incoming ways. This snapshot excludes 1,029 cycling and 381 driving ways for these rules. Exclusion can disconnect valid real-world routes. Metadata reports both relations and unique excluded ways.
+
+No traffic, turn delays, terrain/slope effort, country-specific defaults, live closures, ferries, public-transport schedules or maneuver instructions. Numeric maxspeed handling is a cap on modeled speed, not a legal-default resolver. Sources for OSM semantics: [turn restrictions](https://wiki.openstreetmap.org/wiki/Restriction), [conditional restrictions](https://wiki.openstreetmap.org/wiki/Conditional_restrictions).
+
+## Search and reachability contract
+
+The kernel snaps within 150 m of the requested point using original segment identity for stable ties. Partial endpoint connections preserve direction and travel costs. A\* minimizes estimated seconds, with spherical distance divided by a profile speed bound as its admissible heuristic. Search state includes the incoming way and previous node to enforce turns. Distances and times exclude the snap offsets; those offsets are not known traversable paths.
+
+Isochrones use bounded Dijkstra expansion with the largest band as their time budget. Reachable directed edge portions are clipped at each time limit. A local metric raster, at least 25 m resolution and at most approximately 505 × 505 cells, produces network envelopes. Holes and disconnected components are retained. This is not a convex hull or radius. Nearby roads are buffered for visibility, so enclosed land/water is **not** guaranteed traversable. The output carries `approximate: true` and `resolutionMeters`; the area field measures the envelope, not accessible land area.
+
+A search requests owner cells when expanding nodes, and pauses with its queue/predecessors intact if bytes are missing. Cells can be evicted without losing reconstruction. Outcomes are `found`, `reachable`, `no-route`, `unsnappable`, `missing-data`, or `budget-exceeded` as applicable. Corrupt or inconsistent bytes are errors. A budget or coverage miss is never reported as no route, and an incomplete contour is never presented as complete.
+
+Device/server routes match status, distance, time, coordinates and OSM way sequence. Contour comparison checks exact GeoJSON for complete results on the same snapshot. Result metrics include profile, snapshot, compute time, fetched routing bytes and cell/cache information.
+
+## Compilation and compatibility
+
+Normal `generate` emits all three networks. To upgrade an existing archive while preserving display/search payloads:
 
 ```sh
-bun run cli routing-cells --input data/region.atlas --output data/region-cells.atlas
+bun run cli transport --input data/region.atlas --pbf data/region.osm.pbf --output data/region-transport.atlas
 ```
 
-The migration verifies and copies existing payloads, preserving compressed blocks and optionally compressing legacy raw blocks. It appends cell payloads plus directory leaves. All 348,408 previous Vienna payload hashes remain unchanged. Vienna grows from 640.1 MB to 725.3 MB. It retains `routing/walking` for reference comparison and the existing polygon exporter. Old packages and clipped offline children still use the reference graph; there is no silent fallback from a failed paged search to a whole-graph download.
+The compiler checks the PBF digest against the manifest, copies and verifies existing non-cell payloads, writes profile-specific cells, checks the complete file budget, then publishes by atomic rename. Source preprocessing/import remains regional and memory-based.
 
-## Profile: walking-v1
+New cells use RCL2/RTE2 with directional seconds and turn relations. Old RCL1 walking cells and RTE1 reference graphs remain readable. There is no whole-graph fallback from a failed paged search. The legacy `routing-cells` command remains for adding RCL1 cells to older walking packages. The old whole-graph distance-only method rejects RTE2 so it cannot accidentally bypass travel-time/turn semantics.
 
-This is an explicit prototype policy, not a complete regional legal-access model:
+Polygon-exported `.atlas` children still carry a clipped **walking-only RTE1** graph and omit transport/cell capabilities. They do not promise cycling/driving or isochrones. Whole-archive downloads and persistent cell caching retain those capabilities. Cell-aware portable offline extraction is a separate next step.
 
-- Allowed highway families: primary/secondary/tertiary and links, unclassified, residential, living_street, service, pedestrian, track, path, footway and steps.
-- Motorway/trunk and their links, motorroad=yes, cycleway and bridleway require explicit allowed access. Explicit generic access or foot access can enable them. Other highway types, including construction/proposed, are excluded. Highway areas are excluded; there is no free-space navigation across plazas.
-- `foot` overrides `access`. Empty values use the above defaults; yes, designated and permissive allow passage. Other values (including no, private, customers, destination and use_sidepath) are conservatively excluded. `foot:forward` / `foot:backward` can further override the base permission for a direction.
-- `oneway:foot=yes|1|true` allows the source-node order; `-1` permits the reverse; absent/no/0/false is bidirectional. Other values exclude the way. Ordinary vehicle `oneway` is not applied to pedestrians.
-- Any access:conditional, foot:conditional, oneway:foot:conditional, foot:forward:conditional or foot:backward:conditional tag excludes the object. Conditions are not evaluated.
-- Node foot/access denial blocks passage. Untagged nodes and barriers gate, lift_gate, swing_gate, kissing_gate, bollard, cycle_barrier, entrance and stile are allowed by default. Unknown barrier types are blocked unless explicitly permitted. Both segments incident to a blocked node are omitted; there is no artificial link around it.
-- An eligible way with any missing node reference is omitted entirely and counted in routing metadata. All retained way segments preserve their endpoint node identities. Crossing geometry is never treated as an intersection by itself.
+## Resource limits
 
-These rules are encoded in `crates/osm-import/src/walking.rs`. OSM references: [foot access](https://wiki.openstreetmap.org/wiki/Key:foot), [pedestrian one-way](https://wiki.openstreetmap.org/wiki/Key:oneway:foot), and [access restrictions](https://wiki.openstreetmap.org/wiki/OSM_tags_for_routing/Access_restrictions).
+The current kernel estimates a 32 MiB cell-cache budget, with 250,000 search records/reachable directed pieces and 1,000,000 queue entries. These limits do not bound total WASM RSS. The reader separately limits decoded routing payloads to 16 MiB. IndexedDB holds up to 128 MiB of compressed eligible blocks across snapshots, with hash verification and LRU eviction. Changing profiles clears the resident kernel graph; other modes remain available in persistent byte storage.
 
-## Search and result contract
-
-1. Request the cells intersecting each endpoint's 150 m snap neighborhood. Scan those cells for the nearest eligible segment using the same local projection and original global segment-order tie breaking as the reference engine.
-2. Create direction-sensitive partial endpoint connections. Actual node endpoints can use every incident edge. Same-segment routes retain their permitted partial distance.
-3. Run A\* with spherical edge lengths and an admissible remaining-distance estimate. Expand each node using its owner cell, which contains all incident segments. Original OSM node IDs connect cells; geometric crossings never create junctions.
-4. If a required cell is absent, return `NeedBlocks` without discarding the frontier or predecessor chain. Load and verify it, then continue. Search records retain reconstruction coordinates even after a decoded cell is evicted.
-5. Return `found`, `no-route`, `unsnappable`, `missing-data`, or `budget-exceeded`, pinned to the snapshot. Missing bytes and exhausted memory budgets never become `no-route`. Malformed or corrupt data remains an error.
-
-`no-route` requires exhausting the search within the retained graph. A legitimate route could leave the extract, use excluded ways, or require a different snap candidate. There is no authoritative completeness polygon or neighboring-package continuation yet.
-
-Route distance excludes dotted snap offsets, whose walkability is unknown. Walking time is distance / 4.8 km/h without terrain, surfaces or obstacles. Cell metrics show cumulative routing payload fetched during that search, cells used/reused, estimated engine memory, and WASM search/load time; they exclude network and storage waiting. The generic operation timer includes waiting.
-
-## Caches and limits
-
-- The browser worker owns the resumable search. The server uses the same WASM class and orchestrator, yielding between bounded batches. Server reads never populate the client's cache.
-- The engine limits estimated decoded-cell storage to 32 MiB, search records to 250,000 and queued entries to 1,000,000. Endpoint snap neighborhoods are temporarily pinned; if they cannot fit, the result is `budget-exceeded`. This is not a measurement or bound on total WASM/browser RSS.
-- The reader bounds decoded routing bytes separately at 16 MiB. Other in-memory readers, rendering caches, label catalogs and search indexes remain regional prototypes.
-- IndexedDB retains up to 128 MiB of compressed display/label blocks, directory leaves and routing cells across snapshots, using LRU eviction. Keys include snapshot, block key and hash. Every persisted hit is hash-checked before decode. Saved header/root metadata lets the app reopen the last validated snapshot when the network is unavailable; it then enters Cache only.
-- The app shell uses a service worker. Browser storage can be evicted or denied; the UI reports a memory-only fallback when persistence fails. Search, query, extraction and reference-graph blocks are not persisted by this cache. Explicit `.atlas` exports remain the portable offline option.
-- Polygon exports still read and clip the reference graph and omit inherited cell metadata. Cell-aware export is future work.
-- No routing hierarchy or precomputed shortcuts yet. Long or dense regional searches can hit the budget. Dateline-spanning segments and segments covering more than 4,096 cells are rejected by this prototype compiler. Import and partitioning still hold the regional reference graph in memory. The server still pins the entire selected package in memory at startup.
-- No driving/cycling/wheelchair profiles, turn restrictions, maneuver instructions, elevation/difficulty costs, live closures, conditional evaluation, ferries or relation-based networks.
-
-Native tests cover crossing-cell detours, resumable missing reads, one-way snapping, disconnected crossings, bounded eviction/reconstruction, budget exhaustion and cell corruption. Bun tests exercise the actual WASM through package reads and the server API, including offline persistence, snapshot isolation, capability guards and malformed metadata. A visible Chromium flow verifies pause/resume, client/server parity, actual offline reload and narrow layouts; a separate browser check validates real IndexedDB LRU eviction and reopening.
+Long/dense searches may exceed the budget; shorten the route/time. There is no routing hierarchy or cross-package continuation. Extent boundaries and conservative access exclusions can truncate a reachable area. The server still pins the archive in RAM and serializes operation requests. See [stack review](STACK-REVIEW.md) for the next architectural changes.

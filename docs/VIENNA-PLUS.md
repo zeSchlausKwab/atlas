@@ -1,6 +1,6 @@
 # Vienna Plus: regional 0–16 package
 
-The prepared package is **725,284,965 bytes (725.3 MB / 691.7 MiB)**, below the **2,000,000,000-byte** output ceiling. It contains stored, nonempty vector tiles at **every zoom from 0 to 16**. Zooms 17–20 overzoom the z16 geometry. Low zooms use the existing layer visibility and geometry simplification rules; “0–16” does not mean all OSM tags or relation types are implemented.
+The prepared package is **863,817,861 bytes (863.8 MB / 823.8 MiB)**, below the **2,000,000,000-byte** output ceiling. It contains stored, nonempty vector tiles at **every zoom from 0 to 16**. Zooms 17–20 overzoom the z16 geometry. Low zooms use the existing layer visibility and geometry simplification rules; “0–16” does not mean all OSM tags or relation types are implemented.
 
 | Content                                       |                                    Count |
 | --------------------------------------------- | ---------------------------------------: |
@@ -79,7 +79,7 @@ The browser demo limits exported files to 256 MB. The source graph and search ta
 
 The service worker saves the app shell (HTML, CSS, JavaScript and WASM). Once **App saved for offline use** appears, the app can reload at the same origin without networking. A separate 128 MiB IndexedDB cache retains viewed map blocks, labels, directories and routing cells; the last validated root can reopen offline. **Cache only** uses that store as well as session memory. Browser eviction or clearing site data removes cached coverage. For a portable offline selection, save and reopen the explicit `.atlas` file. Search, queries and the reference graph are not persisted by the incidental cache.
 
-A central-Vienna browser smoke export retained z0–16 and produced a roughly 44 MB package. Rendering, forward search, nearest-street lookup and walking routing were verified after disabling networking, reloading the shell and reopening the file. A separate visible-browser sweep rendered every zoom from 0 through 20 without missing tiles or browser errors. These sizes vary with the polygon. The Vienna route demo found a 2.06 km Stephansplatz → Praterstern walk; routing is an experimental distance-only walking profile, not navigation guidance.
+A central-Vienna browser smoke export retained z0–16 and produced a roughly 44 MB package. Rendering, forward search, nearest-street lookup and walking routing were verified after disabling networking, reloading the shell and reopening the file. A separate visible-browser sweep rendered every zoom from 0 through 20 without missing tiles or browser errors. These sizes vary with the polygon. The Vienna route demo found a 2.06 km Stephansplatz → Praterstern walk; the current transport profiles use estimated directional times and common via-node turn restrictions. They remain experimental.
 
 ## Map-only transfer budget
 
@@ -141,3 +141,14 @@ The second audit argument compares original spatial tile counts and non-map hash
 All 348,408 payloads and 930 directory pages passed integrity and structure checks. Eight direct tile checks (four Danube points, each at z13 and z16) confirm filled water. The central-Vienna z13 building tile has 8,016 footprints, including 2,129 tagged heights and 4,927 floor estimates. This is a tile sample, not a regional coverage percentage. The previous file is retained locally as `data/vienna-plus.pre-heights.atlas`.
 
 Visible Chromium checks verified: cold settlement-name bytes remain zero when disabled; enabling them reads 20.7 KB; footprints draw at z13; right-drag, Command-drag and Command-wheel change pitch/bearing; Top-down and R reset the view; scene preferences persist; tilted picking matches an independent inverse projection; offline polygons finish; no horizontal overflow at 390 px. A second styling check recorded zero additional map requests and zero `bufferData` uploads for paint/shading edits. Browser wheel deltas may be scaled by the platform; a real physical trackpad was not operated by this automation.
+
+## Transport and isochrones
+
+The latest upgrade preserves all 348,408 non-cell payload hashes and replaces the legacy walking cells with RCL2 walking/cycling/driving cells. Counts: 5,542 / 5,520 / 4,614 cells; 3,547,639 / 2,869,920 / 1,157,005 segments. Source PBF and display z0–16 are unchanged. The original pre-transport archive is kept locally as `data/vienna-plus.pre-transport.atlas`.
+
+```sh
+bun run cli transport --input data/vienna-plus.atlas --pbf data/vienna-plus.osm.pbf --output data/vienna-plus-next.atlas
+bun scripts/check-transport.ts data/vienna-plus-next.atlas
+```
+
+This command verifies that the PBF digest matches the manifest. The normal generator now emits all three profiles too. See [routing](ROUTING.md) and [stack review](STACK-REVIEW.md) for measurements and remaining limits. Polygon-exported child archives still contain walking-only reference graphs; persistent cell caching supports all three modes and isochrones.

@@ -206,3 +206,49 @@ test("transport metadata and API time bands are validated before fetching graph 
   engine.destroy();
   f.router.destroy();
 });
+
+test("real PBF compiler preserves distinct access, vehicle direction and different-way U-turns", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const dir = await mkdtemp("/tmp/atlas-transport-import-");
+  try {
+    const proc = Bun.spawn(
+      [
+        "cargo",
+        "run",
+        "--quiet",
+        "-p",
+        "atlas-osm-import",
+        "--bin",
+        "transport-import",
+        "--",
+        "tests/fixtures/transport.osm.pbf",
+        dir,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const errors = await new Response(proc.stderr).text();
+    expect(await proc.exited, errors).toBe(0);
+    const stats = await Bun.file(`${dir}/metadata.json`).json();
+    expect(stats.walking.segments).toBe(3);
+    expect(stats.cycling.segments).toBe(3);
+    expect(stats.driving.segments).toBe(2);
+    expect(stats.driving.turns).toBe(1);
+    expect(stats.cycling.turns).toBe(0);
+    for (const [mode, name] of TRANSPORT_MODES.entries()) {
+      const bytes = new Uint8Array(
+          await Bun.file(`${dir}/${name}.rte`).arrayBuffer(),
+        ),
+        v = new DataView(bytes.buffer),
+        n = v.getUint32(4, true),
+        e = v.getUint32(8, true);
+      expect(v.getUint32(16, true)).toBe(mode);
+      expect(v.getUint8(20 + n * 24 + 16)).toBe(mode === 2 ? 1 : 3);
+      if (mode === 2) {
+        expect(v.getUint8(20 + n * 24 + e * 28 + 24)).toBe(0);
+        expect(v.getFloat32(20 + n * 24 + 20, true)).toBeGreaterThan(13);
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30000);

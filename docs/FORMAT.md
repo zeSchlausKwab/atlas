@@ -23,7 +23,7 @@ The reader supports both versions and caps root metadata at 64 MiB. CLI generati
 
 Contains format/version, display name, source URL and PBF SHA-256, OSM attribution, longitude/latitude bounds, min/max stored tile zoom, retained feature and peak counts, a legacy place-label list (empty in new packages), capabilities, limitations, and a snapshot digest. Bounds are the envelope of retained source features, not an authoritative country polygon. Dateline-spanning sources are not specially handled.
 
-Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `paged-walking-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`, `building-heights`.
+Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `paged-walking-routing`, `transport-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`, `building-heights`.
 
 Routing-enabled packages also declare `routing: {profile: "walking-v1", block: "routing/walking", nodes, segments, bytes, skippedWays, snapLimitMeters: 150, scope: "retained-source-extract"}`. The optional `routing.cells: {zoom: 14, count, codec: "rcl1"}` and `paged-walking-routing` capability select paged search. The count must match the spatial directory. Routing is optional; older packages without the capability still render. Display zoom ranges do not govern routing detail.
 
@@ -189,3 +189,31 @@ Feature extraction is independent of display zoom and visibility toggles. In dev
 ## Optional settlement names
 
 New files store `labels/places` as a separate compressed, hashed root block with `{schema: "places-v1", places: [{name, coordinates: [lon, lat]}]}` and an empty `manifest.places`. It is fetched only when `placeNames` is enabled. This small regional block is not spatially partitioned yet. Legacy inline names remain readable and can be hidden but have already arrived with the root. Street names, POIs and search remain independent. Offline exports omit the block when disabled, or retain only names inside the selection polygon.
+
+## Transport graphs and cells (RTE2 / RCL2)
+
+`transport-routing` requires `transport: {version: 1, profiles: {walking, cycling, driving}}`. Each profile declares `{prefix: "routing/<mode>/cells", zoom: 14, codec: "rcl2", count, nodes, segments, turns, skippedWays, unsupportedRestrictions, excludedRestrictionWays}`. Counts must match their spatial directory. Graph detail is independent of display zoom. Legacy walking metadata and RTE1/RCL1 remain readable; new archives keep the old reference graph only for legacy comparison and polygon export.
+
+RTE2 layout:
+
+```
+magic:      4 bytes "RTE2"
+nodes:      u32
+segments:   u32
+turns:      u32
+profile:    u32 (walking=0, cycling=1, driving=2)
+node[nodes]:
+  id: i64; longitude: f64; latitude: f64
+segment[segments]:
+  a: u32; b: u32; way: i64; directions: u8; reserved: 3 zero bytes
+  forward_seconds: f32; backward_seconds: f32
+turn[turns]:
+  via_node: i64; from_way: i64; to_way: i64
+  kind: u8; reserved: 7 zero bytes
+```
+
+Direction bits retain the RTE1 convention. Times are full-segment travel costs rounded upward to f32; partial snaps interpolate those costs. Invalid/nonfinite/negative costs and speeds beyond the heuristic's bound fail decoding. Kinds 0/1 mean prohibited/only turn; kinds 2/3 specialize same-way U-turns by matching the previous node. Different-way U-turns use normal way-pair restrictions. Multiple only-turn alternatives form a union; a prohibited turn still wins. Via-way restrictions and conditions are not evaluated by this prototype compiler: incoming ways are conservatively excluded and counted.
+
+RCL2 retains the RCL1 16-byte envelope (`magic`, z, x, y) followed by RTE2 and one original segment ordinal u32 per segment. Original OSM node IDs join cells; ordinals deduplicate overlapping cell copies. Every owner cell contains all incident segments and turn rules for retained nodes. A loaded cell must match the selected mode. Directory prefixes are `routing/<mode>/cells`; page keys are `index/routing/<mode>/cells/14/pageX/pageY`.
+
+Per-cell limits: 200,000 nodes, 300,000 segments, 50,000 turn rules, and 16 MiB decoded payload. A search retains a bounded cell cache and returns explicit `missing-data` or `budget-exceeded` results. Routes return `seconds` as well as `meters`; isochrones return snapshot-scoped GeoJSON MultiPolygon bands with seconds, minutes, envelope area, approximation flag and contour resolution. See [routing contract](ROUTING.md).

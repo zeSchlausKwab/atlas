@@ -46,7 +46,8 @@ export class RouteControls {
   ) {
     this.router = operations;
     this.supported =
-      reader.index.manifest.capabilities.includes("walking-routing");
+      reader.index.manifest.capabilities.includes("walking-routing") ||
+      !!reader.index.manifest.transport;
     const places = reader.index.manifest.places;
     const vienna = reader.index.manifest.name === "Vienna Plus";
     const a = vienna
@@ -126,17 +127,25 @@ export class RouteControls {
       element("route-hint").textContent =
         "This package has no walking graph. Rebuild it with the current generator.";
   }
+  profileChanged() {
+    this.clear();
+    this.map.setRoute(null);
+    this.cells.clear();
+    this.drawCells();
+    this.refresh();
+  }
   refresh() {
     if (this.reader.index.manifest.name === "Vienna Plus")
       button("example").textContent =
         `Try ${this.operations.profile === "driving" ? "Schottentor" : "Stephansplatz"} → Praterstern ↗`;
     element("route-proof").hidden = true;
-    this.operations.cancelRoute();
+    if (this.busy) this.operations.cancelRoute();
     this.revision++;
     this.busy = false;
     this.picking = null;
     this.supported =
-      this.reader.index.manifest.capabilities.includes("walking-routing") &&
+      (this.reader.index.manifest.capabilities.includes("walking-routing") ||
+        !!this.reader.index.manifest.transport) &&
       this.operations.enabled.has("routing");
     if (!this.supported) this.map.setRoute(null);
     this.update();

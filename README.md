@@ -1,6 +1,6 @@
 # Atlas / geo-format
 
-An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking routes and location search on the client or server in a Bun web app.
+An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. No MapLibre, remote basemap tiles, commercial map API, or planet download is used.
 
@@ -27,7 +27,7 @@ The server watches TypeScript changes and rebuilds the frontend on restart. Refr
 
 ## Vienna Plus and offline drawing
 
-**Vienna Plus is ready: 725.3 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
+**Vienna Plus is ready: 863.8 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with three transport networks, isochrones, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
 
 ```sh
 bun run data:vienna # needs osmium-tool, uses verified cached sources when present
@@ -56,7 +56,9 @@ The wider sidebar has **Explore**, **Route**, **Extract**, **Offline**, **Style*
 
 **Extract** adds buildings, water, railways, roads or landscape areas from the current view as a selectable overlay. Click shapes or list entries, inspect their OSM tags, then download the selection as GeoJSON or polylines. Full source shapes and courtyard holes are preserved. Use an optional exact tag filter such as `water=lake`, `water=oxbow` or `railway=tram`. Source geometry loads only when requested.
 
-**Compare device & server** checks route distance, coordinates and OSM way sequence against the same snapshot. The 5.91 km Schönbrunn example returned an **11.2 KB** server response and matched exactly. On the device, the shorter Praterstern example now reads **463 KB across 3 routing cells**, instead of the **69.45 MB** reference graph. See [server operations and extraction](docs/SERVER-AND-EXTRACTION.md) for the API, data boundaries and verification.
+**Route → Travel mode** chooses walking, cycling or driving. Routes use estimated directional travel times and mode-specific access. **How far can I go?** creates 5–30 minute areas from a chosen origin, displays nested time bands and exports contour GeoJSON. Both route and area comparison buttons verify the same result on device and server. Cached cells work offline; missing coverage pauses until resumed. [Transport contract, generation and limits](docs/ROUTING.md).
+
+The client performance pass reduced the worst frame in the recorded cold zoom-and-pan workload from 50 ms to 18.6 ms with all labels enabled. This is a local before/after measurement, not a MapLibre benchmark. [Measurements and architecture review](docs/STACK-REVIEW.md).
 
 The following local-data experiments assume **Run tools on → This device**:
 
@@ -85,7 +87,7 @@ bun run cli --help
 bun run cli fetch --format json
 bun run cli generate --min-zoom 9 --max-zoom 14
 bun run cli inspect --format json
-bun run cli routing-cells --input data/region.atlas --output data/region-cells.atlas
+bun run cli transport --input data/region.atlas --pbf data/region.osm.pbf --output data/region-transport.atlas
 
 bun run cli fetch --url https://example.org/region.osm.pbf --out data/region.osm.pbf
 bun run cli generate --input data/region.osm.pbf --output data/region.atlas --name "My region"
@@ -105,7 +107,7 @@ bun test
 cargo test --workspace
 ```
 
-58 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 28 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings, rendering codecs, line joins, continuous stroke widths and unchanged water-area geometry. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
+62 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 43 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings, rendering codecs, line joins, continuous stroke widths and unchanged water-area geometry. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
 
 ## Original small sample
 
@@ -119,7 +121,7 @@ CPU draw timing measures the synchronous render submission call, not complete GP
 
 - Renderer is currently a browser WebGL2 backend controlled by Rust/WASM. Native rendering and WebGPU are future work. Tile decoding and tessellation have native Rust tests.
 - Polygons include closed ways, building parts and nested multipolygon relations with courtyards. Incomplete/ambiguous rings and cyclic or excessively deep relations are skipped and counted in the manifest. Source import keeps selected display ways, peaks, named location nodes and walking topology, not the complete OSM object graph.
-- Walking routing uses independently fetched cells, local segment snapping (150 m limit), and resumable A\*. Legacy packages and reference comparisons retain whole-graph Dijkstra. No driving/cycling profiles, turn relations/instructions, terrain/difficulty costs, conditional access evaluation, national access defaults, imagery, terrain, or Hashtree transport. Unsupported conditional/access values are conservatively excluded. See the exact [walking profile](docs/ROUTING.md).
+- Walking/cycling/driving use independently fetched cells, local segment snapping (150 m limit), estimated directional travel times and common via-node turn rules. Isochrones approximate reachable-network envelopes. Legacy walking packages retain whole-graph Dijkstra. No maneuver instructions, terrain costs, conditional evaluation, national defaults, transit schedules or Hashtree transport. See the exact [transport policies](docs/ROUTING.md).
 - Geocoding uses TypeScript, in-memory name scans and bounding-box-filtered street segment projection. No house-number matching, address interpolation, typo correction, administrative hierarchy or external search provider. Nearest street is scoped to retained road/pedestrian-street/track types within 1 km; it is not a postal address or accessibility claim. See [geocoding details](docs/GEOCODING.md).
 - Graph coverage is the retained source extract, not a complete worldwide network. A missing graph, an unsnappable point, and no path in the loaded graph are distinct outcomes. No-path is not proof of real-world disconnection. Search fetches missing cells within the package; crossing into other packages and hierarchical routing remain future work.
 - Peak results cover the source extract, which can include data beyond the political border. They are exact over retained peaks with known numeric elevations, not a claim about all physical terrain.

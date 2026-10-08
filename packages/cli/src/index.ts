@@ -5,7 +5,7 @@ import { encodeTile } from "./tile-codec";
 import { buildingHeight } from "../../format/src/heights";
 import { MAP_LAYERS } from "../../format/src/index";
 import { splitTile } from "../../format/src/tiles";
-import { addRoutingCells, partitionPackageRouting } from "./routing-cells";
+import { partitionPackageRouting } from "./routing-cells";
 import { splitPackageLayers } from "./split-layers";
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -456,7 +456,7 @@ async function main() {
       limitations: [
         "Experimental schema; no compatibility guarantee",
         `${imported.assembledRelations} area relations assembled; ${imported.skippedRelations} incomplete or unsupported area relations skipped. Nested multipolygon members are expanded with composed inner/outer roles.`,
-        "Walking-v1 only: shortest distance, no turn relations, terrain/difficulty, live conditions, or country-specific access defaults",
+        "Transport-v1: estimated times and common via-node turn restrictions; unsupported conditional/complex turn restrictions exclude incoming ways. No traffic, elevation costs, transit schedules or country-specific defaults",
         "Routing graph covers retained ways in the source extract; no route does not prove real-world disconnection",
         "Conditional access and unsupported access values are excluded; nearest-segment snapping is limited to 150 m",
         "Location search and nearest-street lookup only; no house-number address matching or authoritative administrative hierarchy",

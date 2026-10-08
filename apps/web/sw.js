@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v15";
+const CACHE = "atlas-shell-v16";
 const SHELL = [
   "/",
   "/styles.css",

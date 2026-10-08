@@ -61,6 +61,33 @@ fn restriction(t: &Tags, mode: usize) -> Option<&str> {
         (!r.is_empty()).then_some(r)
     }
 }
+fn turn_kind(value: &str, from: i64, to: i64) -> u8 {
+    u8::from(value.starts_with("only_"))
+        + if value.ends_with("u_turn") && from == to {
+            2
+        } else {
+            0
+        }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn u_turn_identity_and_conditional_only_rules() {
+        assert_eq!(turn_kind("no_u_turn", 1, 1), 2);
+        assert_eq!(turn_kind("no_u_turn", 1, 2), 0);
+        assert_eq!(turn_kind("only_u_turn", 1, 2), 1);
+        let tags: Tags = [(
+            "restriction:conditional".into(),
+            "no_left_turn @ (Mo-Fr)".into(),
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(restriction(&tags, 2), Some("unsupported-conditional"));
+        assert_eq!(restriction(&tags, 1), Some("unsupported-conditional"));
+        assert_eq!(restriction(&tags, 0), None);
+    }
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 3 {
@@ -154,8 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 excluded.extend(from);
                 continue;
             }
-            let kind = u8::from(value.starts_with("only_"))
-                + if value.ends_with("u_turn") { 2 } else { 0 };
+            let kind = turn_kind(value, from[0], to[0]);
             turns.push(Turn {
                 via: node.unwrap(),
                 from: from[0],

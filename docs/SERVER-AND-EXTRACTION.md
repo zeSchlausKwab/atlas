@@ -17,7 +17,7 @@ The five sidebar tabs organize Explore, Route, Extract, Offline and Data. The gl
 | Object extraction | `AtlasFeatures.query`                               | Source GeoJSON objects                                  |
 | Offline package   | `packages/offline.extract`                          | New `.atlas` file                                       |
 
-The browser initializes WASM from its bundled URL; Bun initializes the identical WASM binary from disk. The server uses a `FileSource` over the same pinned package Blob served by HTTP ranges. Map rendering remains in the browser. Server rasterization, driving directions and arbitrary Overpass-like queries are not implemented.
+The browser initializes WASM from its bundled URL; Bun initializes the identical WASM binary from disk. The server uses a `FileSource` over the same pinned package Blob served by HTTP ranges. Map rendering remains in the browser. Server rasterization, turn-by-turn maneuver instructions and arbitrary Overpass-like queries are not implemented. Walking/cycling/driving routes and isochrones use the same paged WASM engine on either host.
 
 Device mode fetches only needed source blocks. Routing cells run in a browser worker; compressed cells, display blocks and directories also persist in the bounded IndexedDB cache. Other semantic payloads remain session-local. Server mode computes against server caches and returns the result. There is no silent fallback between modes. Cache only blocks server operations. Reopening a local file disables server mode.
 
@@ -39,14 +39,15 @@ Example route request:
 
 Inputs by endpoint:
 
-| Endpoint        | `input`                                                                                                                                                                     |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/route`    | `{start: [lon,lat], end: [lon,lat]}`                                                                                                                                        |
-| `/api/search`   | `{query: "Stephansplatz", limit: 10}`                                                                                                                                       |
-| `/api/reverse`  | `{point: [16.3731,48.2085]}`                                                                                                                                                |
-| `/api/peak`     | `{}`                                                                                                                                                                        |
-| `/api/features` | `{kind: "buildings", bounds: [west,south,east,north], limit: 200, tag: "building=apartments"}`                                                                              |
-| `/api/offline`  | `{name, polygon: [[lon,lat],...], minZoom: 0, maxZoom: 16, routing: false, search: false, queries: false, layers: ["water", "buildings"], streetNames: false, pois: false}` |
+| Endpoint         | `input`                                                                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/route`     | `{start: [lon,lat], end: [lon,lat], profile: "cycling"}`                                                                                                                    |
+| `/api/isochrone` | `{start: [lon,lat], bands: [300,600,900], profile: "walking"}` (seconds; 1–4 ascending bands, maximum 1800)                                                                 |
+| `/api/search`    | `{query: "Stephansplatz", limit: 10}`                                                                                                                                       |
+| `/api/reverse`   | `{point: [16.3731,48.2085]}`                                                                                                                                                |
+| `/api/peak`      | `{}`                                                                                                                                                                        |
+| `/api/features`  | `{kind: "buildings", bounds: [west,south,east,north], limit: 200, tag: "building=apartments"}`                                                                              |
+| `/api/offline`   | `{name, polygon: [[lon,lat],...], minZoom: 0, maxZoom: 16, routing: false, search: false, queries: false, layers: ["water", "buildings"], streetNames: false, pois: false}` |
 
 JSON responses wrap `{result, execution}`. Execution records side, operation, elapsed computation time and uncached source bytes read on that host. Device route source bytes count routing payload only, avoiding concurrent display traffic; directory bytes remain in the inspector. Route `cells` metadata separately reports used/reused cells, routing payload, estimated engine memory and WASM compute time. `RemoteOperations` measures actual response body bytes in the browser. Time includes source acquisition/decoding when cold and excludes queue wait and network latency. The inspector shows **API responses** separately from **package bytes**; server source reads are not browser downloads.
 

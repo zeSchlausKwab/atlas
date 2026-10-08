@@ -194,8 +194,10 @@ export class SearchControls {
     coords.textContent = `${position[1].toFixed(6)}, ${position[0].toFixed(6)}`;
     box.append(title, note, coords);
     el("search-route-actions").hidden =
-      !this.reader.index.manifest.capabilities.includes("walking-routing") ||
-      !this.operations.enabled.has("routing");
+      !(
+        this.reader.index.manifest.capabilities.includes("walking-routing") ||
+        this.reader.index.manifest.transport
+      ) || !this.operations.enabled.has("routing");
   }
   select(record: Location) {
     activateTab("explore");

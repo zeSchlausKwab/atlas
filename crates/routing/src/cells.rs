@@ -1125,4 +1125,26 @@ mod tests {
         assert!(!c.allowed(k, 10, 1));
         assert!(c.allowed(k, 10, 4));
     }
+    #[test]
+    fn fastest_route_can_be_longer_than_shortest_distance() {
+        let mut g = transport_graph(vec![]);
+        g = g
+            .with_costs(
+                2,
+                vec![[200., 200.], [200., 200.], [30., 30.], [30., 30.]],
+                vec![],
+            )
+            .unwrap();
+        let mut r = PagedRouter::new(1_000_000, 10000);
+        r.set_profile(2).unwrap();
+        r.begin([16., 48.], [16.002, 48.]).unwrap();
+        let Route::Found {
+            seconds, meters, ..
+        } = solve(&mut r, &payloads(&g))
+        else {
+            panic!()
+        };
+        assert_eq!(seconds, 60.);
+        assert!(meters > distance([16., 48.], [16.002, 48.]) * 1.3);
+    }
 }
