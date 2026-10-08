@@ -181,6 +181,111 @@ fn roof_height(f: &Feature) -> f32 {
         f.height
     }
 }
+fn base_line_width(class: usize) -> f32 {
+    match class {
+        1 => 1.3,
+        3 => 1.5,
+        4 => 2.8,
+        5 => 0.65,
+        _ => 1.0,
+    }
+}
+/// Cartographic widths in CSS pixels, continuously interpolated across fractional zooms.
+/// These are visual defaults, not surveyed OSM road widths.
+fn line_width(class: usize, zoom: f64) -> f32 {
+    let stops: &[(f64, f32)] = match class {
+        3 => &[
+            (10., 0.7),
+            (12., 1.4),
+            (14., 3.),
+            (16., 6.),
+            (18., 12.),
+            (20., 20.),
+        ],
+        4 => &[
+            (0., 0.8),
+            (8., 1.1),
+            (10., 1.5),
+            (12., 2.6),
+            (14., 5.),
+            (16., 10.),
+            (18., 18.),
+            (20., 28.),
+        ],
+        5 => &[(12., 0.55), (14., 0.8), (16., 1.2), (18., 1.8), (20., 2.8)],
+        _ => return base_line_width(class),
+    };
+    for pair in stops.windows(2) {
+        if zoom <= pair[1].0 {
+            let t = ((zoom - pair[0].0) / (pair[1].0 - pair[0].0)).clamp(0., 1.) as f32;
+            return pair[0].1 + (pair[1].1 - pair[0].1) * t;
+        }
+    }
+    stops.last().unwrap().1
+}
+fn line(out: &mut Vec<f32>, points: &[[f32; 2]], width: f32, joined: bool) {
+    let mut path: Vec<[f32; 2]> = Vec::new();
+    for p in points {
+        if path
+            .last()
+            .map(|a| (a[0] - p[0]).hypot(a[1] - p[1]) >= 1e-10)
+            .unwrap_or(true)
+        {
+            path.push(*p);
+        }
+    }
+    if path.len() < 2 {
+        return;
+    }
+    let closed = path.first() == path.last();
+    let normals: Vec<[f32; 2]> = path
+        .windows(2)
+        .map(|p| {
+            let dx = p[1][0] - p[0][0];
+            let dy = p[1][1] - p[0][1];
+            let len = dx.hypot(dy);
+            [-dy / len * width / 2., dx / len * width / 2.]
+        })
+        .collect();
+    for (i, segment) in path.windows(2).enumerate() {
+        let (a, b) = (segment[0], segment[1]);
+        let n = normals[i];
+        // Square caps connect independently stored road fragments without tiny endpoint gaps.
+        let start = if joined && !closed && i == 0 {
+            [-n[1], n[0]]
+        } else {
+            [0., 0.]
+        };
+        let end = if joined && !closed && i == normals.len() - 1 {
+            [n[1], -n[0]]
+        } else {
+            [0., 0.]
+        };
+        let an = [n[0] + start[0], n[1] + start[1]];
+        let am = [-n[0] + start[0], -n[1] + start[1]];
+        let bn = [n[0] + end[0], n[1] + end[1]];
+        let bm = [-n[0] + end[0], -n[1] + end[1]];
+        for (p, o) in [(a, an), (a, am), (b, bn), (b, bn), (a, am), (b, bm)] {
+            vertex(out, p, o, 0.);
+        }
+    }
+    if joined {
+        // Fill the outside wedge at bends; bevels stay bounded at acute turns.
+        let end = if closed { path.len() } else { path.len() - 1 };
+        for i in 1..end {
+            let prev = normals[i - 1];
+            let next = normals[i % normals.len()];
+            let cross = prev[0] * next[1] - prev[1] * next[0];
+            if cross.abs() < 1e-10 {
+                continue;
+            }
+            let sign = -cross.signum();
+            vertex(out, path[i], [0., 0.], 0.);
+            vertex(out, path[i], [prev[0] * sign, prev[1] * sign], 0.);
+            vertex(out, path[i], [next[0] * sign, next[1] * sign], 0.);
+        }
+    }
+}
 fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
     let mut layers = vec![Vec::new(); 8];
     for f in features {
@@ -203,30 +308,13 @@ fn mesh(features: &[Feature]) -> Result<(Vec<Vec<f32>>, usize), String> {
             }
             polygon(out, &group, roof_height(f))?;
         } else if f.kind == 2 {
-            let width = match f.class {
-                1 => 1.3,
-                3 => 1.5,
-                4 => 2.8,
-                5 => 0.65,
-                6 => 1.0,
-                _ => 1.0,
-            };
             for ring in &f.rings {
-                for segment in ring.windows(2) {
-                    let a = segment[0];
-                    let b = segment[1];
-                    let dx = b[0] - a[0];
-                    let dy = b[1] - a[1];
-                    let length = (dx * dx + dy * dy).sqrt();
-                    if length < 1e-10 {
-                        continue;
-                    }
-                    let n = [-dy / length * width / 2., dx / length * width / 2.];
-                    let m = [-n[0], -n[1]];
-                    for (p, o) in [(a, n), (a, m), (b, n), (b, n), (a, m), (b, m)] {
-                        vertex(out, p, o, 0.);
-                    }
-                }
+                line(
+                    out,
+                    ring,
+                    base_line_width(f.class),
+                    (3..=5).contains(&f.class),
+                );
             }
         } else {
             for ring in &f.rings {
@@ -578,6 +666,35 @@ impl Renderer {
         };
         let mut triangles = 0;
         for layer_id in order {
+            if layer_id == 3 {
+                for class in [3, 4] {
+                    if self.mask & (1 << class) == 0 {
+                        continue;
+                    }
+                    let border = ((zoom - 11.) / 5.).clamp(0., 1.) as f32 * 0.65;
+                    if border == 0. {
+                        continue;
+                    }
+                    let color = self.colors[class];
+                    self.gl.uniform3f(
+                        Some(&self.paint),
+                        color[0] * 0.8,
+                        color[1] * 0.8,
+                        color[2] * 0.8,
+                    );
+                    self.gl.uniform1f(
+                        Some(&self.stroke),
+                        (line_width(class, zoom) + 2. * border) * self.widths[class]
+                            / base_line_width(class),
+                    );
+                    for key in &self.visible {
+                        if let Some(tile) = self.tiles.get(key) {
+                            triangles +=
+                                self.draw_layer(tile, &tile.layers[class], cx, cy, world, extruded);
+                        }
+                    }
+                }
+            }
             if self.mask & (1 << layer_id) == 0 {
                 continue;
             }
@@ -591,7 +708,12 @@ impl Renderer {
             let color = self.colors[layer_id];
             self.gl
                 .uniform3f(Some(&self.paint), color[0], color[1], color[2]);
-            self.gl.uniform1f(Some(&self.stroke), self.widths[layer_id]);
+            let stroke = if (3..=5).contains(&layer_id) {
+                self.widths[layer_id] * line_width(layer_id, zoom) / base_line_width(layer_id)
+            } else {
+                self.widths[layer_id]
+            };
+            self.gl.uniform1f(Some(&self.stroke), stroke);
             for key in &self.visible {
                 let Some(tile) = self.tiles.get(key) else {
                     continue;
@@ -687,6 +809,52 @@ fn compile(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wider_road_bends_are_filled_and_duplicate_points_are_safe() {
+        let mut mesh = Vec::new();
+        line(
+            &mut mesh,
+            &[[0., 0.], [1., 0.], [1., 0.], [1., 1.]],
+            0.4,
+            true,
+        );
+        assert_eq!(mesh.len() / 7, 15); // Two segment quads plus one outside bevel.
+        assert!(mesh.iter().all(|n| n.is_finite()));
+        let point = [1.05, -0.05];
+        let covers = mesh.chunks_exact(21).any(|t| {
+            let p: Vec<_> = t
+                .chunks_exact(7)
+                .map(|v| [v[0] + v[2], v[1] + v[3]])
+                .collect();
+            let signs: Vec<_> = (0..3)
+                .map(|i| {
+                    let a = p[i];
+                    let b = p[(i + 1) % 3];
+                    (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+                })
+                .collect();
+            signs.iter().all(|x| *x >= 0.) || signs.iter().all(|x| *x <= 0.)
+        });
+        assert!(
+            covers,
+            "The outer corner must not have a hole when strokes become wide"
+        );
+        let mut zero = Vec::new();
+        line(&mut zero, &[[0., 0.], [0., 0.]], 1., true);
+        assert!(zero.is_empty());
+    }
+    #[test]
+    fn road_widths_are_continuous_and_preserve_class_hierarchy() {
+        for z in [12., 14., 15., 16., 18., 20.] {
+            assert!(line_width(4, z) > line_width(3, z));
+            assert!(line_width(3, z) > line_width(5, z));
+            assert!((line_width(3, z - 0.0001) - line_width(3, z + 0.0001)).abs() < 0.001);
+        }
+        assert_eq!(line_width(3, 16.), 6.);
+        assert_eq!(line_width(4, 16.), 10.);
+        assert_eq!(line_width(5, 16.), 1.2);
+        assert_eq!(line_width(6, 16.), base_line_width(6));
+    }
     #[test]
     fn building_edges_keep_courtyards_and_height_but_omit_tile_cuts() {
         let f = Feature {

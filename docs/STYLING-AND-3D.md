@@ -51,13 +51,13 @@ map.resetView(); // Top-down and north-up; keep center and zoom.
 // Moving/tilting the camera can expose additional tiles; height also expands roof coverage.
 ```
 
-The typed source of truth is `packages/renderer/src/style.ts`. An exported document is a complete style, not a patch; the app's controls edit a copy and submit it. Road/path/rail/water widths multiply the prototype's class widths; building-edge width is in CSS pixels. Both are compressed by tilt with the ground. View zoom and styles do not change routing geometry or source geometry precision.
+The typed source of truth is `packages/renderer/src/style.ts`. An exported document is a complete style, not a patch; the app's controls edit a copy and submit it. Road/path widths multiply zoom-dependent cartographic widths; rail/water widths multiply their fixed class widths; building-edge width is in CSS pixels. Both are compressed by tilt with the ground. View zoom and styles do not change routing geometry or source geometry precision.
 
 ## Next contract, without inventing a giant language
 
 This is a direction, not implemented functionality:
 
-1. **Semantic paint and reusable tokens.** A theme can map semantic roles such as surface, structure, water and mobility to paint. Style authors should not have to enumerate a generated forest of vendor-specific tile layers. The v1 class vocabulary is deliberately small; highway subtypes, zoom interpolation and full OSM tag predicates require richer columns.
+1. **Semantic paint and reusable tokens.** A theme can map semantic roles such as surface, structure, water and mobility to paint. Style authors should not have to enumerate a generated forest of vendor-specific tile layers. The v1 class vocabulary is deliberately small; highway subtypes and full OSM tag predicates require richer columns. Road widths already interpolate with zoom; arbitrary user-authored zoom curves remain future work.
 2. **A typed expression IR.** Add bounded expressions for properties, zoom, arithmetic, color ramps and conditions; compile once to GPU attributes/uniforms or CPU label layout. Make units explicit (meters, pixels, degrees) and keep evaluation deterministic. Native and WASM should consume the same IR. JSON/TS authoring both produce that contract.
 3. **Explain the data dependencies.** An expression using `height` or `population` declares those columns. A planner reports the required blocks and missing fields; the caller authorizes that subscription. Recoloring a building must never silently load a search index. Missing values and fallbacks should be inspectable.
 4. **Separate immutable data identity from style identity.** The same data hashes support multiple styles. Share a style digest and a scene/camera separately from the `.atlas` snapshot; a future manifest can recommend a default style without baking it into geometry. Exporting an offline map need not duplicate its geometry for every theme.
@@ -83,3 +83,11 @@ The download target and presented geometry now have separate lifetimes. At an in
 Buildings have a subtle **0.6 px** footprint/roof outline. **Style → Building edges** accepts 0–2 px, with zero disabling outlines. The color follows the building fill at up to 24% darker, increasing contrast gradually from z13 to z15. Courtyard rims and roof height are preserved. Artificial edges along tile clipping boundaries are omitted. In 3D, edge passes use the building depth buffer so hidden roof edges remain occluded; they do not add an entire wireframe around walls.
 
 Style JSON keeps version 1 with `widths.buildingEdges`; older saved styles missing that field receive the subtle default. This field is a pixel width, unlike the existing line-weight multipliers. The edge mesh is built once from existing footprint coordinates, requiring no new package attributes. Changing its width or palette only updates uniforms. Browser checks confirm changed pixels in both flat and 3D views with zero additional range requests and zero buffer uploads.
+
+## Road width and joins
+
+Roads widen continuously with fractional zoom instead of retaining a thin fixed screen width. At z16 the defaults are **6 CSS px for local roads**, **10 px for major roads**, and **1.2 px for paths**; at z20 they reach 20, 28 and 2.8 px. **Style → Road width** and **Path width** multiply those defaults and persist in the existing v1 style JSON. These are cartographic widths, not measured OSM road widths.
+
+Local and major roads gain a subtle darker border, increasing gradually from z11 to a 0.65 px margin at z16. Both road-class border passes precede both fill passes to keep intersections open. Cached geometry is reused for these extra draws. Road/path meshes include bounded bevel joins and square endpoint caps, closing bend and fragment gaps exposed by wider strokes. Duplicate consecutive points are removed before meshing.
+
+Native tests check corner coverage, degenerate paths, width continuity and the road-class hierarchy. A visible Chromium check covered z14–20 and tilted buildings; changing road width altered pixels with **zero new map requests and zero GPU uploads** in both flat and 3D views. Existing `.atlas` files work without regeneration.
