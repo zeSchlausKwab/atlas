@@ -189,7 +189,6 @@ export class MapLabels {
         this.pending.size >= 4
       )
         continue;
-      if (this.reader.offline && !this.reader.cache.has(key)) continue;
       this.pending.add(key);
       this.reader
         .block(key)

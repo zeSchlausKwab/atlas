@@ -591,7 +591,6 @@ export class AtlasMap {
     this.catalogMissing = known.complete ? 0 : 1;
     if (
       !known.complete &&
-      !this.reader.offline &&
       !this.catalogLoading.has(key) &&
       !this.catalogFailed.has(key)
     ) {
@@ -656,7 +655,6 @@ export class AtlasMap {
         this.failed.has(block.key)
       )
         continue;
-      if (this.reader.offline && !this.reader.cache.has(block.key)) continue;
       this.loading.add(block.key);
       this.reader
         .block(block.key)
@@ -714,12 +712,7 @@ export class AtlasMap {
     if (!this.placeNames) return [];
     if (!this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY))
       return this.reader.index.manifest.places;
-    if (
-      !this.places &&
-      !this.placesLoading &&
-      !this.placesFailed &&
-      (!this.reader.offline || this.reader.cache.has(PLACE_LABEL_KEY))
-    ) {
+    if (!this.places && !this.placesLoading && !this.placesFailed) {
       this.placesLoading = true;
       this.reader
         .block(PLACE_LABEL_KEY)
