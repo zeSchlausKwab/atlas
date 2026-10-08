@@ -1,4 +1,4 @@
-use osmpbfreader::{NodeId, OsmId, Relation, Tags, WayId};
+use osmpbfreader::{NodeId, OsmId, Ref, Relation, RelationId, Tags, WayId};
 use std::collections::{HashMap, HashSet};
 type Ring = Vec<[f64; 2]>;
 /// Area semantics are shared by closed ways and multipolygon relations.
@@ -31,6 +31,61 @@ pub fn class(tags: &Tags) -> Option<u8> {
     } else {
         None
     }
+}
+/// Expand nested multipolygons, composing inner/outer roles by parity.
+/// A sand-island relation used as an inner must remain a hole in the river.
+pub fn flatten(
+    relation: &Relation,
+    relations: &HashMap<RelationId, Relation>,
+) -> Result<Relation, &'static str> {
+    fn visit(
+        r: &Relation,
+        inverted: bool,
+        relations: &HashMap<RelationId, Relation>,
+        path: &mut HashSet<RelationId>,
+        refs: &mut Vec<Ref>,
+    ) -> Result<(), &'static str> {
+        if path.len() >= 32 || !path.insert(r.id) {
+            return Err("Cyclic or overly deep area relation");
+        }
+        for m in &r.refs {
+            if !["outer", "inner", ""].contains(&m.role.as_str()) {
+                continue;
+            }
+            let inner = inverted ^ (m.role == "inner");
+            match m.member {
+                OsmId::Way(_) => {
+                    if refs.len() >= 100_000 {
+                        return Err("Area member limit exceeded");
+                    }
+                    refs.push(Ref {
+                        member: m.member,
+                        role: if inner { "inner" } else { "outer" }.into(),
+                    });
+                }
+                OsmId::Relation(id) => visit(
+                    relations.get(&id).ok_or("Missing nested area relation")?,
+                    inner,
+                    relations,
+                    path,
+                    refs,
+                )?,
+                _ => return Err("Unsupported area member"),
+            }
+        }
+        path.remove(&r.id);
+        Ok(())
+    }
+    let mut result = relation.clone();
+    result.refs.clear();
+    visit(
+        relation,
+        false,
+        relations,
+        &mut HashSet::new(),
+        &mut result.refs,
+    )?;
+    Ok(result)
 }
 fn stitch(parts: Vec<Vec<NodeId>>) -> Result<Vec<Vec<NodeId>>, &'static str> {
     let mut used = vec![false; parts.len()];
@@ -162,6 +217,43 @@ pub fn assemble(
 mod tests {
     use super::*;
     use osmpbfreader::{Ref, RelationId};
+    #[test]
+    fn nested_roles_compose_and_cycles_or_missing_children_are_rejected() {
+        let child = Relation {
+            id: RelationId(2),
+            tags: Tags::new(),
+            refs: vec![
+                Ref {
+                    member: OsmId::Way(WayId(10)),
+                    role: "outer".into(),
+                },
+                Ref {
+                    member: OsmId::Way(WayId(11)),
+                    role: "inner".into(),
+                },
+            ],
+        };
+        let parent = Relation {
+            id: RelationId(1),
+            tags: Tags::new(),
+            refs: vec![Ref {
+                member: OsmId::Relation(child.id),
+                role: "inner".into(),
+            }],
+        };
+        let mut relations = HashMap::from([(child.id, child)]);
+        let flat = flatten(&parent, &relations).unwrap();
+        assert_eq!(flat.refs[0].role.as_str(), "inner");
+        assert_eq!(flat.refs[1].role.as_str(), "outer");
+        relations.get_mut(&RelationId(2)).unwrap().refs.push(Ref {
+            member: OsmId::Relation(parent.id),
+            role: "outer".into(),
+        });
+        relations.insert(parent.id, parent.clone());
+        assert!(flatten(&parent, &relations).is_err());
+        relations.remove(&RelationId(2));
+        assert!(flatten(&parent, &relations).is_err());
+    }
     #[test]
     fn joins_reversed_ways_and_keeps_courtyard_and_separate_outer() {
         let nodes = HashMap::from([

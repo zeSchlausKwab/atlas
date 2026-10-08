@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut graph_segments = Vec::new();
     let mut graph_nodes = BTreeMap::new();
     let mut routing_skipped_ways = 0;
-    let mut relations = Vec::new();
+    let mut relations = HashMap::new();
     let mut member_ids = HashSet::new();
     let mut member_ways = HashMap::new();
     // Two passes bound retained state to node coordinates and selected features.
@@ -34,15 +34,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for object in reader.iter() {
         let object = object?;
         if let OsmObj::Relation(relation) = &object {
-            if relation.tags.get("type").map(|v| v.as_str()) == Some("multipolygon")
-                && areas::class(&relation.tags).is_some()
-            {
+            if relation.tags.get("type").map(|v| v.as_str()) == Some("multipolygon") {
                 for member in &relation.refs {
                     if let OsmId::Way(id) = member.member {
                         member_ids.insert(id);
                     }
                 }
-                relations.push(relation.clone());
+                relations.insert(relation.id, relation.clone());
             }
         }
         if let OsmObj::Node(node) = object {
@@ -182,8 +180,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut assembled_relations = 0;
     let mut skipped_relations = 0;
     let mut relation_outers = HashMap::new();
-    for relation in relations {
+    let mut area_relations: Vec<_> = relations
+        .values()
+        .filter(|r| areas::class(&r.tags).is_some())
+        .collect();
+    area_relations.sort_by_key(|r| r.id);
+    for relation in area_relations {
         let class = areas::class(&relation.tags).unwrap();
+        let relation = match areas::flatten(relation, &relations) {
+            Ok(r) => r,
+            Err(_) => {
+                skipped_relations += 1;
+                continue;
+            }
+        };
         match areas::assemble(&relation, &member_ways, &nodes) {
             Ok(coordinates) => {
                 for member in &relation.refs {
