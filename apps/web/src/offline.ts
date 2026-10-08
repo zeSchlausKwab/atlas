@@ -1,3 +1,4 @@
+import type { OperationSession } from "./operations";
 import {
   AtlasReader,
   FileSource,
@@ -24,6 +25,7 @@ export class OfflineControls {
     readonly reader: AtlasReader,
     readonly map: AtlasMap,
     readonly open: (file: Blob) => Promise<void>,
+    readonly operations: OperationSession,
   ) {
     const m = reader.index.manifest;
     el<HTMLInputElement>("name").value = `My ${m.name}`;
@@ -101,6 +103,16 @@ export class OfflineControls {
     });
     this.update();
   }
+  refresh() {
+    this.worker?.terminate();
+    this.worker = undefined;
+    this.busy = false;
+    this.blob = undefined;
+    for (const p of ["routing", "search", "queries"] as const)
+      if (!this.operations.enabled.has(p))
+        el<HTMLInputElement>(p).checked = false;
+    void this.update();
+  }
   private selection(): Selection {
     return {
       polygon: this.polygon,
@@ -161,12 +173,16 @@ export class OfflineControls {
     for (const id of ["name", "min", "max"])
       el<HTMLInputElement>(id).disabled = this.busy;
     el<HTMLInputElement>("routing").disabled =
-      this.busy || !this.reader.index.manifest.routing;
+      this.busy ||
+      !this.operations.enabled.has("routing") ||
+      !this.reader.index.manifest.routing;
     el<HTMLInputElement>("search").disabled =
       this.busy ||
+      !this.operations.enabled.has("search") ||
       !this.reader.index.manifest.capabilities.includes("location-search");
     el<HTMLInputElement>("queries").disabled =
       this.busy ||
+      !this.operations.enabled.has("queries") ||
       !this.reader.index.manifest.capabilities.includes("peak-query");
     el<HTMLButtonElement>("draw").disabled = this.busy;
     el<HTMLButtonElement>("finish").disabled =
@@ -205,6 +221,16 @@ export class OfflineControls {
     }
   }
   private export() {
+    try {
+      this.operations.checkOffline(this.selection());
+    } catch (e) {
+      this.message(String(e));
+      return;
+    }
+    if (this.operations.mode === "server") {
+      void this.exportOnServer();
+      return;
+    }
     if (this.reader.offline && this.reader.source instanceof HttpSource) {
       this.message(
         "Turn off “Cache only” to fetch the source blocks for export.",
@@ -247,6 +273,25 @@ export class OfflineControls {
         ? { file: source.file }
         : { url: new URL((source as HttpSource).url, location.href).href }),
     });
+  }
+  private async exportOnServer() {
+    this.busy = true;
+    this.blob = undefined;
+    void this.update();
+    const revision = this.revision;
+    this.message("Building the offline file on the server…");
+    try {
+      const blob = await this.operations.offline(this.selection());
+      if (revision !== this.revision) return;
+      this.blob = blob;
+      this.busy = false;
+      void this.update();
+    } catch (e) {
+      if (revision !== this.revision) return;
+      this.busy = false;
+      await this.update();
+      this.message(String(e));
+    }
   }
   destroy() {
     this.revision++;

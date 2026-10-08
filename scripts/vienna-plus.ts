@@ -110,6 +110,7 @@ await run([
   "--max-bytes",
   String(budget),
   "--no-source-features",
+  "--features",
 ]);
 console.log(
   "Vienna Plus ready. Start with ATLAS_FILE=data/vienna-plus.atlas bun run start",

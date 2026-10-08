@@ -11,7 +11,7 @@ Status: prototype. There is no compatibility promise. All binary integers are li
 | Offset | Type    | Meaning                                               |
 | ------ | ------- | ----------------------------------------------------- |
 | 0      | 8 bytes | ASCII `ATLAS001`                                      |
-| 8      | u32     | Wire version: 1 (flat) or 2 (paged)                             |
+| 8      | u32     | Wire version: 1 (flat) or 2 (paged)                   |
 | 12     | u32     | Manifest byte length                                  |
 | 16     | u32     | Directory byte length                                 |
 | 20     | u32     | Payload start (32 + both JSON lengths)                |
@@ -23,7 +23,7 @@ The reader supports both versions and caps root metadata at 64 MiB. CLI generati
 
 Contains format/version, display name, source URL and PBF SHA-256, OSM attribution, longitude/latitude bounds, min/max stored tile zoom, retained feature and peak counts, a small place-label list, capabilities, limitations, and a snapshot digest. Bounds are the envelope of retained source features, not an authoritative country polygon. Dateline-spanning sources are not specially handled.
 
-Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `location-search`, `reverse-street`, `map-labels`.
+Capabilities in this implementation: `vector-rendering`, `peak-query`, `source-feature-export`, `walking-routing`, `location-search`, `reverse-street`, `map-labels`, `feature-extraction`.
 
 Routing-enabled packages also declare `routing: {profile: "walking-v1", block: "routing/walking", nodes, segments, bytes, skippedWays, snapLimitMeters: 150, scope: "retained-source-extract"}`. Routing is optional; older packages without the capability still render. Display zoom ranges do not govern routing detail.
 
@@ -31,9 +31,9 @@ The snapshot is SHA-256 of UTF-8 `JSON.stringify({manifest, blocks})`, where the
 
 ## Block directory
 
-V1 stores the complete JSON array. V2 stores `{blocks, pages}`: `blocks` holds non-tile entries (labels, routing, search, queries), while `pages` points to gzip-compressed tile directory arrays at the end of the payload. Each page covers a 32 × 32 tile-address region at one zoom and has key `index/tiles/z/pageX/pageY`, where pageX/Y are floor(tileX/Y / 32). It adds `z`, `x`, `y` (page coordinates), and `count` to a regular compressed-block descriptor. Page contents must belong to that region, match its count and precede the directory-page payloads.
+V1 stores the complete JSON array. V2 stores `{blocks, pages}`: `blocks` holds non-spatial entries (labels, routing, search, queries), while `pages` points to gzip-compressed spatial directory arrays at the end of the payload. Each page covers a 32 × 32 tile-address region at one zoom and has key `index/tiles/z/pageX/pageY`, where pageX/Y are floor(tileX/Y / 32). It adds `z`, `x`, `y` (page coordinates), and `count` to a regular compressed-block descriptor. Source-geometry pages use `prefix: "features/<kind>"` and key `index/features/<kind>/z/pageX/pageY`. Absent `prefix` means legacy display tiles. Page contents must belong to the declared prefix and region, match its count and precede the directory-page payloads. The root cannot directly contain spatial block descriptors.
 
-The root contains every page pointer and label descriptor; neither is recursively paged yet. `reader.index.blocks` means root entries, not all blocks. Use `reader.tiles(z, xmin, xmax, ymin, ymax)` for a region or explicitly `reader.allBlocks()` for an audit. `index.tileCount` and `index.blockCount` give totals without loading leaves. Cached directory pages and pending reads are shared across callers; an uncached page in cache-only mode is a missing-data error.
+The root contains every page pointer and label descriptor; neither is recursively paged yet. `reader.index.blocks` means root entries, not all blocks. Use `reader.tiles(z, xmin, xmax, ymin, ymax)` for display geometry, `reader.spatial(prefix, z, xmin, xmax, ymin, ymax)` for source geometry, or explicitly `reader.allBlocks()` for an audit. `index.tileCount` and `index.blockCount` give totals without loading leaves. Cached directory pages and pending reads are shared across callers; an uncached page in cache-only mode is a missing-data error.
 
 Each data-block entry has:
 
@@ -137,4 +137,14 @@ Optional `areas: {assembledRelations, skippedRelations}` records importer diagno
 
 ## Client data-purpose policy
 
-`new AtlasReader(source, onRead, {purposes: ["map", "labels"]})` prevents optional payload reads before they start. Available purposes are `map`, `labels`, `routing`, `search`, `queries`, `source`. Metadata is always permitted. Omitting the option allows all purposes, but they are still lazy. `bytesByPurpose` separates directory, map, street names, POIs and semantic data; byte totals are cumulative, not current resident/view bytes. A policy is a client guard against accidental reads, not server access control. Base geometry classes still share each display tile; their visibility toggles do not yet reduce transport.
+`new AtlasReader(source, onRead, {purposes: ["map", "labels"]})` prevents optional payload reads before they start. Available purposes are `map`, `labels`, `routing`, `search`, `queries`, `features`, `source`. Metadata is always permitted. Omitting the option allows all purposes, but they are still lazy. `bytesByPurpose` separates directory, map, street names, POIs and semantic data; byte totals are cumulative, not current resident/view bytes. A policy is a client guard against accidental reads, not server access control. Base geometry classes still share each display tile; their visibility toggles do not yet reduce transport.
+
+## Selectable source geometry
+
+`feature-extraction` declares `featureZoom: 12`. With CLI `--features`, source polygons and lines are placed in `features/<kind>/12/x/y`, where kind is `buildings`, `water`, `railways`, `roads` or `land`. Each independently compressed/hashed block contains `{schema: "features-v1", features: [...]}`. Its directory entries live in spatial pages, so ordinary map viewing loads only the small page pointers.
+
+Each feature is a GeoJSON Feature with original `way/<id>` or `relation/<id>` identity, longitude/latitude geometry, bounding box, and properties `{id, name, kind, tags}`. Supported geometry is Polygon, MultiPolygon, LineString and MultiLineString. Coordinates and rings come from retained importer source geometry, before display simplification. A shape is replicated into each z12 cell its bounding box overlaps; querying deduplicates by OSM identity and tests actual geometry intersection, including holes. This prototype trades some disk duplication for independent cells.
+
+`AtlasFeatures.query({kind, bounds, limit, tag})` returns a FeatureCollection with snapshot, attribution, total matched count and a truncation flag. Bounds are `[west,south,east,north]`, maximum 0.25° per axis; limits are 1–500 objects. `tag` is one optional exact `key=value` predicate. Returned shapes are complete source objects, not clipped tile fragments. Selecting only a portion of a line does not split it. `asPolylines()` converts polygon boundaries and inner rings into MultiLineString geometry and leaves existing lines intact.
+
+Feature extraction is independent of display zoom and visibility toggles. In device mode it reads just the intersecting category cells; in server mode it returns matching objects without sending source cells. Offline child packages currently omit this index. See [shared operations API](SERVER-AND-EXTRACTION.md).

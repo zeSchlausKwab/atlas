@@ -1,5 +1,6 @@
+import { OperationSession, executionText } from "./operations";
+import { activateTab } from "./tabs";
 import {
-  AtlasGeocoder,
   parseCoordinates,
   type Location,
   type Position,
@@ -10,7 +11,7 @@ import { RouteControls } from "./routing";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 export class SearchControls {
-  private geocoder: AtlasGeocoder;
+  private geocoder: OperationSession;
   private abort = new AbortController();
   private revision = 0;
   private dead = false;
@@ -23,8 +24,9 @@ export class SearchControls {
     readonly reader: AtlasReader,
     readonly map: AtlasMap,
     readonly routing: RouteControls,
+    readonly operations: OperationSession,
   ) {
-    this.geocoder = new AtlasGeocoder(reader);
+    this.geocoder = operations;
     this.forward =
       reader.index.manifest.capabilities.includes("location-search");
     this.reverse =
@@ -66,6 +68,20 @@ export class SearchControls {
         : "This package has no search data. Rebuild it with the current generator.",
       "idle",
     );
+  }
+  refresh() {
+    this.endPick();
+    this.forward =
+      this.reader.index.manifest.capabilities.includes("location-search") &&
+      this.operations.enabled.has("search");
+    this.reverse =
+      this.reader.index.manifest.capabilities.includes("reverse-street") &&
+      this.operations.enabled.has("search");
+    el<HTMLInputElement>("location-query").disabled = !this.forward;
+    el<HTMLInputElement>("reverse-coordinates").disabled = !this.reverse;
+    this.reset();
+    if (!this.operations.enabled.has("search"))
+      this.message("Search is disabled in Data settings.", "idle");
   }
   private update() {
     el<HTMLButtonElement>("location-submit").disabled =
@@ -151,7 +167,7 @@ export class SearchControls {
       }
       this.message(
         result.total
-          ? `${result.matches.length} of ${result.total} matches in this extract. ${result.cached ? "Using cached search data." : "Search data ready for offline use."}`
+          ? `${result.matches.length} of ${result.total} matches in this extract. ${executionText(result.execution)}.`
           : "No matching place or street in this extract. Try a shorter name or another spelling.",
         result.total ? "results" : "empty",
       );
@@ -178,9 +194,11 @@ export class SearchControls {
     coords.textContent = `${position[1].toFixed(6)}, ${position[0].toFixed(6)}`;
     box.append(title, note, coords);
     el("search-route-actions").hidden =
-      !this.reader.index.manifest.capabilities.includes("walking-routing");
+      !this.reader.index.manifest.capabilities.includes("walking-routing") ||
+      !this.operations.enabled.has("routing");
   }
   select(record: Location) {
+    activateTab("explore");
     this.reset();
     this.endPick();
     this.map.focusLocation(
@@ -239,7 +257,7 @@ export class SearchControls {
         position,
       );
       this.message(
-        `Nearest street found. ${result.cached ? "Using cached street data." : "Street data ready for offline use."}`,
+        `Nearest street found. ${executionText(result.execution)}.`,
         "found",
       );
     } catch (e) {
@@ -254,6 +272,7 @@ export class SearchControls {
   }
   private useForRoute(i: 0 | 1) {
     if (this.selected) {
+      activateTab("route");
       this.endPick();
       this.routing.useLocation(
         i,

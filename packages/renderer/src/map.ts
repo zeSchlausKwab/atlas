@@ -1,3 +1,5 @@
+import { FeatureOverlay } from "./features";
+import type { MapFeature, Bounds } from "../../features/src/index";
 import { MapLabels, type LabelStats } from "./labels";
 import type { Location } from "../../geocoding/src/model";
 import init, { Renderer } from "../pkg/atlas_renderer";
@@ -17,6 +19,26 @@ export interface MapStats {
 }
 export class AtlasMap {
   renderer!: Renderer;
+  private featureOverlay = new FeatureOverlay();
+  onFeatureSelect?: (id: string) => void;
+  setFeatures(features: MapFeature[], selected: Set<string>) {
+    this.featureOverlay.features = features;
+    this.featureOverlay.selected = new Set(selected);
+    this.invalidate();
+  }
+  viewBounds(): Bounds {
+    const scale = 256 * 2 ** this.zoom,
+      dx = this.canvas.clientWidth / 2 / scale,
+      dy = this.canvas.clientHeight / 2 / scale;
+    const sw = unproject(this.center[0] - dx, this.center[1] + dy),
+      ne = unproject(this.center[0] + dx, this.center[1] - dy);
+    return [
+      Math.max(-180, sw[0]),
+      Math.max(-85, sw[1]),
+      Math.min(180, ne[0]),
+      Math.min(85, ne[1]),
+    ];
+  }
   center: [number, number] = [0.5, 0.5];
   zoom = 10;
   grid = false;
@@ -159,6 +181,16 @@ export class AtlasMap {
         }
         if (this.drag && !this.drag.moved && !wasPicking) {
           const box = this.canvas.getBoundingClientRect();
+          const feature = this.featureOverlay.pick(
+            this.overlay.getContext("2d")!,
+            event.clientX - box.left,
+            event.clientY - box.top,
+          );
+          if (feature) {
+            this.onFeatureSelect?.(feature);
+            this.drag = null;
+            return;
+          }
           const poi = this.labels.pick(
             event.clientX - box.left,
             event.clientY - box.top,
@@ -537,6 +569,7 @@ export class AtlasMap {
     }
     ctx.font = '500 12px "Avenir Next", sans-serif';
     ctx.textAlign = "center";
+    this.featureOverlay.draw(ctx, this.center, this.zoom, width, height);
     const occupied: Array<[number, number]> = [];
     for (const place of this.reader.index.manifest.places) {
       const [x, y] = screen(...place.coordinates);

@@ -1,12 +1,14 @@
 # Walking routing prototype
 
-The first routing slice demonstrates the whole path: regional OSM PBF → topology → independently hashed block in the same `.atlas` file → HTTP range or local file → native-tested Rust/WASM search → interactive map overlay. The Bun server performs no routing computation.
+The first routing slice demonstrates the whole path: regional OSM PBF → topology → independently hashed block in the same `.atlas` file → HTTP range or local file → native-tested Rust/WASM search → interactive map overlay. The same engine now runs in the browser or Bun server; the server initializes the identical WASM module from local bytes.
 
 ## Using it
 
-Regenerate older packages with `bun run data:build`, run `bun run build`, and restart the server. Choose **Try Vaduz → Schaan**, or select A and B on the map. Dragging pans without selecting. While choosing a point, Enter selects the map center. Reverse reuses the cached graph. Clear removes the route and any pending point selection.
+Regenerate older packages with `bun run data:build`, run `bun run build`, and restart the server. Open **Route**, choose **Try Stephansplatz → Praterstern** (Vienna) or **Try Vaduz → Schaan** (the small sample), or select A and B on the map. **Run tools on** chooses the host. Dragging pans without selecting. While choosing a point, Enter selects the map center. Reverse reuses the cached graph. Clear removes the route and any pending point selection.
 
-The first route loads the whole `routing/walking` block (4,789,552 bytes in the sample). Routing works at every display zoom. With the graph cached, routes can succeed in cache-only mode even if some visible tiles are missing. A new browser session does not retain this cache; a local file also works but the app itself still needs its HTML/JS/WASM assets.
+On this device, the first route loads the whole `routing/walking` block (4,789,552 bytes in the sample). Routing works at every display zoom. With the graph cached, routes can succeed in cache-only mode even if some visible tiles are missing. A new browser session does not retain this cache; a local file also works but the app itself still needs its HTML/JS/WASM assets.
+
+In Server mode, `POST /api/route` runs the same snapping and path search against the server's pinned package. Only the route result crosses the network. The UI's explicit **Compare device & server** operation loads the local graph and checks equal status/snapshot, distance, coordinates and OSM way sequence for a found route. Vienna's 2.06 km example matched, with a 6.2 KB server result versus a 69.45 MB compressed client graph. These are measurements of this route/package, not universal performance guarantees. [API and proof details](SERVER-AND-EXTRACTION.md).
 
 ## Profile: walking-v1
 

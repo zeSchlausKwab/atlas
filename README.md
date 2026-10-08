@@ -1,6 +1,6 @@
 # Atlas / geo-format
 
-An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, local walking routes, and location search in a Bun web app.
+An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking routes and location search on the client or server in a Bun web app.
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. No MapLibre, remote basemap tiles, commercial map API, or planet download is used.
 
@@ -27,7 +27,7 @@ The server watches TypeScript changes and rebuilds the frontend on restart. Refr
 
 ## Vienna Plus and offline drawing
 
-**Vienna Plus is ready: 358.7 MB, 118,490 stored tiles across every zoom from 0 through 16**, with walking routing, location search, street geometry and peaks. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
+**Vienna Plus is ready: 600.3 MB, 118,490 stored tiles across every zoom from 0 through 16**, with walking routing, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).
 
 ```sh
 bun run data:vienna # needs osmium-tool, uses verified cached sources when present
@@ -35,7 +35,7 @@ bun run build
 bun run start
 ```
 
-The server prefers Vienna Plus when present. **Draw your offline world** selects a polygon and creates a smaller `.atlas` file in a background worker, with clipped routing/search and complete intersecting display tiles. Save it, reload the cached app shell offline and open the file. [Boundary semantics and offline instructions](docs/VIENNA-PLUS.md#draw-your-offline-world).
+The server prefers Vienna Plus when present. **Draw your offline world** selects a polygon and creates a smaller `.atlas` file on this device or the server, with clipped routing/search and complete intersecting display tiles. Save it, reload the cached app shell offline and open the file. [Boundary semantics and offline instructions](docs/VIENNA-PLUS.md#draw-your-offline-world).
 
 ## Four components
 
@@ -44,13 +44,21 @@ The server prefers Vienna Plus when present. **Draw your offline world** selects
 | Rendering library | `crates/renderer`, `packages/renderer` | Rust/WASM tile decoding, polygon tessellation and WebGL2 GPU rendering; TypeScript camera, input, tile scheduling, and overlays          |
 | Generation CLI    | `packages/cli`, `crates/osm-import`    | Download and fingerprint source data; import selected OSM features; produce binary vector tiles, query/search blocks and a walking graph |
 | Format + reader   | `packages/format`, `docs/FORMAT.md`    | Experimental single-file layout, block directory, SHA-256 checks, local-file and HTTP readers                                            |
-| Delivery server   | `apps/server`                          | Bun HTTP server, byte ranges, strong ETags, preconditions, browser assets                                                                |
+| Delivery server   | `apps/server`                          | Bun HTTP server, byte ranges, strong ETags, pinned map operations and browser assets                                                     |
 
 `crates/routing` contains the shared native/WASM graph codec, snapping and shortest-path engine; `packages/routing` connects it to the package reader. See [routing design and profile](docs/ROUTING.md). `packages/geocoding` compiles and reads named-location and street indexes for local forward/reverse lookup; see [geocoding design](docs/GEOCODING.md).
 
 `apps/web` is an instrumented demo using those components. Roads, landcover, water, buildings, railways, paths, and peak markers are rendered by the WASM library. Place labels, the scale bar, grid, search/nearest-street highlights, route line/endpoint markers, and selected-peak overlay currently use a separate Canvas2D overlay.
 
 ## Try the demo
+
+The wider sidebar has **Explore**, **Route**, **Extract**, **Offline**, and **Data** tabs. **Run tools on** switches between this device and the server for routing, forward/reverse geocoding, peak queries, feature extraction and offline export. Local files use this device. The Data tab enables each optional capability without preloading its data.
+
+**Extract** adds buildings, water, railways, roads or landscape areas from the current view as a selectable overlay. Click shapes or list entries, inspect their OSM tags, then download the selection as GeoJSON or polylines. Full source shapes and courtyard holes are preserved. Use an optional exact tag filter such as `water=lake`, `water=oxbow` or `railway=tram`. Source geometry loads only when requested.
+
+**Compare device & server** checks route distance, coordinates and OSM way sequence against the same snapshot. The Vienna example returned a **6.2 KB** server response and zero browser routing-block bytes; explicit device comparison then loaded the **69.45 MB** graph and matched exactly. See [server operations and extraction](docs/SERVER-AND-EXTRACTION.md) for the API, data boundaries and verification.
+
+The following local-data experiments assume **Run tools on → This device**:
 
 - **Street names** appear from z13 (major roads), with local streets from z15. **Points of interest** appear progressively from z14–17. Toggle each layer independently; click a POI marker or name to inspect it and use it as a route endpoint. Labels load from nearby package cells, independently of the geocoder. They remain in offline exports even when the separate search option is off.
 - The missing buildings near Schönbrunn were an importer omission: relation-based building outlines never reached the tile compiler. See the [diagnosis and fix](docs/BUILDINGS-AND-LABELS.md).
@@ -84,7 +92,7 @@ ATLAS_FILE=data/region.atlas bun run start
 
 The default input is pinned to `https://download.geofabrik.de/europe/liechtenstein-261006.osm.pbf`. The observed SHA-256 is `9e1ec2e5e987ff85c1336d6a1fc885b5afed2a9645ba67d48810d1f6cf752122`. `fetch --sha256 HASH` explicitly verifies an expected digest. Existing downloads are reused only when their source sidecar and checksum match. Generated files, downloads, and build output are ignored.
 
-`fetch` and `generate` support `--dry-run`. All commands support `--format md|json`. A custom URL must supply an OSM PBF, not a rendered tile archive. The importer retains regional source data in memory; generation stops above 500,000 candidate tiles. Payload blocks are compressed and spooled to disk. `--max-bytes` defaults to 2 GB; `--no-source-features` omits the redundant source GeoJSON export block. Use Osmium for PBF preprocessing, or draw a polygon in the app to extract a smaller `.atlas` file.
+`fetch` and `generate` support `--dry-run`. All commands support `--format md|json`. A custom URL must supply an OSM PBF, not a rendered tile archive. The importer retains regional source data in memory; generation stops above 500,000 candidate tiles. Payload blocks are compressed and spooled to disk. `--max-bytes` defaults to 2 GB; `--no-source-features` omits the monolithic source GeoJSON debug block. `--features` adds independently paged source geometry for object selection/export; the Vienna recipe enables it. Use Osmium for PBF preprocessing, or draw a polygon in the app to extract a smaller `.atlas` file.
 
 ## Verification
 
@@ -95,7 +103,7 @@ bun test
 cargo test --workspace
 ```
 
-36 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 15 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings and rendering codecs. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
+39 Bun tests cover packaging/HTTP behavior, the actual Rust/WASM routing ABI, location search ranking/aliases/context, nearest-segment street lookup, coordinate validation, independent offline availability, corrupt blocks and concurrent reads. Additional tests cover compression bounds, polygon clipping, direction-preserving graph cuts, offline export and atomic file-size budgets. Tests also exercise a real Vienna building PBF, courtyard preservation, label placement and offline label retention. 15 native Rust tests cover access rules, pedestrian directionality, barriers, edge snapping, shortest paths, graph validation, disconnected crossings and rendering codecs. A visible Chromium check exercises the real sample: routing, offline retry, cached reverse, drag versus click selection, local-file routing, and a 390 px mobile layout. The existing rendering/peak-query smoke flow is also checked, together with zoom 20, forward/reverse geocoding, map-picker ownership and search-to-route handoff.
 
 ## Original small sample
 
@@ -128,7 +136,7 @@ The Vienna map-only browser path (1440×1000 viewport, default center, z11 → z
 - Tile-directory pages are fetched only for the current region and zoom.
 - Display geometry has zoom-appropriate detail; stored z16 retains full detail and all levels z0–16 remain present.
 - Street names and POIs have separate first-visible zoom tiers. Turning either off avoids its future payload requests.
-- Routing, geocoding and queries load only on explicit use; routing/search remain regional blocks.
+- Routing, geocoding, queries and source geometry load only on explicit use. Disable them in Data to block tool use and future payload reads. Routing/search remain regional blocks; source geometry is paged by category and region. Server mode returns results without downloading these source blocks.
 - Offline export defaults to geometry and labels. Add routing, search or peak queries explicitly.
 
 A restricted consumer can make the contract explicit:

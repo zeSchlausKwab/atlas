@@ -1,7 +1,5 @@
-import {
-  AtlasRouter,
-  type Position,
-} from "../../../packages/routing/src/index";
+import { OperationSession, executionText } from "./operations";
+import { type Position } from "../../../packages/routing/src/index";
 import { AtlasReader } from "../../../packages/format/src/reader";
 import { AtlasMap } from "../../../packages/renderer/src/map";
 const element = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -12,7 +10,7 @@ const distance = (meters: number) =>
     ? `${(meters / 1000).toFixed(2)} km`
     : `${Math.round(meters)} m`;
 export class RouteControls {
-  private router: AtlasRouter;
+  private router: OperationSession;
   private points: [Position | null, Position | null] = [null, null];
   private names: [string, string] = [
     "Choose start on map",
@@ -27,8 +25,9 @@ export class RouteControls {
   constructor(
     readonly reader: AtlasReader,
     readonly map: AtlasMap,
+    readonly operations: OperationSession,
   ) {
-    this.router = new AtlasRouter(reader);
+    this.router = operations;
     this.supported =
       reader.index.manifest.capabilities.includes("walking-routing");
     const places = reader.index.manifest.places;
@@ -46,6 +45,7 @@ export class RouteControls {
       });
     on("start", () => this.pick(0));
     on("end", () => this.pick(1));
+    on("compare", () => void this.compare());
     on("calculate", () => void this.calculate());
     on("reverse", () => {
       this.points.reverse();
@@ -67,7 +67,25 @@ export class RouteControls {
       element("route-hint").textContent =
         "This package has no walking graph. Rebuild it with the current generator.";
   }
+  refresh() {
+    element("route-proof").hidden = true;
+    this.revision++;
+    this.busy = false;
+    this.picking = null;
+    this.supported =
+      this.reader.index.manifest.capabilities.includes("walking-routing") &&
+      this.operations.enabled.has("routing");
+    if (!this.supported) this.map.setRoute(null);
+    this.update();
+  }
   private update() {
+    button("compare").disabled =
+      !this.supported ||
+      this.busy ||
+      !this.points[0] ||
+      !this.points[1] ||
+      !this.operations.remote ||
+      this.reader.offline;
     for (const [i, id] of ["start", "end"].entries()) {
       button(id).disabled = !this.supported || this.busy;
       button(id).setAttribute("aria-pressed", String(this.picking === i));
@@ -95,6 +113,7 @@ export class RouteControls {
   private choosePoint(position: Position) {
     if (this.picking === null || this.busy) return;
     const i = this.picking;
+    element("route-proof").hidden = true;
     this.points[i] = position;
     this.names[i] = `${position[1].toFixed(5)}, ${position[0].toFixed(5)}`;
     this.map.setEndpoints(...this.points);
@@ -106,6 +125,7 @@ export class RouteControls {
     this.revision++;
     this.busy = false;
     this.picking = null;
+    element("route-proof").hidden = true;
     this.points[i] = position;
     this.names[i] = name;
     this.map.setEndpoints(...this.points);
@@ -128,6 +148,7 @@ export class RouteControls {
     }
   }
   private clear() {
+    element("route-proof").hidden = true;
     this.revision++;
     this.busy = false;
     this.points = [null, null];
@@ -140,6 +161,7 @@ export class RouteControls {
     this.update();
   }
   private async calculate() {
+    element("route-proof").hidden = true;
     if (!this.points[0] || !this.points[1]) return;
     const revision = ++this.revision;
     this.picking = null;
@@ -149,9 +171,12 @@ export class RouteControls {
     const box = element("route-result");
     box.hidden = false;
     box.dataset.state = "loading";
-    box.textContent = this.reader.cache.has("routing/walking")
-      ? "Calculating in WASM…"
-      : "Loading the walking network…";
+    box.textContent =
+      this.operations.mode === "server"
+        ? "Calculating on the server…"
+        : this.reader.cache.has("routing/walking")
+          ? "Calculating in WASM…"
+          : "Loading the walking network…";
     element("route-hint").textContent =
       "Routing uses the network independently of visible tiles.";
     try {
@@ -168,7 +193,7 @@ export class RouteControls {
           result.meters < 1 ? 0 : Math.max(1, Math.round(result.meters / 80));
         time.textContent = `~${minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`} on foot · distance only`;
         const computation = document.createElement("p");
-        computation.textContent = `${result.computeMs.toFixed(1)} ms in WASM · ${result.visited.toLocaleString()} nodes explored. ${result.graphCached ? "Cached graph; no network read for routing." : `${(result.graphBytes / 1_000_000).toFixed(1)} MB graph fetched once.`}`;
+        computation.textContent = `${executionText(result.execution)} · ${result.visited.toLocaleString()} nodes explored. ${result.execution.side === "server" ? "The walking graph stayed on the server." : result.graphCached ? "Using the cached walking graph." : "Walking graph is now available on this device."}`;
         const snap = document.createElement("p");
         snap.textContent = `Snapped A ${Math.round(result.start.distanceMeters)} m / B ${Math.round(result.end.distanceMeters)} m to the network. Dotted offsets are excluded from distance and time.`;
         box.append(title, time, computation, snap);
@@ -191,13 +216,44 @@ export class RouteControls {
       }
     }
   }
+  private async compare() {
+    if (!this.points[0] || !this.points[1]) return;
+    const revision = ++this.revision;
+    this.busy = true;
+    this.update();
+    const box = element("route-proof");
+    box.hidden = false;
+    box.textContent = "Running both engines against the same snapshot…";
+    try {
+      const proof = await this.operations.compareRoute(
+        this.points[0],
+        this.points[1],
+      );
+      if (this.dead || revision !== this.revision) return;
+      box.dataset.state = proof.same ? "match" : "different";
+      box.textContent = proof.same
+        ? `Match: identical ${proof.device.status === "found" ? `${distance(proof.device.meters)} route, coordinates and OSM way sequence` : proof.device.status} on this device and server. Snapshot ${proof.device.snapshot.slice(0, 12)}. Server response ${(proof.server.execution.responseBytes / 1000).toFixed(1)} KB.`
+        : "The results differ; check the operation details.";
+    } catch (e) {
+      if (revision === this.revision) {
+        box.dataset.state = "error";
+        box.textContent = String(e);
+      }
+    } finally {
+      if (!this.dead && revision === this.revision) {
+        this.busy = false;
+        this.update();
+      }
+    }
+  }
   destroy() {
     this.dead = true;
     this.revision++;
     this.abort.abort();
-    this.router.destroy();
+
     this.map.endPicking("route");
     for (const id of [
+      "compare",
       "example",
       "start",
       "end",

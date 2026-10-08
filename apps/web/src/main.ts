@@ -1,3 +1,9 @@
+import { setupTabs } from "./tabs";
+import { OperationSession, executionText, type Capability } from "./operations";
+import { ExtractControls } from "./extract";
+setupTabs();
+let operations: OperationSession | undefined;
+let extractor: ExtractControls | undefined;
 import {
   AtlasReader,
   HttpSource,
@@ -54,6 +60,7 @@ function telemetry(event?: ReadEvent) {
     "routing",
     "search",
     "queries",
+    "features",
   ] as const) {
     el(`bytes-${purpose}`).textContent = formatBytes(
       reader.bytesByPurpose[purpose] +
@@ -120,12 +127,16 @@ function stats(s: MapStats) {
   telemetry();
 }
 async function open(source: ByteSource) {
+  extractor?.destroy();
+  extractor = undefined;
   world?.destroy();
   world = undefined;
   search?.destroy();
   search = undefined;
   routing?.destroy();
   routing = undefined;
+  operations?.destroy();
+  operations = undefined;
   map?.destroy();
   map = undefined;
   events = [];
@@ -170,18 +181,39 @@ async function open(source: ByteSource) {
       el("pick-banner").hidden = hint === null;
       el("pick-banner").textContent = hint ?? "";
     };
-    routing = new RouteControls(reader, map);
-    search = new SearchControls(reader, map, routing);
+    operations = new OperationSession(reader, (e) => {
+      el("execution-status").textContent =
+        `${e.operation} · ${executionText(e)}`;
+      el("api-transfer").textContent =
+        `${operations?.apiRequests ?? 0} API responses · ${formatBytes(operations?.apiBytes ?? 0)}`;
+      telemetry();
+    });
+    el("execution-status").textContent = "No computation requested.";
+    el("api-transfer").textContent = "0 API responses · 0 KB";
+    el<HTMLSelectElement>("execution-mode").querySelector<HTMLOptionElement>(
+      'option[value="server"]',
+    )!.disabled = !operations.remote;
+    if (!operations.remote)
+      el<HTMLSelectElement>("execution-mode").value = "device";
+    routing = new RouteControls(reader, map, operations);
+    search = new SearchControls(reader, map, routing, operations);
+    extractor = new ExtractControls(map, operations);
     map.onPoiSelect = (poi) => search?.select(poi);
     for (const id of ["street-labels", "poi-labels"])
       el<HTMLInputElement>(id).disabled =
         !m.capabilities.includes("map-labels");
     setLabels();
-    world = new OfflineControls(reader, map, async (file) => {
-      sourceLabel = "file";
-      el("download").hidden = true;
-      await open(new FileSource(file));
-    });
+    world = new OfflineControls(
+      reader,
+      map,
+      async (file) => {
+        sourceLabel = "file";
+        el("download").hidden = true;
+        await open(new FileSource(file));
+      },
+      operations,
+    );
+    configureOperations();
     if (m.selection) map.setSelection(m.selection.polygon);
     if (m.name === "Vienna Plus") {
       map.center = project(16.373, 48.208);
@@ -191,6 +223,7 @@ async function open(source: ByteSource) {
     map.setGrid(el<HTMLInputElement>("tile-grid").checked);
     setLayers();
     el<HTMLButtonElement>("highest-peak").disabled =
+      !operations.enabled.has("queries") ||
       !m.capabilities.includes("peak-query");
     telemetry();
   } catch (e) {
@@ -200,6 +233,34 @@ async function open(source: ByteSource) {
     el<HTMLButtonElement>("open-file").disabled = false;
   }
 }
+function configureOperations() {
+  if (!operations) return;
+  const enabled = [
+    ...document.querySelectorAll<HTMLInputElement>("[data-purpose]"),
+  ]
+    .filter((e) => e.checked)
+    .map((e) => e.dataset.purpose as Capability);
+  const mode = el<HTMLSelectElement>("execution-mode").value as
+    | "device"
+    | "server";
+  operations.configure(mode, enabled);
+  el("execution-hint").textContent =
+    operations.mode === "server"
+      ? "Receive results; the source data stays on the server."
+      : "Compute here; keep the downloaded data for offline use.";
+  routing?.refresh();
+  search?.refresh();
+  extractor?.refresh();
+  world?.refresh();
+  el<HTMLButtonElement>("highest-peak").disabled =
+    !enabled.includes("queries") ||
+    !reader.index.manifest.capabilities.includes("peak-query");
+}
+el("execution-mode").addEventListener("change", configureOperations);
+for (const input of document.querySelectorAll<HTMLInputElement>(
+  "[data-purpose]",
+))
+  input.addEventListener("change", configureOperations);
 function setLabels() {
   map?.setLabels(
     el<HTMLInputElement>("street-labels").checked,
@@ -225,6 +286,7 @@ el<HTMLInputElement>("tile-grid").onchange = (event) =>
 el<HTMLInputElement>("offline").onchange = (event) => {
   const offline = (event.target as HTMLInputElement).checked;
   map?.setOffline(offline);
+  routing?.refresh();
   el("connection-label").textContent = offline
     ? "Using cached blocks"
     : sourceLabel === "server"
@@ -241,7 +303,9 @@ el("highest-peak").onclick = async () => {
   button.disabled = true;
   el("error").hidden = true;
   try {
-    const result = await reader.highestPeak();
+    const active = operations!;
+    const result = await active.peak();
+    if (active !== operations) return;
     const box = el("query-result");
     box.replaceChildren();
     box.hidden = false;
@@ -252,7 +316,7 @@ el("highest-peak").onclick = async () => {
       elevation.className = "elevation";
       elevation.textContent = `${number(result.peak.elevation!)} m above sea level`;
       const note = document.createElement("p");
-      note.textContent = `Highest recorded peak in this extract. ${result.known} known elevations; ${result.unknown} unknown. Computed here from a verified data block.`;
+      note.textContent = `Highest recorded peak in this extract. ${result.known} known elevations; ${result.unknown} unknown. ${executionText(result.execution)}.`;
       box.append(name, elevation, note);
       map?.focus(result.peak);
       box.scrollIntoView({ block: "nearest" });
@@ -264,7 +328,9 @@ el("highest-peak").onclick = async () => {
   } catch (e) {
     error(e instanceof Error ? e.message : String(e));
   } finally {
-    button.disabled = false;
+    button.disabled =
+      !operations?.enabled.has("queries") ||
+      !reader.index.manifest.capabilities.includes("peak-query");
   }
 };
 el("open-file").onclick = () => el<HTMLInputElement>("file-input").click();
