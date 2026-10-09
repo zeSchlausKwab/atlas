@@ -219,3 +219,5 @@ Integer zoom transitions retain the current visible geometry until the next deta
 ## Hosting and federation discussion
 
 [Hosting, ContextVM tools and composed maps](docs/HOSTING-DISCUSSION.md) defines the proposed dataset/package/offer/view split, host UI, capability semantics and shared-snapshot Vienna–Bratislava proof. These hosting/discovery features are not implemented yet.
+
+[Extensible capabilities and plugins](docs/EXTENSIONS.md) develops the open operation registry, plugin SDK, data/build extensions and ContextVM tool projection. This is a design proposal, not an implemented plugin loader.

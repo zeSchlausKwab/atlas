@@ -44,7 +44,7 @@ The selector should show dependencies before download: choosing bicycle routing 
 
 ## Defining tools and query meaning
 
-A host enables a registered, versioned operation and its allowed parameters. It does not type a promise into an announcement and thereby gain an implementation. Effective availability is the intersection of package data, engine support and host policy.
+A host installs custom plugins and enables their versioned operations and allowed parameters. Registration is an open extension mechanism, not an Atlas-maintained whitelist. Plugin authors define their semantics; the built-in operations below are examples. Effective availability is the intersection of installed implementations, package data, runtime support and host policy. See [Extensible geographic capabilities](EXTENSIONS.md) for the proposed registry, author interface and data/build extensions.
 
 | User phrase | Suggested operation | Required definition/data |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ A host enables a registered, versioned operation and its allowed parameters. It 
 
 “Highest known recorded peak in this covered area” can be answered honestly with missing elevation counts. “Highest mountain in Europe” needs a definition of Europe and verified candidate coverage for that scope. Return the definition, snapshots used, coverage, unknowns, truncation and completeness with the result. A host signature authenticates the provider; a content hash authenticates bytes. Neither alone proves that an aggregate was calculated correctly or that the source maps the real world completely.
 
-A constrained typed query algebra can eventually express filters, `argmax`, sums and ranking over registered fields. Initially keep named tools backed by explicit indexes. Do not ship arbitrary provider JavaScript or unbounded SQL as the interoperability contract.
+A typed recipe interface can express filters, joins, `argmax`, sums and ranking over registered fields. Custom code plugins handle algorithms that recipes cannot express, and build plugins can add their required data/indexes. Host authors may use TypeScript, Wasm or adapters to native/external engines. Interoperability comes from the descriptor, schemas, semantic contract and execution lifecycle; implementation code remains extensible. Portable plugins can run on both host and client, while host-specific implementations are advertised as remote-only.
 
 ## ContextVM as a first-class interface
 
@@ -143,7 +143,7 @@ Search and aggregate federation also need semantics: deduplicate stable IDs, do 
 
 ## Suggested proof sequence
 
-1. Multi-package local host UI with disk persistence and honest dependency/space previews. Serve a small display-only package and a fuller regional package together. Export/reopen a tiny standalone file.
+1. Establish the open operation registry using existing operations and an independently authored plugin, then multi-package local host UI with disk persistence and honest dependency/space previews. Serve a small display-only package and a fuller regional package together. Export/reopen a tiny standalone file.
 2. ContextVM route, isochrone and search tools over the existing shared engine. Same snapshots/inputs must match local and HTTP results. Begin with local relays and no public announcements.
 3. Signed catalog discovery plus two mirrors of the same immutable blocks. Demonstrate failover and cache reuse, then a Hashtree adapter with measured range/chunk overhead.
 4. Two hosts serving complementary slices of the same compiled Vienna–Bratislava collection. Prove continuous display, then a cross-boundary route and isochrone with on-demand cell fetch and offline replay.
