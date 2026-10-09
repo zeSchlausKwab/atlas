@@ -1,3 +1,4 @@
+import { operationCatalog } from "../../format/src/capabilities";
 import { AtlasReader } from "../../format/src/reader";
 import {
   AtlasRouter,
@@ -7,14 +8,8 @@ import {
 import { AtlasGeocoder } from "../../geocoding/src/index";
 import { AtlasFeatures, type FeatureQuery } from "../../features/src/index";
 import { extract, type Selection } from "../../offline/src/index";
-export type Operation =
-  | "isochrone"
-  | "route"
-  | "search"
-  | "reverse"
-  | "peak"
-  | "features"
-  | "offline";
+import type { Operation, OperationInputs, OperationResults } from "./contract";
+export type { Operation, OperationInputs, OperationResults } from "./contract";
 export interface Execution {
   side: "device" | "server";
   operation: Operation;
@@ -24,6 +19,9 @@ export interface Execution {
 }
 /** Runtime-independent operations. The host supplies WASM initialization and a byte source. */
 export class AtlasEngine {
+  get capabilities() {
+    return operationCatalog(this.reader.index.manifest);
+  }
   readonly router: AtlasRouter;
   readonly geocoder: AtlasGeocoder;
   readonly features: AtlasFeatures;
@@ -69,11 +67,13 @@ export class RemoteOperations {
     readonly url: string,
     readonly snapshot: string,
   ) {}
-  async call<T>(
-    operation: Operation,
-    input: unknown,
-  ): Promise<{ result: T; execution: Execution }> {
+  async call<K extends Operation>(
+    operation: K,
+    input: OperationInputs[K],
+    signal?: AbortSignal,
+  ): Promise<{ result: OperationResults[K]; execution: Execution }> {
     const response = await fetch(`${this.url}/${operation}`, {
+      signal,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ snapshot: this.snapshot, input }),
@@ -91,7 +91,7 @@ export class RemoteOperations {
     if (operation === "offline") {
       const blob = await response.blob();
       return {
-        result: blob as T,
+        result: blob as OperationResults[K],
         execution: {
           side: "server",
           operation,
@@ -103,7 +103,7 @@ export class RemoteOperations {
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     const data = JSON.parse(new TextDecoder().decode(bytes)) as {
-      result: T;
+      result: OperationResults[K];
       execution: Execution;
     };
     if ((data.result as { snapshot?: string })?.snapshot !== this.snapshot)

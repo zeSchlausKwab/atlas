@@ -30,8 +30,9 @@ export class ReachabilityControls {
     select.value = "walking";
     for (const option of select.options)
       option.disabled =
-        option.value !== "walking" &&
-        !operations.reader.index.manifest.transport;
+        !operations.engine.capabilities.operations.route.parameters.profiles.includes(
+          option.value as TransportMode,
+        );
     select.addEventListener(
       "change",
       () => {
@@ -142,7 +143,7 @@ export class ReachabilityControls {
   }
   private clear() {
     this.revision++;
-    this.operations.cancelRoute();
+    this.operations.cancelRoute("isochrone");
     this.busy = false;
     this.result = undefined;
     this.picking = false;
@@ -181,8 +182,7 @@ export class ReachabilityControls {
           ? "Match: identical time bands and GeoJSON contours on device and server."
           : "The results differ or a search is incomplete.";
       box.dataset.state = r.status;
-      if (r.cells && r.execution.side === "device")
-        this.operations.onRouteProgress?.(r.cells);
+
       if (r.status === "reachable") {
         this.result = r;
         this.map.setReachable(r);
@@ -229,6 +229,7 @@ export class ReachabilityControls {
     }
   }
   destroy() {
+    this.operations.cancelRoute("isochrone");
     this.revision++;
     this.abort.abort();
     this.map.endPicking("isochrone");

@@ -1,3 +1,9 @@
+import { routingCapability } from "../../../packages/format/src/capabilities";
+import { OperationController } from "../../../packages/operations/src/controller";
+import type {
+  OperationInputs,
+  OperationResults,
+} from "../../../packages/operations/src/contract";
 import { WorkerRouter } from "./worker-router";
 import type { RoutingProgress } from "../../../packages/routing/src/paged";
 import {
@@ -30,13 +36,28 @@ const purposes: Record<Operation, Capability | undefined> = {
 export class OperationSession {
   readonly engine: AtlasEngine;
   readonly remote?: RemoteOperations;
-  profile: TransportMode = "walking";
+  private selectedProfile: TransportMode = "walking";
+  get profile() {
+    return this.selectedProfile;
+  }
+  set profile(value: TransportMode) {
+    if (value === this.selectedProfile) return;
+    this.controller.cancel();
+    this.workerRouter?.cancel();
+    this.transportOwner = undefined;
+    this.selectedProfile = value;
+  }
   mode: "device" | "server" = "device";
   enabled = new Set<Capability>(["routing", "search", "queries", "features"]);
   apiBytes = 0;
   apiRequests = 0;
   private dead = false;
-  onRouteProgress?: (p: RoutingProgress) => void;
+  readonly controller = new OperationController();
+  private transportOwner?: "route" | "isochrone";
+  private progress?: (p: RoutingProgress) => void;
+  subscribeProgress(listener: (p: RoutingProgress) => void) {
+    return this.controller.subscribe((e) => listener(e.progress));
+  }
   private workerRouter?: WorkerRouter;
   constructor(
     readonly reader: AtlasReader,
@@ -50,7 +71,16 @@ export class OperationSession {
       );
   }
   configure(mode: "device" | "server", enabled: Capability[]) {
-    this.mode = this.remote ? mode : "device";
+    const nextMode = this.remote ? mode : "device";
+    if (
+      nextMode !== this.mode ||
+      [...this.enabled].some((p) => !enabled.includes(p))
+    ) {
+      this.controller.cancel();
+      this.workerRouter?.cancel();
+      this.transportOwner = undefined;
+    }
+    this.mode = nextMode;
     this.enabled = new Set(enabled);
     this.reader.options.purposes = [
       "map",
@@ -63,6 +93,8 @@ export class OperationSession {
     if (p && !this.enabled.has(p))
       throw new Error(`${p} is disabled in Data settings.`);
     if (this.dead) throw new Error("Package closed");
+    if (!this.engine.capabilities.operations[op].available)
+      throw new Error(`${op} is not available in this package.`);
   }
   private record(e: Execution) {
     if (this.dead) return;
@@ -72,95 +104,116 @@ export class OperationSession {
     }
     this.onExecution(e);
   }
-  private async run<T>(
-    op: Operation,
-    input: unknown,
-    local: () => Promise<T>,
+  private run<K extends Operation>(
+    op: K,
+    input: OperationInputs[K],
+    local: (input: OperationInputs[K]) => Promise<OperationResults[K]>,
     mode = this.mode,
-  ): Promise<T & { execution: Execution }> {
+  ) {
     this.check(op);
-    if (mode === "server") {
-      if (!this.remote)
-        throw new Error("Server execution is unavailable for this local file.");
-      if (this.reader.offline)
-        throw new Error(
-          "Server execution needs a connection. Turn off Cache only or choose This device.",
-        );
-      const r = await this.remote.call<T>(op, input);
-      this.record(r.execution);
-      return Object.assign(r.result as object, {
-        execution: r.execution,
-      }) as T & { execution: Execution };
-    }
-    const start = performance.now(),
-      before =
-        op === "route" || op === "isochrone"
-          ? this.reader.bytesByPurpose.routing
-          : this.reader.bytesRead;
-    const result = await local();
-    const execution: Execution = {
-      side: "device",
-      operation: op,
-      computeMs: performance.now() - start,
-      sourceBytes:
-        (op === "route" || op === "isochrone"
-          ? this.reader.bytesByPurpose.routing
-          : this.reader.bytesRead) - before,
-      responseBytes: 0,
-    };
-    this.record(execution);
-    return Object.assign(result as object, { execution }) as T & {
-      execution: Execution;
-    };
+    return this.controller.run(op, input, async (request, signal, progress) => {
+      const transport = op === "route" || op === "isochrone";
+      if (transport) {
+        this.transportOwner = op;
+        this.progress = progress;
+      }
+      const cancel = () => {
+        if (transport && this.transportOwner === op)
+          this.workerRouter?.cancel();
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        if (mode === "server") {
+          if (!this.remote)
+            throw new Error(
+              "Server execution is unavailable for this local file.",
+            );
+          if (this.reader.offline)
+            throw new Error(
+              "Server execution needs a connection. Turn off Cache only or choose This device.",
+            );
+          const r = await this.remote.call(op, request, signal);
+          signal.throwIfAborted();
+          this.record(r.execution);
+          return Object.assign(r.result, { execution: r.execution });
+        }
+        const start = performance.now(),
+          before = transport
+            ? this.reader.bytesByPurpose.routing
+            : this.reader.bytesRead;
+        const result = await local(request);
+        signal.throwIfAborted();
+        const execution: Execution = {
+          side: "device",
+          operation: op,
+          computeMs: performance.now() - start,
+          sourceBytes:
+            (transport
+              ? this.reader.bytesByPurpose.routing
+              : this.reader.bytesRead) - before,
+          responseBytes: 0,
+        };
+        this.record(execution);
+        if (transport && "cells" in result && result.cells)
+          progress(result.cells);
+        return Object.assign(result, { execution });
+      } finally {
+        signal.removeEventListener("abort", cancel);
+      }
+    });
   }
-  private localRoute(start: Position, end: Position) {
+  private localRoute(start: Position, end: Position, profile: TransportMode) {
     if (
-      !this.reader.index.manifest.routing?.cells &&
-      !this.reader.index.manifest.transport
+      routingCapability(this.reader.index.manifest, profile)?.storage !==
+      "cells"
     )
-      return this.engine.route(start, end, this.profile);
+      return this.engine.route(start, end, profile);
     this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
-      this.onRouteProgress?.(p),
+      this.progress?.(p),
     );
-    return this.workerRouter.route(start, end, this.profile);
+    return this.workerRouter.route(start, end, profile);
   }
-  cancelRoute() {
-    this.workerRouter?.cancel();
+  cancelRoute(owner: "route" | "isochrone" = "route") {
+    this.controller.cancel(owner);
+    if (this.transportOwner === owner) {
+      this.workerRouter?.cancel();
+      this.transportOwner = undefined;
+    }
+  }
+  private localIsochrone(
+    start: Position,
+    bands: number[],
+    profile: TransportMode,
+  ) {
+    this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
+      this.progress?.(p),
+    );
+    return this.workerRouter.isochrone(start, bands, profile);
   }
   route(start: Position, end: Position) {
-    return this.run("route", { start, end, profile: this.profile }, () =>
-      this.localRoute(start, end),
+    return this.run("route", { start, end, profile: this.profile }, (p) =>
+      this.localRoute(p.start, p.end, p.profile!),
     );
   }
   isochrone(start: Position, bands: number[]) {
-    return this.run(
-      "isochrone",
-      { start, bands, profile: this.profile },
-      () => {
-        this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
-          this.onRouteProgress?.(p),
-        );
-        return this.workerRouter.isochrone(start, bands, this.profile);
-      },
+    return this.run("isochrone", { start, bands, profile: this.profile }, (p) =>
+      this.localIsochrone(p.start, p.bands, p.profile!),
     );
   }
   async compareIsochrone(start: Position, bands: number[]) {
-    const input = { start, bands, profile: this.profile };
+    const input = structuredClone({ start, bands, profile: this.profile });
     const device = await this.run(
       "isochrone",
       input,
-      () => {
-        this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
-          this.onRouteProgress?.(p),
-        );
-        return this.workerRouter.isochrone(start, bands, this.profile);
-      },
+      (p) => this.localIsochrone(p.start, p.bands, p.profile!),
       "device",
     );
+    if (input.profile !== this.profile)
+      throw new DOMException("Profile changed", "AbortError");
     const server = await this.run(
       "isochrone",
       input,
-      () => this.engine.isochrone(start, bands, this.profile),
+      (p) => this.localIsochrone(p.start, p.bands, p.profile!),
       "server",
     );
     return {
@@ -173,16 +226,18 @@ export class OperationSession {
     };
   }
   search(query: string) {
-    return this.run("search", { query }, () => this.engine.search(query));
+    return this.run("search", { query }, (p) =>
+      this.engine.search(p.query, p.limit),
+    );
   }
   reverse(point: Position) {
-    return this.run("reverse", { point }, () => this.engine.reverse(point));
+    return this.run("reverse", { point }, (p) => this.engine.reverse(p.point));
   }
   peak() {
     return this.run("peak", {}, () => this.engine.peak());
   }
   query(q: FeatureQuery) {
-    return this.run("features", q, () => this.engine.query(q));
+    return this.run("features", q, (p) => this.engine.query(p));
   }
   checkOffline(s: Selection) {
     for (const p of ["routing", "search", "queries"] as const)
@@ -193,19 +248,22 @@ export class OperationSession {
   }
   offline(s: Selection) {
     this.checkOffline(s);
-    return this.run("offline", s, () => this.engine.offline(s));
+    return this.run("offline", s, (p) => this.engine.offline(p));
   }
   async compareRoute(start: Position, end: Position) {
+    const input = structuredClone({ start, end, profile: this.profile });
     const device = await this.run(
       "route",
-      { start, end, profile: this.profile },
-      () => this.localRoute(start, end),
+      input,
+      (p) => this.localRoute(p.start, p.end, p.profile!),
       "device",
     );
+    if (input.profile !== this.profile)
+      throw new DOMException("Profile changed", "AbortError");
     const server = await this.run(
       "route",
-      { start, end, profile: this.profile },
-      () => this.localRoute(start, end),
+      input,
+      (p) => this.localRoute(p.start, p.end, p.profile!),
       "server",
     );
     const same =
@@ -222,6 +280,7 @@ export class OperationSession {
   }
   destroy() {
     this.dead = true;
+    this.controller.destroy();
     this.workerRouter?.cancel();
     this.engine.destroy();
   }

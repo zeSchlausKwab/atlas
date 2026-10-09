@@ -230,7 +230,7 @@ test("real HTTP operations match device routing/search/reverse/query/features; s
     const a: [number, number] = [9.002, 47],
       b: [number, number] = [9.018, 47];
     const local = await engine.route(a, b);
-    const routed = await remote.call<typeof local>("route", {
+    const routed = await remote.call("route", {
       start: a,
       end: b,
     });
@@ -249,24 +249,21 @@ test("real HTTP operations match device routing/search/reverse/query/features; s
     expect(clientReader.bytesByPurpose.routing).toBe(0);
     const names = await engine.search("cafe");
     expect(
-      (await remote.call<typeof names>("search", { query: "cafe" })).result
-        .matches,
+      (await remote.call("search", { query: "cafe" })).result.matches,
     ).toEqual(names.matches);
     const reverse = await engine.reverse([9.005, 47.0001]);
     expect(
       (
-        await remote.call<typeof reverse>("reverse", {
+        await remote.call("reverse", {
           point: [9.005, 47.0001],
         })
       ).result.match,
     ).toEqual(reverse.match);
     const peaks = await engine.peak();
-    expect((await remote.call<typeof peaks>("peak", {})).result).toEqual(peaks);
+    expect((await remote.call("peak", {})).result).toEqual(peaks);
     const features = await engine.query(query);
-    expect(
-      (await remote.call<typeof features>("features", query)).result,
-    ).toEqual(features);
-    const s = {
+    expect((await remote.call("features", query)).result).toEqual(features);
+    const s: import("../packages/offline/src/index").Selection = {
       name: "Offline",
       polygon: [
         [8.999, 46.999],
@@ -279,7 +276,7 @@ test("real HTTP operations match device routing/search/reverse/query/features; s
       routing: false,
       search: false,
     };
-    const offline = await remote.call<Blob>("offline", s);
+    const offline = await remote.call("offline", s);
     const child = await new AtlasReader(new FileSource(offline.result)).open();
     expect(child.index.manifest.selection?.parentSnapshot).toBe(
       reader.index.manifest.snapshot,
@@ -334,5 +331,28 @@ test("API rejects mismatched snapshots and invalid requests before reading any d
     ).status,
   ).toBe(400);
   expect(reader.requests).toBe(before);
+  engine.destroy();
+});
+
+test("capability discovery describes actual dependencies and legacy coverage without reading payloads", async () => {
+  const { reader, engine } = await fixture();
+  const before = reader.bytesRead;
+  const response = await createApiHandler(engine)(
+    new Request("http://localhost/api/capabilities"),
+  );
+  expect(response.status).toBe(200);
+  const catalog = await response.json();
+  expect(catalog.version).toBe(1);
+  expect(catalog.snapshot).toBe(reader.index.manifest.snapshot);
+  expect(catalog.operations.route.parameters.profiles).toEqual(["walking"]);
+  expect(catalog.operations.route.dependencies).toEqual([
+    { family: "routing/walking", schema: "rte", versions: [1] },
+  ]);
+  expect(catalog.operations.isochrone.available).toBe(false);
+  expect(catalog.operations.search.available).toBe(true);
+  expect(catalog.operations.reverse.available).toBe(true);
+  expect(catalog.operations.peak.available).toBe(true);
+  expect(catalog.coverage.completeness).toBe("source-extract-only");
+  expect(reader.bytesRead).toBe(before);
   engine.destroy();
 });

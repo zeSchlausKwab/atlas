@@ -1,94 +1,12 @@
 //! Resumable A* over independently loadable cells. Node identity is always the OSM ID.
 use super::*;
 use std::collections::HashMap;
+mod snap;
+use snap::{snap, snap_cells, Endpoint, Key};
+mod cache;
+use cache::CellCache;
 mod codec;
 pub use codec::{cell, extract_cell, key, partition, Cell, CELL_ZOOM};
-fn snap_cells(p: [f64; 2]) -> Vec<(u32, u32)> {
-    let lat = (SNAP_LIMIT_METERS / 6_371_000.).to_degrees() + 1e-8;
-    let lon = lat / (p[1].abs() + lat).to_radians().cos();
-    let a = cell([p[0] - lon, p[1] + lat]);
-    let b = cell([p[0] + lon, p[1] - lat]);
-    let mut cells = Vec::new();
-    for x in a.0..=b.0 {
-        for y in a.1..=b.1 {
-            cells.push((x, y));
-        }
-    }
-    cells
-}
-#[derive(Clone)]
-struct Endpoint {
-    snap: Snap,
-    id: u32,
-    a: Node,
-    b: Node,
-    directions: u8,
-    length: f64,
-    costs: [f64; 2],
-}
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-struct Key {
-    node: i64,
-    way: i64,
-    before: i64,
-}
-impl Endpoint {
-    fn connections(&self) -> Vec<(Key, [f64; 2], f64, f64)> {
-        let mut v = Vec::new();
-        let t = self.snap.t;
-        if t <= 1e-12 || self.directions & 2 != 0 {
-            v.push((
-                Key {
-                    node: self.a.id,
-                    way: if t <= 1e-12 { 0 } else { self.snap_way() },
-                    before: self.b.id,
-                },
-                self.a.position,
-                t * self.costs[1],
-                t * self.length,
-            ));
-        }
-        if t >= 1. - 1e-12 || self.directions & 1 != 0 {
-            v.push((
-                Key {
-                    node: self.b.id,
-                    way: if t >= 1. - 1e-12 { 0 } else { self.snap_way() },
-                    before: self.a.id,
-                },
-                self.b.position,
-                (1. - t) * self.costs[0],
-                (1. - t) * self.length,
-            ));
-        }
-        v
-    }
-    fn snap_way(&self) -> i64 {
-        self.snap.way_id[4..].parse().unwrap()
-    }
-    fn goals(&self) -> Vec<(i64, [f64; 2], f64, f64, i64)> {
-        let mut v = Vec::new();
-        let t = self.snap.t;
-        if t <= 1e-12 || self.directions & 1 != 0 {
-            v.push((
-                self.a.id,
-                self.a.position,
-                t * self.costs[0],
-                t * self.length,
-                self.b.id,
-            ));
-        }
-        if t >= 1. - 1e-12 || self.directions & 2 != 0 {
-            v.push((
-                self.b.id,
-                self.b.position,
-                (1. - t) * self.costs[1],
-                (1. - t) * self.length,
-                self.a.id,
-            ));
-        }
-        v
-    }
-}
 #[derive(Clone, Copy)]
 struct Entry {
     f: f64,
@@ -165,11 +83,8 @@ pub enum Step {
     },
 }
 pub struct PagedRouter {
-    cells: HashMap<(u32, u32), (Cell, u64)>,
-    empty: HashSet<(u32, u32)>,
-    tick: u64,
+    cells: CellCache,
     touched: HashSet<(u32, u32)>,
-    budget: usize,
     search_limit: usize,
     budget_exceeded: bool,
     input: Option<([f64; 2], [f64; 2])>,
@@ -180,11 +95,8 @@ pub struct PagedRouter {
 impl PagedRouter {
     pub fn new(budget: usize, search_limit: usize) -> Self {
         Self {
-            cells: HashMap::new(),
-            empty: HashSet::new(),
-            tick: 0,
+            cells: CellCache::new(budget),
             touched: HashSet::new(),
-            budget,
             search_limit,
             budget_exceeded: false,
             input: None,
@@ -199,7 +111,6 @@ impl PagedRouter {
         }
         if self.profile != profile {
             self.cells.clear();
-            self.empty.clear();
             self.input = None;
             self.search = None;
             self.profile = profile;
@@ -214,7 +125,7 @@ impl PagedRouter {
         self.budget_exceeded = false;
         self.input = Some((a, b));
         self.search = None;
-        self.empty.clear();
+        self.cells.clear_empty();
         self.bands.clear();
         Ok(())
     }
@@ -241,7 +152,7 @@ impl PagedRouter {
         v
     }
     pub fn memory(&self) -> usize {
-        self.cells.values().map(|(c, _)| c.memory()).sum::<usize>()
+        self.cells.memory()
             + self
                 .search
                 .as_ref()
@@ -252,17 +163,6 @@ impl PagedRouter {
         self.cells.len()
     }
     pub fn load(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let c = Cell::decode(bytes)?;
-        if c.graph.profile.unwrap_or(0) != self.profile {
-            return Err("Routing cell profile mismatch".into());
-        }
-        if c.memory() > self.budget {
-            self.budget_exceeded = true;
-            return Ok(());
-        }
-        let address = c.address;
-        self.tick += 1;
-        self.cells.insert(address, (c, self.tick));
         let pinned: HashSet<_> = if self.search.is_none() {
             self.input
                 .map(|(a, b)| snap_cells(a).into_iter().chain(snap_cells(b)).collect())
@@ -270,54 +170,14 @@ impl PagedRouter {
         } else {
             HashSet::new()
         };
-        while self.cells.values().map(|(c, _)| c.memory()).sum::<usize>() > self.budget {
-            let old = self
-                .cells
-                .iter()
-                .filter(|(k, _)| !pinned.contains(k))
-                .min_by_key(|(_, (_, t))| *t)
-                .map(|(k, _)| *k);
-            if let Some(old) = old {
-                self.cells.remove(&old);
-            } else {
-                self.cells.remove(&address);
-                self.budget_exceeded = true;
-                break;
-            }
-        }
+        self.budget_exceeded |= !self.cells.load(bytes, self.profile, &pinned)?;
         Ok(())
     }
     pub fn empty(&mut self, x: u32, y: u32) {
-        self.empty.insert((x, y));
+        self.cells.mark_empty((x, y));
     }
     fn has(&self, c: &(u32, u32)) -> bool {
-        self.cells.contains_key(c) || self.empty.contains(c)
-    }
-    fn snap(&self, p: [f64; 2]) -> Option<Endpoint> {
-        let mut best: Option<Endpoint> = None;
-        for address in snap_cells(p) {
-            if let Some((c, _)) = self.cells.get(&address) {
-                if let Some(snap) = c.graph.snap(p) {
-                    let seg = &c.graph.segments[snap.segment];
-                    let id = c.ids[snap.segment];
-                    if best.as_ref().is_none_or(|v| {
-                        snap.distance_meters < v.snap.distance_meters
-                            || snap.distance_meters == v.snap.distance_meters && id < v.id
-                    }) {
-                        best = Some(Endpoint {
-                            id,
-                            a: c.graph.nodes[seg.a as usize].clone(),
-                            b: c.graph.nodes[seg.b as usize].clone(),
-                            directions: seg.directions,
-                            length: c.graph.lengths[snap.segment],
-                            costs: c.graph.costs[snap.segment],
-                            snap,
-                        });
-                    }
-                }
-            }
-        }
-        best
+        self.cells.has(c)
     }
     pub fn step(&mut self, limit: usize) -> Result<Step, String> {
         let (a, b) = self.input.ok_or("Begin a search first")?;
@@ -329,7 +189,7 @@ impl PagedRouter {
         if self.search.is_none() {
             let required: HashSet<_> = snap_cells(a).into_iter().chain(snap_cells(b)).collect();
             self.touched
-                .extend(required.iter().filter(|c| self.cells.contains_key(c)));
+                .extend(required.iter().filter(|c| self.cells.contains(c)));
             let mut missing: Vec<_> = required
                 .iter()
                 .filter(|c| !self.has(c))
@@ -342,7 +202,7 @@ impl PagedRouter {
                     visited: 0,
                 });
             }
-            let Some(start) = self.snap(a) else {
+            let Some(start) = snap(&self.cells, a) else {
                 return Ok(Step::Complete {
                     result: Route::Unsnappable {
                         endpoint: "start",
@@ -351,7 +211,7 @@ impl PagedRouter {
                 });
             };
             let end = if self.bands.is_empty() {
-                let Some(e) = self.snap(b) else {
+                let Some(e) = snap(&self.cells, b) else {
                     return Ok(Step::Complete {
                         result: Route::Unsnappable {
                             endpoint: "end",
@@ -434,8 +294,8 @@ impl PagedRouter {
             let pos = record.p;
             let meters = record.meters;
             let address = cell(pos);
-            if !self.cells.contains_key(&address) {
-                if self.empty.contains(&address) {
+            if !self.cells.contains(&address) {
+                if self.cells.is_empty(&address) {
                     return Err("Missing owner cell for a known routing node".into());
                 }
                 s.queue.push(entry);
@@ -445,9 +305,7 @@ impl PagedRouter {
                 });
             }
             self.touched.insert(address);
-            self.tick += 1;
-            let (c, t) = self.cells.get_mut(&address).unwrap();
-            *t = self.tick;
+            let c = self.cells.get_mut(&address).unwrap();
             let i = *c
                 .by_id
                 .get(&entry.key.node)

@@ -23,6 +23,7 @@ export class RouteControls {
   private revision = 0;
   private dead = false;
   private abort = new AbortController();
+  private unsubscribeProgress?: () => void;
   private supported: boolean;
   private cells = new Map<string, { key: string; state: string }>();
   private progress(p: RoutingProgress) {
@@ -89,9 +90,9 @@ export class RouteControls {
     element("route-cell-panel").hidden = !(
       reader.index.manifest.routing?.cells || reader.index.manifest.transport
     );
-    operations.onRouteProgress = (p) => {
+    this.unsubscribeProgress = operations.subscribeProgress((p) => {
       if (!this.dead) this.progress(p);
-    };
+    });
     element("route-cell-overlay").addEventListener(
       "change",
       () => this.drawCells(),
@@ -350,7 +351,7 @@ export class RouteControls {
     this.revision++;
     this.abort.abort();
 
-    this.operations.onRouteProgress = undefined;
+    this.unsubscribeProgress?.();
     this.operations.cancelRoute();
     this.map.setRoutingCells([]);
     this.map.endPicking("route");

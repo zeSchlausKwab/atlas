@@ -29,6 +29,13 @@ export function createApiHandler(engine: AtlasEngine) {
         { error: message },
         { status, headers: { "Cache-Control": "no-store" } },
       );
+    if ((operation as string) === "capabilities" && request.method === "GET")
+      return Response.json(engine.capabilities, {
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Atlas-Snapshot": engine.reader.index.manifest.snapshot,
+        },
+      });
     if (!OPERATIONS.includes(operation)) return error("Unknown operation", 404);
     if (request.method !== "POST")
       return error("Use POST for map operations", 405);

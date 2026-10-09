@@ -1,3 +1,4 @@
+import { routingCapability } from "../../format/src/capabilities";
 import { TRANSPORT_MODES, type TransportMode } from "../../format/src/index";
 import type { FeatureCollection, MultiPolygon } from "geojson";
 export type { TransportMode };
@@ -76,10 +77,8 @@ export function validateTransport(
 }
 export function profilePrefix(reader: AtlasReader, mode: TransportMode) {
   validateTransport(mode);
-  const transport = reader.index.manifest.transport;
-  if (transport) return transport.profiles[mode].prefix;
-  if (mode === "walking" && reader.index.manifest.routing?.cells)
-    return "routing/cells";
+  const capability = routingCapability(reader.index.manifest, mode);
+  if (capability?.storage === "cells") return capability.prefix;
   throw new Error(
     `${mode} cells are unavailable. Compile transport data for this package.`,
   );
@@ -112,8 +111,8 @@ export class AtlasRouter {
       throw new Error("Routing is disabled");
     if (this.dead) throw new Error("Router has been disposed");
     if (
-      (this.reader.index.manifest.transport ||
-        this.reader.index.manifest.routing?.cells) &&
+      routingCapability(this.reader.index.manifest, profile)?.storage ===
+        "cells" &&
       !this.options.reference
     ) {
       return this.getPaged().route(

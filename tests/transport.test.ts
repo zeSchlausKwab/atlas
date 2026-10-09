@@ -252,3 +252,27 @@ test("real PBF compiler preserves distinct access, vehicle direction and differe
     await rm(dir, { recursive: true, force: true });
   }
 }, 30000);
+
+test("capability catalog selects profile-specific cells while offline export advertises walking only", async () => {
+  const f = await fixture();
+  const reader = f.reader;
+  const { operationCatalog } = await import(
+    "../packages/format/src/capabilities"
+  );
+  const c = operationCatalog(reader.index.manifest);
+  expect(c.operations.route.parameters.profiles).toEqual([
+    "walking",
+    "cycling",
+    "driving",
+  ]);
+  expect(c.operations.isochrone.dependencies.map((d) => d.family)).toEqual([
+    "routing/walking/cells",
+    "routing/cycling/cells",
+    "routing/driving/cells",
+  ]);
+  expect(c.operations.isochrone.parameters.maxSeconds).toBe(1800);
+  expect(
+    c.operations.isochrone.dependencies.every((d) => d.versions[0] === 2),
+  ).toBe(true);
+  expect(c.operations.offline.parameters.profiles).not.toContain("driving");
+});
