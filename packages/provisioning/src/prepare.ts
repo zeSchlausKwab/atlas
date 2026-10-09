@@ -255,7 +255,12 @@ export async function preparePackage(
       buildingHeights: caps.includes("building-heights") ? heights : undefined,
       routing: undefined,
       transport: caps.includes("transport-routing")
-        ? { version: 1, profiles, statistics: "cell-records" }
+        ? {
+            version: 1,
+            profiles,
+            statistics: "cell-records",
+            graphSnapshot: m.transport!.graphSnapshot ?? m.snapshot,
+          }
         : undefined,
       capabilities: caps,
       selection: {

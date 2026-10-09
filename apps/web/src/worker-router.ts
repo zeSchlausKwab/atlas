@@ -1,15 +1,18 @@
 import {
-  readRoutingCell,
   type RoutingProgress,
+  type RoutingBudget,
 } from "../../../packages/routing/src/paged";
 import {
-  profilePrefix,
   type Position,
   type RouteResult,
   type IsochroneResult,
   type TransportMode,
 } from "../../../packages/routing/src/index";
-import type { AtlasReader } from "../../../packages/format/src/reader";
+import { AtlasReader } from "../../../packages/format/src/reader";
+import {
+  singleRoutingSource,
+  type RoutingCellProvider,
+} from "../../../packages/routing/src/composition";
 export class WorkerRouter {
   private worker?: Worker;
   private sequence = 0;
@@ -21,10 +24,15 @@ export class WorkerRouter {
       reject: (e: Error) => void;
     }
   >();
+  private provider: RoutingCellProvider;
   constructor(
-    readonly reader: AtlasReader,
+    readonly reader: AtlasReader | RoutingCellProvider,
     readonly progress: (p: RoutingProgress) => void,
-  ) {}
+    readonly budget: RoutingBudget = {},
+  ) {
+    this.provider =
+      reader instanceof AtlasReader ? singleRoutingSource(reader) : reader;
+  }
   route(
     start: Position,
     end: Position,
@@ -56,7 +64,7 @@ export class WorkerRouter {
     bands?: number[];
     profile: TransportMode;
   }): Promise<RouteResult | IsochroneResult> {
-    const prefix = profilePrefix(this.reader, input.profile);
+    const prefix = this.provider.prefix(input.profile);
     if (this.jobs.size) this.cancel();
     if (!this.worker) {
       const worker = (this.worker = new Worker("/routing-worker.js", {
@@ -66,7 +74,7 @@ export class WorkerRouter {
         if (worker !== this.worker) return;
         if (m.type === "read") {
           try {
-            const value = await readRoutingCell(this.reader, m.key);
+            const value = await this.provider.read(m.key);
             if (worker === this.worker)
               worker.postMessage({ type: "cell", id: m.id, value });
           } catch (e) {
@@ -97,7 +105,8 @@ export class WorkerRouter {
         ...input,
         prefix,
         id,
-        snapshot: this.reader.index.manifest.snapshot,
+        snapshot: this.provider.snapshot,
+        budget: this.budget,
       });
     });
   }

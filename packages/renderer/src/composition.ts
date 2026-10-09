@@ -24,6 +24,7 @@ import {
 } from "./composition-plan";
 import {
   project,
+  unproject,
   tileLayer,
   type Place,
   type MapLayer,
@@ -59,6 +60,18 @@ export interface CompositionStats {
 /** One WASM/WebGL renderer and camera. Sessions own immutable source identities;
  * the composition owns display precedence, never semantic graph compatibility. */
 export class CompositionMap {
+  onPick?: (point: [number, number]) => void;
+  onCancelPick?: () => void;
+  private route: [number, number][] = [];
+  private endpoints: Array<[number, number]> = [];
+  setRoute(coordinates: [number, number][] = []) {
+    this.route = coordinates;
+    this.invalidate();
+  }
+  setEndpoints(points: Array<[number, number]>) {
+    this.endpoints = points;
+    this.invalidate();
+  }
   private renderer!: Renderer;
   private sessions = new Map<string, Session>();
   private sources: CompositionMapSource[] = [];
@@ -98,9 +111,12 @@ export class CompositionMap {
         this.invalidate();
       },
       zoom: (delta, x, y) => this.zoomBy(delta, x, y),
-      click: () => {},
+      click: (x, y) =>
+        this.onPick?.(unproject(...screenToWorld([x, y], this.camera))),
       command: (c) => {
         if (c === "reset") this.reset();
+        if (c === "cancel") this.onCancelPick?.();
+        if (c === "choose") this.onPick?.(unproject(...this.center));
       },
     });
     this.observer = new ResizeObserver(() => this.invalidate());
@@ -450,6 +466,36 @@ export class CompositionMap {
         ctx.setLineDash([]);
       }
     }
+    if (this.route.length) {
+      ctx.beginPath();
+      this.route.forEach((p, i) => {
+        const [x, y] = toScreen(project(...p));
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#fffaf0";
+      ctx.lineWidth = 9;
+      ctx.stroke();
+      ctx.strokeStyle = "#cc603d";
+      ctx.lineWidth = 5;
+      ctx.stroke();
+    }
+    this.endpoints.forEach((p, i) => {
+      const [x, y] = toScreen(project(...p));
+      ctx.beginPath();
+      ctx.arc(x, y, 13, 0, Math.PI * 2);
+      ctx.fillStyle = i ? "#cc603d" : "#345d48";
+      ctx.fill();
+      ctx.strokeStyle = "#fffaf0";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fffaf0";
+      ctx.fillText(i ? "B" : "A", x, y);
+    });
     this.onStats(stats);
   }
   destroy() {

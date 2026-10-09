@@ -8,6 +8,18 @@ use std::{
 };
 
 pub const SNAP_LIMIT_METERS: f64 = 150.0;
+// Native preparation can handle larger regional graphs. Browser kernels still
+// consume small cells and retain the original defensive full-graph limits.
+const MAX_GRAPH_NODES: usize = if cfg!(target_arch = "wasm32") {
+    8_000_000
+} else {
+    32_000_000
+};
+const MAX_GRAPH_SEGMENTS: usize = if cfg!(target_arch = "wasm32") {
+    12_000_000
+} else {
+    48_000_000
+};
 #[derive(Clone, Debug)]
 pub struct Node {
     pub id: i64,
@@ -117,9 +129,9 @@ fn valid_position(p: [f64; 2]) -> bool {
 }
 impl Graph {
     pub fn new(nodes: Vec<Node>, segments: Vec<Segment>) -> Result<Self, String> {
-        if nodes.len() > 8_000_000 || segments.len() > 12_000_000 {
+        if nodes.len() > MAX_GRAPH_NODES || segments.len() > MAX_GRAPH_SEGMENTS {
             return Err(format!(
-                "Walking graph exceeds prototype limits: {} nodes, {} segments",
+                "Routing graph exceeds compilation limits: {} nodes, {} segments",
                 nodes.len(),
                 segments.len()
             ));
@@ -251,7 +263,7 @@ impl Graph {
         }
         let n = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
         let e = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-        if n > 8_000_000 || e > 12_000_000 || bytes.len() != 12 + n * 24 + e * 20 {
+        if n > MAX_GRAPH_NODES || e > MAX_GRAPH_SEGMENTS || bytes.len() != 12 + n * 24 + e * 20 {
             return Err("Invalid walking graph length".into());
         }
         let nodes = bytes[12..12 + n * 24]
@@ -284,8 +296,8 @@ impl Graph {
         }
         let u = |p| u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap()) as usize;
         let (n, e, t, profile) = (u(4), u(8), u(12), u(16));
-        if n > 8_000_000
-            || e > 12_000_000
+        if n > MAX_GRAPH_NODES
+            || e > MAX_GRAPH_SEGMENTS
             || t > 500_000
             || profile > 2
             || bytes.len() != 20 + n * 24 + e * 28 + t * 32

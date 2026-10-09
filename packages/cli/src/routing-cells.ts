@@ -11,11 +11,25 @@ export async function addRoutingCells(
   bytes: Uint8Array,
   prefix = "routing/cells",
 ): Promise<RoutingMetadata["cells"]> {
+  const temp = await mkdtemp(join(tmpdir(), "atlas-routing-input-"));
+  try {
+    const source = join(temp, "graph.rte");
+    await Bun.write(source, bytes);
+    return await addRoutingCellFile(writer, source, prefix);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+/** The native compiler already wrote the graph. Partition it in place instead
+ * of reading a GiB-sized graph into JS and writing a duplicate scratch file. */
+export async function addRoutingCellFile(
+  writer: DiskWriter,
+  source: string,
+  prefix = "routing/cells",
+): Promise<RoutingMetadata["cells"]> {
   const temp = await mkdtemp(join(tmpdir(), "atlas-routing-"));
   try {
-    const source = join(temp, "graph.rte"),
-      out = join(temp, "cells");
-    await Bun.write(source, bytes);
+    const out = join(temp, "cells");
     const build = Bun.spawn(
       [
         "cargo",

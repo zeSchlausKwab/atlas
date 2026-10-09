@@ -40,6 +40,21 @@ impl CellWalkingRouter {
             inner: atlas_routing::cells::PagedRouter::new(32 * 1024 * 1024, 250_000),
         }
     }
+    /// Explicit bounded opt-in for longer client journeys. The default constructor
+    /// keeps the smaller single-map budget.
+    pub fn with_limits(cell_bytes: u32, search_states: u32) -> Result<CellWalkingRouter, JsValue> {
+        if !(1024 * 1024..=256 * 1024 * 1024).contains(&cell_bytes)
+            || !(1_000..=2_000_000).contains(&search_states)
+        {
+            return Err(JsValue::from_str("Invalid routing budget"));
+        }
+        Ok(Self {
+            inner: atlas_routing::cells::PagedRouter::new(
+                cell_bytes as usize,
+                search_states as usize,
+            ),
+        })
+    }
     pub fn set_profile(&mut self, profile: u32) -> Result<(), JsValue> {
         self.inner
             .set_profile(profile)

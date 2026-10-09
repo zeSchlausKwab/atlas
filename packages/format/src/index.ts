@@ -69,6 +69,8 @@ export interface TransportProfile {
 }
 export interface TransportMetadata {
   version: 1;
+  /** Identity of the compiled graph whose cells are copied unchanged into excerpts. */
+  graphSnapshot?: string;
   profiles: Partial<Record<TransportMode, TransportProfile>>;
   statistics?: "cell-records";
 }
@@ -328,6 +330,8 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   if (manifest.transport) {
     if (
       manifest.transport.version !== 1 ||
+      (manifest.transport.graphSnapshot !== undefined &&
+        !/^[a-f0-9]{64}$/.test(manifest.transport.graphSnapshot)) ||
       !manifest.transport.profiles ||
       Object.keys(manifest.transport.profiles).length === 0 ||
       Object.keys(manifest.transport.profiles).some(

@@ -32,6 +32,80 @@
             Reading the host catalog…
           </p>
         </div>
+        <details class="composition-routing composition-rule" open>
+          <summary>Route across these maps</summary>
+          <p id="composition-route-compatibility" class="quiet">
+            Choose compatible transport maps.
+          </p>
+          <form id="composition-route-form">
+            <label for="composition-route-mode">Travel mode</label
+            ><select id="composition-route-mode">
+              <option value="driving">Driving</option>
+              <option value="cycling">Cycling</option>
+              <option value="walking">Walking</option>
+            </select>
+            <label for="composition-route-start"
+              >A · Start (latitude, longitude)</label
+            >
+            <div class="composition-coordinate">
+              <input
+                id="composition-route-start"
+                value="48.2027, 16.3696"
+                required
+              /><button
+                id="composition-route-pick-start"
+                type="button"
+                aria-label="Pick start on map"
+              >
+                Pick A
+              </button>
+            </div>
+            <label for="composition-route-end"
+              >B · Destination (latitude, longitude)</label
+            >
+            <div class="composition-coordinate">
+              <input
+                id="composition-route-end"
+                value="48.1452, 17.1128"
+                required
+              /><button
+                id="composition-route-pick-end"
+                type="button"
+                aria-label="Pick destination on map"
+              >
+                Pick B
+              </button>
+            </div>
+            <label for="composition-route-budget">Search limit</label
+            ><select id="composition-route-budget">
+              <option value="250000">250,000 states</option>
+              <option value="1000000" selected>1 million states</option>
+              <option value="2000000">2 million states</option>
+            </select>
+            <p class="quiet">
+              Larger searches use more memory. Decoded graph cells have a
+              separate 32 MiB cache budget.
+            </p>
+            <label
+              ><input id="composition-route-offline" type="checkbox" /> Use
+              cached routing cells only</label
+            >
+            <div class="composition-actions">
+              <button id="composition-route-run" type="submit" disabled>
+                Route on this device</button
+              ><button id="composition-route-cancel" type="button" disabled>
+                Cancel
+              </button>
+            </div>
+          </form>
+          <p id="composition-route-result" role="status" class="quiet">
+            The example runs from central Vienna to central Bratislava.
+          </p>
+          <ul
+            id="composition-route-sources"
+            aria-label="Routing source reads"
+          ></ul>
+        </details>
         <div class="composition-rule">
           <p>
             <strong>Top source wins, per layer.</strong> Lower maps fill the
@@ -65,13 +139,13 @@
         </form>
         <div class="composition-rule quiet">
           <p>
-            This view loads geometry and optional labels. Search, routing and
-            extraction stay with each source’s <strong>Open tools</strong> link.
+            This view loads geometry and optional labels. Search and extraction
+            stay with each source’s <strong>Open tools</strong> link.
           </p>
           <p>
-            Separate snapshots can share a display; this does not join their
-            routing graphs. Blank areas have no selected coverage. Geometry is
-            composed in 2D.
+            Separate snapshots can share a display. Cross-map routing requires
+            excerpts of one shared compiled graph; cells load on demand. Blank
+            areas have no selected coverage. Geometry is composed in 2D.
           </p>
         </div>
       </aside>

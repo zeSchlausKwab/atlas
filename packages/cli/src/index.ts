@@ -5,6 +5,7 @@ import {
   type PackageSelection,
 } from "../../provisioning/src/selection";
 import { addTransport, upgradeTransport } from "./transport";
+import { copyTransport } from "./shared-transport";
 import { PLACE_LABEL_KEY, encodePlaces } from "../../labels/src/places";
 import { encodeTile } from "./tile-codec";
 import { buildingHeight } from "../../format/src/heights";
@@ -65,6 +66,7 @@ function args(argv: string[]) {
     "format",
     "sha256",
     "selection",
+    "transport-from",
     "bounds",
     ...boolean,
   ]);
@@ -224,6 +226,10 @@ async function main() {
       ? await Bun.file(text(flags, "selection", "")).json()
       : undefined;
     if (selected) validateSelectionScope(selected, WORLD_SOURCE);
+    if (flags["transport-from"] && !selected)
+      throw new Error(
+        "--transport-from requires --selection to define graph coverage",
+      );
     const requestedBounds = flags.bounds
       ? text(flags, "bounds", "").split(",").map(Number)
       : undefined;
@@ -418,7 +424,13 @@ async function main() {
       });
     const transport =
       !selected || selected.profiles.length
-        ? await addTransport(writer, input, selected?.profiles)
+        ? flags["transport-from"]
+          ? await copyTransport(
+              writer,
+              resolve(text(flags, "transport-from", "")),
+              selected!,
+            )
+          : await addTransport(writer, input, selected?.profiles)
         : undefined;
     console.log("Building search and street indexes…");
     const geocoding =

@@ -1,3 +1,4 @@
+import { CompositionRouting } from "./composition-routing";
 import {
   CompositionMap,
   type CompositionMapSource,
@@ -68,6 +69,7 @@ const entries: Entry[] = [],
   catalogs = new Set<string>(),
   store = new BrowserBlockStore();
 let map: CompositionMap;
+let routing: CompositionRouting | undefined;
 let recipe: Recipe | undefined;
 let style = "paper";
 let starting = true;
@@ -80,6 +82,7 @@ if (cacheChannel)
   cacheChannel.onmessage = async ({ data }) => {
     if (data !== "close" || paused) return;
     paused = true;
+    routing?.destroy();
     map?.destroy();
     for (const entry of entries) {
       entry.reader?.dispose();
@@ -160,6 +163,11 @@ function sync() {
             color: e.color,
           }) satisfies CompositionMapSource,
       ),
+  );
+  routing?.configure(
+    entries
+      .filter((e) => e.enabled && e.reader && !e.opening)
+      .map((e) => ({ url: e.offer.url, manifest: e.reader!.index.manifest })),
   );
   const attributions = [
     ...new Set(
@@ -429,6 +437,7 @@ async function start() {
       map.destroy();
       return;
     }
+    routing = new CompositionRouting(map, store);
     const failures: string[] = [];
     for (const url of new Set([
       new URL("/catalog", location.href).href,
@@ -534,6 +543,7 @@ async function start() {
       }
     };
     window.addEventListener("pagehide", () => {
+      routing?.destroy();
       map.destroy();
       entries.forEach((e) => e.reader?.dispose());
     });

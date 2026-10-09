@@ -10,6 +10,10 @@ import {
   type IsochroneResult,
   type TransportMode,
 } from "./index";
+export interface RoutingBudget {
+  cellBytes?: number;
+  searchStates?: number;
+}
 export interface CellRead {
   bytes?: Uint8Array;
   empty?: boolean;
@@ -121,7 +125,20 @@ export class PagedRouter {
     readonly onProgress: (p: RoutingProgress) => void = () => {},
     readonly initialize: () => Promise<unknown> = () =>
       init({ module_or_path: "/wasm/atlas_routing_wasm_bg.wasm" }),
-  ) {}
+    readonly budget: RoutingBudget = {},
+  ) {
+    const bytes = budget.cellBytes ?? 32 * 1024 * 1024,
+      states = budget.searchStates ?? 250_000;
+    if (
+      !Number.isInteger(bytes) ||
+      bytes < 1048576 ||
+      bytes > 256 * 1048576 ||
+      !Number.isInteger(states) ||
+      states < 1000 ||
+      states > 2_000_000
+    )
+      throw new Error("Invalid routing budget");
+  }
   private progress(phase: RoutingProgress["phase"]): RoutingProgress {
     const used =
       this.kernel
@@ -191,7 +208,10 @@ export class PagedRouter {
     if (!this.kernel) {
       await this.initialize();
       if (this.dead) throw new Error("Router disposed");
-      this.kernel = new CellWalkingRouter();
+      this.kernel = CellWalkingRouter.with_limits(
+        this.budget.cellBytes ?? 32 * 1024 * 1024,
+        this.budget.searchStates ?? 250_000,
+      );
     }
     const signature = JSON.stringify([a, b, profile, prefix, bands]);
     this.prefix = prefix;

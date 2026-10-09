@@ -31,6 +31,8 @@ self.onmessage = (event: MessageEvent) => {
           self.postMessage({ type: "read", id, key });
         }),
       (progress) => self.postMessage({ type: "progress", id: job, progress }),
+      undefined,
+      m.budget,
     );
     (m.type === "route"
       ? router.route(

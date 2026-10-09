@@ -11,7 +11,7 @@ import {
   type TransportMode,
 } from "../../format/src/index";
 import { DiskWriter } from "./disk-writer";
-import { addRoutingCells } from "./routing-cells";
+import { addRoutingCellFile } from "./routing-cells";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export async function addTransport(
   writer: DiskWriter,
@@ -43,11 +43,12 @@ export async function addTransport(
     for (const mode of modes) {
       console.log(`Partitioning ${mode} cells…`);
       const prefix = `routing/${mode}/cells`;
-      const cells = await addRoutingCells(
+      const cells = await addRoutingCellFile(
         writer,
-        new Uint8Array(await Bun.file(join(temp, `${mode}.rte`)).arrayBuffer()),
+        join(temp, `${mode}.rte`),
         prefix,
       );
+      await rm(join(temp, `${mode}.rte`));
       const { bytes, ...counts } = stats[mode];
       profiles[mode] = {
         ...counts,

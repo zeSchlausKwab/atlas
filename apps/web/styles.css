@@ -2802,3 +2802,32 @@ button:disabled {
     display: none;
   }
 }
+.composition-routing summary {
+  cursor: pointer;
+  font:
+    600 17px Georgia,
+    serif;
+  margin-bottom: 12px;
+}
+.composition-coordinate {
+  display: flex;
+  gap: 6px;
+}
+.composition-coordinate input {
+  min-width: 0;
+  flex: 1;
+  font: 12px var(--mono);
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fbfaf4;
+  color: var(--ink);
+}
+.composition-routing ul {
+  font: 11px/1.8 var(--mono);
+  padding-left: 15px;
+}
+.composition-routing button[type="submit"] {
+  background: var(--green);
+  color: var(--paper);
+}
