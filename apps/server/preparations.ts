@@ -4,21 +4,31 @@ import type { Manifest } from "../../packages/format/src/index";
 import {
   availability,
   validateSelection,
+  validateSelectionScope,
   type PackageSelection,
   type PreparationProgress,
 } from "../../packages/provisioning/src/selection";
+import {
+  WORLD_SOURCE,
+  planMatches,
+  type PbfPlan,
+} from "../../packages/provisioning/src/global-source";
+import { validateImportSize } from "../../packages/provisioning/src/import-pbf";
+import { PbfSources } from "./pbf-sources";
 export interface PreparationJob {
   id: string;
   name: string;
   createdAt: string;
   state: "running" | "cancelling" | "cancelled" | "failed" | "ready";
   selection: PackageSelection;
+  sourcePlan?: PbfPlan;
   progress: PreparationProgress;
   error?: string;
   size?: number;
   manifest?: Manifest;
 }
 export class Preparations {
+  readonly sources = new PbfSources();
   readonly jobs = new Map<string, PreparationJob>();
   private worker?: Bun.Subprocess<"ignore", "ignore", "pipe">;
   private active?: string;
@@ -73,11 +83,33 @@ export class Preparations {
     return work;
   }
   private async cleanup(id: string) {
+    await rm(resolve(this.directory, `${id}.work`), {
+      recursive: true,
+      force: true,
+    });
     for (const suffix of ["", ".part", ".payload.part"])
       await rm(this.path(id) + suffix, { force: true });
   }
   async create(value: unknown) {
-    validateSelection(value, this.source);
+    const extra = value as {
+      sourcePlanId?: string;
+      maxSourceBytes?: number;
+    } | null;
+    const plan = extra?.sourcePlanId
+      ? this.sources.get(extra.sourcePlanId)
+      : undefined;
+    if (plan) {
+      validateSelectionScope(value, WORLD_SOURCE);
+      if (!planMatches(plan, value, extra!.maxSourceBytes!))
+        throw new Error(
+          "Area, routing padding or source budget changed. Check the PBF source again.",
+        );
+      if (!Bun.which("osmium") || !Bun.which("cargo"))
+        throw new Error(
+          "PBF preparation requires Osmium and Cargo on the server.",
+        );
+      validateImportSize(plan, value);
+    } else validateSelection(value, this.source);
     if (this.active)
       throw new Error(
         "Another preparation is running. Wait for it or cancel it first.",
@@ -86,9 +118,15 @@ export class Preparations {
     this.active = id;
     try {
       const disk = await statfs(this.directory);
-      if (disk.bavail * disk.bsize < value.maxBytes * 2 + 64 * 1024 * 1024)
+      if (
+        disk.bavail * disk.bsize <
+        (plan
+          ? plan.bytes * 3 + Math.max(value.maxBytes, 64 * 1048576) * 6
+          : value.maxBytes * 2) +
+          64 * 1024 * 1024
+      )
         throw new Error(
-          "Insufficient free disk space for the selected output budget and temporary copy. Lower the budget.",
+          "Insufficient free disk space for the source, selected output budget and temporary compilation files. Lower the budget or choose a smaller area.",
         );
       const job: PreparationJob = {
         id,
@@ -96,9 +134,12 @@ export class Preparations {
         createdAt: new Date().toISOString(),
         state: "running",
         selection: structuredClone(value),
+        sourcePlan: plan,
         progress: {
           phase: "planning",
-          message: "Opening the source snapshot…",
+          message: plan
+            ? `Preparing ${plan.region.name} from OSM PBF…`
+            : "Opening the source snapshot…",
           completed: 0,
           total: 0,
           readBytes: 0,
@@ -178,6 +219,7 @@ export class Preparations {
         source: this.sourcePath,
         output: this.path(id),
         selection: job.selection,
+        sourcePlan: plan,
       });
       return job;
     } catch (e) {
@@ -231,6 +273,10 @@ export class Preparations {
       return json({
         source: this.source,
         available: availability(this.source),
+        globalSource: {
+          ...WORLD_SOURCE,
+          ready: !!Bun.which("osmium") && !!Bun.which("cargo"),
+        },
         jobs: [...this.jobs.values()].sort((a, b) =>
           b.createdAt.localeCompare(a.createdAt),
         ),
@@ -249,6 +295,8 @@ export class Preparations {
         /^\/admin\/preparations\/([a-f0-9-]{36})\/cancel$/,
       );
       if (match) return json(await this.cancel(match[1]!));
+      if (url.pathname === "/admin/preparations/source-plan")
+        return json(await this.sources.plan(JSON.parse(raw)));
       if (url.pathname !== "/admin/preparations")
         return json({ error: "Not found" }, 404);
       return json(await this.create(JSON.parse(raw)), 202);

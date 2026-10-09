@@ -1,9 +1,14 @@
 #!/usr/bin/env bun
+import { WORLD_SOURCE } from "../../provisioning/src/global-source";
+import {
+  validateSelectionScope,
+  type PackageSelection,
+} from "../../provisioning/src/selection";
 import { addTransport, upgradeTransport } from "./transport";
 import { PLACE_LABEL_KEY, encodePlaces } from "../../labels/src/places";
 import { encodeTile } from "./tile-codec";
 import { buildingHeight } from "../../format/src/heights";
-import { MAP_LAYERS } from "../../format/src/index";
+import { MAP_LAYERS, layerForClass } from "../../format/src/index";
 import { splitTile } from "../../format/src/tiles";
 import { partitionPackageRouting } from "./routing-cells";
 import { splitPackageLayers } from "./split-layers";
@@ -59,6 +64,8 @@ function args(argv: string[]) {
     "max-bytes",
     "format",
     "sha256",
+    "selection",
+    "bounds",
     ...boolean,
   ]);
   for (let i = 0; i < argv.length; i++) {
@@ -105,7 +112,7 @@ async function main() {
     throw new Error("--format must be md or json");
   if (command === "help" || flags.help) {
     console.log(
-      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli transport --input FILE.atlas --pbf FILE.osm.pbf [--output FILE.atlas]\n  bun run cli routing-cells --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
+      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n                       [--bounds W,S,E,N] [--selection recipe.json]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli transport --input FILE.atlas --pbf FILE.osm.pbf [--output FILE.atlas]\n  bun run cli routing-cells --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
     );
     return;
   }
@@ -213,6 +220,25 @@ async function main() {
     if (!(await Bun.file(input).exists()))
       throw new Error(`Missing source ${input}; run bun run data:fetch`);
     await mkdir(dirname(output), { recursive: true });
+    const selected: PackageSelection | undefined = flags.selection
+      ? await Bun.file(text(flags, "selection", "")).json()
+      : undefined;
+    if (selected) validateSelectionScope(selected, WORLD_SOURCE);
+    const requestedBounds = flags.bounds
+      ? text(flags, "bounds", "").split(",").map(Number)
+      : undefined;
+    if (
+      requestedBounds &&
+      (requestedBounds.length !== 4 ||
+        !requestedBounds.every(Number.isFinite) ||
+        requestedBounds[0]! >= requestedBounds[2]! ||
+        requestedBounds[1]! >= requestedBounds[3]! ||
+        requestedBounds[0]! < -180 ||
+        requestedBounds[2]! > 180 ||
+        requestedBounds[1]! < -85 ||
+        requestedBounds[3]! > 85)
+    )
+      throw new Error("Invalid --bounds");
     const importedPath = `${output}.import.json`;
     const proc = Bun.spawn(
       [
@@ -281,6 +307,7 @@ async function main() {
         visit(f.geometry.coordinates);
     if (!bounds.every(Number.isFinite))
       throw new Error("No supported features in input");
+    if (requestedBounds) bounds.splice(0, 4, ...requestedBounds);
     console.log(`Indexing ${imported.geojson.features.length} features…`);
     // Preserve the small regional footprint in world overviews. At normal map
     // scales, a half-pixel tolerance avoids shipping invisible vertex detail.
@@ -303,7 +330,8 @@ async function main() {
           indexMaxPoints: 100000,
         },
       );
-    let index = makeIndex(minZoom <= 5);
+    let index =
+      selected && !selected.layers.length ? undefined : makeIndex(minZoom <= 5);
     const nw = project(bounds[0], bounds[3]);
     const se = project(bounds[2], bounds[1]);
     const maxBytes = Number(text(flags, "max-bytes", "2000000000"));
@@ -311,100 +339,123 @@ async function main() {
       throw new Error("Invalid --max-bytes");
     const writer = await new DiskWriter(output, maxBytes).open();
     let candidates = 0;
-    for (let z = minZoom; z <= maxZoom; z++) {
-      if (z === 6 && minZoom <= 5) index = makeIndex(false);
-      console.log(`Generating z${z}…`);
-      const n = 2 ** z;
-      const xmin = Math.max(0, Math.floor(nw[0] * n));
-      const xmax = Math.min(n - 1, Math.floor(se[0] * n));
-      const ymin = Math.max(0, Math.floor(nw[1] * n));
-      const ymax = Math.min(n - 1, Math.floor(se[1] * n));
-      candidates += (xmax - xmin + 1) * (ymax - ymin + 1);
-      if (candidates > 500000)
-        throw new Error(
-          "Prototype limited to 500,000 candidate tiles; use a smaller extract or lower max zoom",
-        );
-      for (let x = xmin; x <= xmax; x++)
-        for (let y = ymin; y <= ymax; y++) {
-          const tile = index.getTile(z, x, y);
-          if (!tile) continue;
-          const features = tile.features.filter(
-            (f) => z >= displayMinZoom(f.tags ?? {}),
+    if (index)
+      for (let z = minZoom; z <= maxZoom; z++) {
+        if (z === 6 && minZoom <= 5) index = makeIndex(false);
+        console.log(`Generating z${z}…`);
+        const n = 2 ** z;
+        const xmin = Math.max(0, Math.floor(nw[0] * n));
+        const xmax = Math.min(n - 1, Math.floor(se[0] * n));
+        const ymin = Math.max(0, Math.floor(nw[1] * n));
+        const ymax = Math.min(n - 1, Math.floor(se[1] * n));
+        candidates += (xmax - xmin + 1) * (ymax - ymin + 1);
+        if (candidates > 500000)
+          throw new Error(
+            "Prototype limited to 500,000 candidate tiles; use a smaller extract or lower max zoom",
           );
-          if (!features.length) continue;
-          for (const part of splitTile(encodeTile(features)))
-            await writer.add({
-              key: `tile/${part.layer}/${z}/${x}/${y}`,
-              z,
-              x,
-              y,
-              features: part.features,
-              bytes: part.bytes,
-            });
-          // Only source geometry is needed to split descendants. Release encoded tile geometry.
-          tile.features = [];
-          if (z === maxZoom)
-            (tile as unknown as { source: unknown }).source = null;
-        }
-    }
+        for (let x = xmin; x <= xmax; x++)
+          for (let y = ymin; y <= ymax; y++) {
+            const tile = index.getTile(z, x, y);
+            if (!tile) continue;
+            const features = tile.features.filter(
+              (f) =>
+                z >= displayMinZoom(f.tags ?? {}) &&
+                (!selected ||
+                  selected.layers.includes(
+                    layerForClass(Number(f.tags?.class ?? 3)),
+                  )),
+            );
+            if (!features.length) continue;
+            for (const part of splitTile(encodeTile(features)))
+              if (!selected || selected.layers.includes(part.layer))
+                await writer.add({
+                  key: `tile/${part.layer}/${z}/${x}/${y}`,
+                  z,
+                  x,
+                  y,
+                  features: part.features,
+                  bytes: part.bytes,
+                });
+            // Only source geometry is needed to split descendants. Release encoded tile geometry.
+            tile.features = [];
+            if (z === maxZoom)
+              (tile as unknown as { source: unknown }).source = null;
+          }
+      }
     const encoder = new TextEncoder();
-    await writer.add({
-      key: PLACE_LABEL_KEY,
-      features: imported.places.length,
-      bytes: encodePlaces(imported.places),
-    });
-    await writer.add({
-      key: "query/peaks",
-      features: imported.peaks.length,
-      bytes: encoder.encode(JSON.stringify(imported.peaks)),
-    });
+    if (!selected || selected.placeNames)
+      await writer.add({
+        key: PLACE_LABEL_KEY,
+        features: imported.places.length,
+        bytes: encodePlaces(imported.places),
+      });
+    if (!selected || selected.peaks)
+      await writer.add({
+        key: "query/peaks",
+        features: imported.peaks.length,
+        bytes: encoder.encode(JSON.stringify(imported.peaks)),
+      });
     if (!flags["no-source-features"])
       await writer.add({
         key: "features/geojson",
         features: imported.geojson.features.length,
         bytes: encoder.encode(JSON.stringify(imported.geojson)),
       });
-    await writer.add({
-      key: imported.routing.block,
-      features: imported.routing.segments,
-      bytes: new Uint8Array(
-        await Bun.file(`${importedPath}.routing.bin`).arrayBuffer(),
-      ),
-    });
-    const transport = await addTransport(writer, input);
+    if (!selected)
+      await writer.add({
+        key: imported.routing.block,
+        features: imported.routing.segments,
+        bytes: new Uint8Array(
+          await Bun.file(`${importedPath}.routing.bin`).arrayBuffer(),
+        ),
+      });
+    const transport =
+      !selected || selected.profiles.length
+        ? await addTransport(writer, input, selected?.profiles)
+        : undefined;
     console.log("Building search and street indexes…");
     const geocoding = buildGeocoding(imported.locations, imported.geojson);
-    await writer.add({
-      key: "search/locations",
-      features: geocoding.locations.records.length,
-      bytes: encoder.encode(JSON.stringify(geocoding.locations)),
-    });
-    await writer.add({
-      key: "search/streets",
-      features: geocoding.streets.streets.length,
-      bytes: encoder.encode(JSON.stringify(geocoding.streets)),
-    });
+    if (!selected || selected.search)
+      await writer.add({
+        key: "search/locations",
+        features: geocoding.locations.records.length,
+        bytes: encoder.encode(JSON.stringify(geocoding.locations)),
+      });
+    if (!selected || selected.reverse)
+      await writer.add({
+        key: "search/streets",
+        features: geocoding.streets.streets.length,
+        bytes: encoder.encode(JSON.stringify(geocoding.streets)),
+      });
     console.log("Partitioning street labels and POIs…");
     const labels = partitionLabels(
       buildLabels(geocoding.locations, geocoding.streets),
     );
     for (const [key, block] of labels)
-      await writer.add({
-        key,
-        features: block.roads.length + block.pois.length,
-        bytes: encoder.encode(JSON.stringify(block)),
-      });
+      if (
+        !selected ||
+        (key.includes("/roads/") ? selected.streetNames : selected.pois)
+      )
+        await writer.add({
+          key,
+          features: block.roads.length + block.pois.length,
+          bytes: encoder.encode(JSON.stringify(block)),
+        });
     if (flags.features) {
       console.log("Partitioning selectable source geometry…");
       const cells = buildFeatures(imported.geojson);
       for (const [key, features] of cells) {
-        await writer.add({
-          key,
-          features: features.length,
-          bytes: encoder.encode(
-            JSON.stringify({ schema: "features-v1", features }),
-          ),
-        });
+        if (
+          !selected ||
+          selected.featureKinds.includes(key.split("/")[1] as any)
+        )
+          await writer.add({
+            key,
+            features: features.length,
+            bytes: encoder.encode(
+              JSON.stringify({ schema: "features-v1", features }),
+            ),
+          });
         cells.delete(key);
       }
     }
@@ -429,28 +480,49 @@ async function main() {
       minZoom,
       maxZoom,
       features: imported.geojson.features.length,
-      tileLayers: [...MAP_LAYERS],
-      buildingHeights,
-      peaks: imported.peaks.length,
+      tileLayers: selected?.layers ?? [...MAP_LAYERS],
+      buildingHeights:
+        !selected || selected.layers.includes("buildings")
+          ? buildingHeights
+          : undefined,
+      peaks: !selected || selected.peaks ? imported.peaks.length : 0,
       places: [],
-      routing: imported.routing,
+      routing: selected ? undefined : imported.routing,
       transport,
-      labelZoom: LABEL_ZOOM,
-      ...(flags.features ? { featureZoom: FEATURE_ZOOM } : {}),
+      labelZoom:
+        !selected ||
+        selected.placeNames ||
+        selected.streetNames ||
+        selected.pois
+          ? LABEL_ZOOM
+          : undefined,
+      ...(flags.features
+        ? {
+            featureZoom: FEATURE_ZOOM,
+            ...(selected ? { featureKinds: selected.featureKinds } : {}),
+          }
+        : {}),
       areas: {
         assembledRelations: imported.assembledRelations,
         skippedRelations: imported.skippedRelations,
       },
       capabilities: [
-        "vector-rendering",
-        "building-heights",
+        ...(!selected || selected.layers.length ? ["vector-rendering"] : []),
+        ...(!selected || selected.layers.includes("buildings")
+          ? ["building-heights"]
+          : []),
         ...(flags.features ? ["feature-extraction"] : []),
-        "map-labels",
-        "walking-routing",
-        "transport-routing",
-        "location-search",
-        "reverse-street",
-        "peak-query",
+        ...(!selected ||
+        selected.placeNames ||
+        selected.streetNames ||
+        selected.pois
+          ? ["map-labels"]
+          : []),
+        ...(!selected ? ["walking-routing"] : []),
+        ...(transport ? ["transport-routing"] : []),
+        ...(!selected || selected.search ? ["location-search"] : []),
+        ...(!selected || selected.reverse ? ["reverse-street"] : []),
+        ...(!selected || selected.peaks ? ["peak-query"] : []),
         ...(!flags["no-source-features"] ? ["source-feature-export"] : []),
       ],
       limitations: [

@@ -8,6 +8,7 @@ import {
   sha256,
   TRANSPORT_MODES,
   type TransportMetadata,
+  type TransportMode,
 } from "../../format/src/index";
 import { DiskWriter } from "./disk-writer";
 import { addRoutingCells } from "./routing-cells";
@@ -15,6 +16,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export async function addTransport(
   writer: DiskWriter,
   input: string,
+  modes: readonly TransportMode[] = TRANSPORT_MODES,
 ): Promise<TransportMetadata> {
   const temp = await mkdtemp(join(tmpdir(), "atlas-transport-"));
   try {
@@ -38,7 +40,7 @@ export async function addTransport(
     if (await process.exited) throw new Error("Transport import failed");
     const stats = await Bun.file(join(temp, "metadata.json")).json();
     const profiles = {} as TransportMetadata["profiles"];
-    for (const mode of TRANSPORT_MODES) {
+    for (const mode of modes) {
       console.log(`Partitioning ${mode} cells…`);
       const prefix = `routing/${mode}/cells`;
       const cells = await addRoutingCells(

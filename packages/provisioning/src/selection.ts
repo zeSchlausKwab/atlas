@@ -36,7 +36,15 @@ export interface PackageSelection {
   maxBytes: number;
 }
 export interface PreparationProgress {
-  phase: "planning" | "packing" | "indexing" | "verifying";
+  phase:
+    | "planning"
+    | "downloading"
+    | "extracting"
+    | "compiling"
+    | "packing"
+    | "indexing"
+    | "verifying";
+  unit?: "blocks" | "bytes";
   message: string;
   completed: number;
   total: number;
@@ -58,9 +66,28 @@ export function availability(m: Manifest) {
     peaks: m.capabilities.includes("peak-query"),
   };
 }
+export interface SelectionScope {
+  snapshot: string;
+  bounds: [number, number, number, number];
+  minZoom: number;
+  maxZoom: number;
+  available: ReturnType<typeof availability>;
+}
 export function validateSelection(
   value: unknown,
   m: Manifest,
+): asserts value is PackageSelection {
+  validateSelectionScope(value, {
+    snapshot: m.snapshot,
+    bounds: m.bounds,
+    minZoom: m.minZoom,
+    maxZoom: m.maxZoom,
+    available: availability(m),
+  });
+}
+export function validateSelectionScope(
+  value: unknown,
+  m: SelectionScope,
 ): asserts value is PackageSelection {
   if (!value || typeof value !== "object")
     throw new Error("Invalid package selection");
@@ -90,7 +117,7 @@ export function validateSelection(
     s.minZoom > s.maxZoom
   )
     throw new Error("Choose a zoom range within the source package.");
-  const a = availability(m);
+  const a = m.available;
   const subset = (v: unknown, all: readonly string[]) =>
     Array.isArray(v) &&
     v.every((x) => typeof x === "string" && all.includes(x)) &&

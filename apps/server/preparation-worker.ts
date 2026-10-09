@@ -1,10 +1,17 @@
 import { rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { PackageSource } from "./package-source";
 import { AtlasReader } from "../../packages/format/src/reader";
 import { preparePackage } from "../../packages/provisioning/src/prepare";
-import type { PackageSelection } from "../../packages/provisioning/src/selection";
+import { importPbf } from "../../packages/provisioning/src/import-pbf";
+import type { PbfPlan } from "../../packages/provisioning/src/global-source";
+import type {
+  PackageSelection,
+  PreparationProgress,
+} from "../../packages/provisioning/src/selection";
 const abort = new AbortController();
 let started = false;
+process.on("disconnect", () => abort.abort());
 process.on(
   "message",
   async (data: {
@@ -12,66 +19,86 @@ process.on(
     source: string;
     output: string;
     selection: PackageSelection;
+    sourcePlan?: PbfPlan;
   }) => {
     if (data.type === "cancel") {
       abort.abort();
       return;
     }
-    if (started) return;
+    if (data.type !== "start" || started) return;
     started = true;
-    const { source, output, selection } = data;
-    let file: PackageSource | undefined, result: PackageSource | undefined;
+    const { output } = data,
+      work = output.replace(/\.atlas$/, ".work");
+    let file: PackageSource | undefined,
+      result: PackageSource | undefined,
+      final: Record<string, unknown>;
+    let last = 0,
+      phase = "";
+    const report = (p: PreparationProgress) => {
+      if (
+        performance.now() - last > 150 ||
+        p.phase !== phase ||
+        (p.total > 0 && p.completed === p.total)
+      ) {
+        if (process.connected)
+          process.send?.({ type: "progress", progress: p });
+        last = performance.now();
+        phase = p.phase;
+      }
+    };
     try {
+      const source = data.sourcePlan
+        ? await importPbf(
+            data.sourcePlan,
+            data.selection,
+            join(dirname(output), "sources"),
+            work,
+            abort.signal,
+            report,
+          )
+        : data.source;
       file = await PackageSource.open(source);
       abort.signal.throwIfAborted();
       const reader = await new AtlasReader(file).open();
-      let last = 0;
+      const selection = data.sourcePlan
+        ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
+        : data.selection;
       const prepared = await preparePackage(
         reader,
         selection,
         output,
         abort.signal,
-        (p) => {
-          if (
-            performance.now() - last > 150 ||
-            p.phase !== "packing" ||
-            p.completed === p.total
-          ) {
-            process.send?.({ type: "progress", progress: p });
-            last = performance.now();
-          }
-        },
+        report,
       );
-      process.send?.({
-        type: "progress",
-        progress: {
-          phase: "verifying",
-          message: "Verifying the saved package…",
-          completed: 0,
-          total: 0,
-          readBytes: reader.bytesRead,
-          writtenBytes: prepared.size,
-        },
+      report({
+        phase: "verifying",
+        message: "Verifying the saved package…",
+        completed: 0,
+        total: 0,
+        readBytes: reader.bytesRead,
+        writtenBytes: prepared.size,
       });
       result = await PackageSource.open(output);
       const verified = await new AtlasReader(result).open();
       abort.signal.throwIfAborted();
-      process.send?.({
+      final = {
         type: "ready",
         size: result.size,
         manifest: verified.index.manifest,
-      });
+      };
     } catch (error) {
       for (const path of [output, output + ".part", output + ".payload.part"])
         await rm(path, { force: true }).catch(() => {});
-      process.send?.({
+      final = {
         type: abort.signal.aborted ? "cancelled" : "failed",
         error: abort.signal.aborted ? "Preparation cancelled." : String(error),
-      });
+      };
     } finally {
       await result?.close();
       await file?.close();
-      process.exit(0);
+      await rm(work, { recursive: true, force: true });
     }
+    if (process.connected) process.send?.(final);
+    process.exit(0);
   },
 );
