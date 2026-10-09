@@ -2,11 +2,11 @@
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { AtlasRouter, type Position } from "../packages/routing/src/index";
 import { TRANSPORT_MODES } from "../packages/format/src/index";
-import { initSync } from "../packages/renderer/pkg/atlas_renderer";
+import { initSync } from "../packages/routing/pkg/atlas_routing_wasm";
 const file = process.argv[2] ?? "data/vienna-plus.atlas";
 initSync({
   module: await Bun.file(
-    new URL("../packages/renderer/pkg/atlas_renderer_bg.wasm", import.meta.url),
+    new URL("../packages/routing/pkg/atlas_routing_wasm_bg.wasm", import.meta.url),
   ).arrayBuffer(),
 });
 const reader = await new AtlasReader(new FileSource(Bun.file(file))).open();

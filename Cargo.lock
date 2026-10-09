@@ -36,10 +36,8 @@ dependencies = [
 name = "atlas-renderer"
 version = "0.1.0"
 dependencies = [
- "atlas-routing",
  "earcutr",
  "js-sys",
- "serde_json",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -49,6 +47,15 @@ name = "atlas-routing"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "atlas-routing-wasm"
+version = "0.1.0"
+dependencies = [
+ "atlas-routing",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

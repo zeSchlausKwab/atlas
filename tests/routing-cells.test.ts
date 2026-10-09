@@ -1,5 +1,5 @@
 import { beforeAll, test, expect } from "bun:test";
-import { initSync } from "../packages/renderer/pkg/atlas_renderer";
+import { initSync } from "../packages/routing/pkg/atlas_routing_wasm";
 import { AtlasRouter, type Position } from "../packages/routing/src/index";
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { encodePackage, type InputBlock } from "../packages/format/src/writer";
@@ -16,7 +16,7 @@ beforeAll(async () =>
   initSync({
     module: await Bun.file(
       new URL(
-        "../packages/renderer/pkg/atlas_renderer_bg.wasm",
+        "../packages/routing/pkg/atlas_routing_wasm_bg.wasm",
         import.meta.url,
       ),
     ).arrayBuffer(),

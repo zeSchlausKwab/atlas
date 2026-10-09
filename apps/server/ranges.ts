@@ -26,7 +26,10 @@ export function parseRange(
 }
 export function servePackage(
   request: Request,
-  file: Blob,
+  file: {
+    size: number;
+    slice(start: number, end: number): Blob | ReadableStream<Uint8Array>;
+  },
   etag: string,
 ): Response {
   const headers = new Headers({
@@ -73,5 +76,8 @@ export function servePackage(
     return new Response(file.slice(start, end + 1), { status: 206, headers });
   }
   headers.set("Content-Length", String(file.size));
-  return new Response(request.method === "HEAD" ? null : file, { headers });
+  return new Response(
+    request.method === "HEAD" ? null : file.slice(0, file.size),
+    { headers },
+  );
 }

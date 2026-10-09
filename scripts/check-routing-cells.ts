@@ -1,11 +1,11 @@
-import init from "../packages/renderer/pkg/atlas_renderer";
+import init from "../packages/routing/pkg/atlas_routing_wasm";
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { AtlasRouter, type Position } from "../packages/routing/src/index";
 const path = process.argv[2] ?? "data/vienna-plus.atlas";
 const initialize = () =>
   init({
     module_or_path: Bun.file(
-      "packages/renderer/pkg/atlas_renderer_bg.wasm",
+      "packages/routing/pkg/atlas_routing_wasm_bg.wasm",
     ).arrayBuffer(),
   });
 const source = new FileSource(Bun.file(path));

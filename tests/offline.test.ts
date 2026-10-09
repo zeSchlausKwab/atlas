@@ -2,7 +2,7 @@ import { beforeAll, expect, test } from "bun:test";
 import {
   initSync,
   WalkingRouter,
-} from "../packages/renderer/pkg/atlas_renderer";
+} from "../packages/routing/pkg/atlas_routing_wasm";
 import {
   validatePolygon,
   clipSegment,
@@ -24,7 +24,7 @@ beforeAll(async () =>
   initSync({
     module: await Bun.file(
       new URL(
-        "../packages/renderer/pkg/atlas_renderer_bg.wasm",
+        "../packages/routing/pkg/atlas_routing_wasm_bg.wasm",
         import.meta.url,
       ),
     ).arrayBuffer(),

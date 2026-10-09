@@ -8,3 +8,6 @@ packages/renderer/pkg/*
 .DS_Store
 
 *.routing.bin
+
+packages/routing/pkg/*
+!packages/routing/pkg/.gitkeep

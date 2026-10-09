@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v16";
+const CACHE = "atlas-shell-v17";
 const SHELL = [
   "/",
   "/styles.css",
@@ -7,6 +7,7 @@ const SHELL = [
   "/offline-worker.js",
   "/routing-worker.js",
   "/wasm/atlas_renderer_bg.wasm",
+  "/wasm/atlas_routing_wasm_bg.wasm",
 ];
 self.addEventListener("install", (event) =>
   event.waitUntil(

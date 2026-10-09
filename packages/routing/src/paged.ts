@@ -1,4 +1,4 @@
-import init, { CellWalkingRouter } from "../../renderer/pkg/atlas_renderer";
+import init, { CellWalkingRouter } from "../pkg/atlas_routing_wasm";
 import type { AtlasReader } from "../../format/src/reader";
 import {
   validateTransport,
@@ -100,7 +100,7 @@ export class PagedRouter {
     readonly read: (key: string) => Promise<CellRead>,
     readonly onProgress: (p: RoutingProgress) => void = () => {},
     readonly initialize: () => Promise<unknown> = () =>
-      init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" }),
+      init({ module_or_path: "/wasm/atlas_routing_wasm_bg.wasm" }),
   ) {}
   private progress(phase: RoutingProgress["phase"]): RoutingProgress {
     const used =

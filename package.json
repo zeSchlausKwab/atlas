@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --watch apps/server/index.ts",
     "start": "bun apps/server/index.ts",
-    "build:wasm": "wasm-pack build crates/renderer --target web --out-dir ../../packages/renderer/pkg --release",
+    "build:wasm": "wasm-pack build crates/renderer --target web --out-dir ../../packages/renderer/pkg --release && wasm-pack build crates/routing-wasm --target web --out-dir ../../packages/routing/pkg --release",
     "build:web": "bun scripts/build-web.ts",
     "build": "bun run build:wasm && bun run build:web",
     "cli": "bun packages/cli/src/index.ts",

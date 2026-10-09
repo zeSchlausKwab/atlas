@@ -2,7 +2,7 @@ import { TRANSPORT_MODES, type TransportMode } from "../../format/src/index";
 import type { FeatureCollection, MultiPolygon } from "geojson";
 export type { TransportMode };
 import { PagedRouter, readRoutingCell, type RoutingProgress } from "./paged";
-import init, { WalkingRouter } from "../../renderer/pkg/atlas_renderer";
+import init, { WalkingRouter } from "../pkg/atlas_routing_wasm";
 import { AtlasReader } from "../../format/src/reader";
 export type Position = [number, number];
 export interface Snap {
@@ -93,7 +93,7 @@ export class AtlasRouter {
   constructor(
     readonly reader: AtlasReader,
     readonly initialize: () => Promise<unknown> = () =>
-      init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" }),
+      init({ module_or_path: "/wasm/atlas_routing_wasm_bg.wasm" }),
     readonly options: {
       reference?: boolean;
       onProgress?: (p: RoutingProgress) => void;

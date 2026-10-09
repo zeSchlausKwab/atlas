@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import init from "../packages/renderer/pkg/atlas_renderer";
+import init from "../packages/routing/pkg/atlas_routing_wasm";
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { encodePackage } from "../packages/format/src/writer";
 import { buildFeatures } from "../packages/features/src/compile";
@@ -174,7 +174,7 @@ async function fixture() {
     init({
       module_or_path: Bun.file(
         new URL(
-          "../packages/renderer/pkg/atlas_renderer_bg.wasm",
+          "../packages/routing/pkg/atlas_routing_wasm_bg.wasm",
           import.meta.url,
         ),
       ).arrayBuffer(),
