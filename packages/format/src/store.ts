@@ -35,6 +35,33 @@ export class BrowserBlockStore implements BlockStore {
   available = true;
   private queue: Promise<unknown> = Promise.resolve();
   private db: Promise<IDBDatabase>;
+  private listeners = new Set<() => void>();
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  private changed() {
+    for (const listener of this.listeners) listener();
+  }
+  /** Drain queued writes, then atomically clear every snapshot and saved index.
+   * Callers must dispose readers/workers first so they cannot enqueue new writes.
+   * Unlike best-effort caching, a failed purge must be reported to the caller. */
+  async clear() {
+    const job = this.queue.then(async () => {
+      const db = await this.db;
+      const tx = db.transaction(["data", "meta", "indexes"], "readwrite");
+      const end = done(tx);
+      for (const name of ["data", "meta", "indexes"])
+        tx.objectStore(name).clear();
+      await end;
+      this.available = true;
+      this.changed();
+    });
+    this.queue = job.catch(() => {});
+    await job;
+  }
   constructor(readonly limit = 128 * 1024 * 1024) {
     this.db = new Promise((resolve, reject) => {
       const r = indexedDB.open("atlas-blocks-v1", 1);
@@ -121,6 +148,7 @@ export class BrowserBlockStore implements BlockStore {
           id,
         );
         await end;
+        this.changed();
       }),
     );
     this.queue = job.catch(() => {});

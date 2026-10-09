@@ -118,6 +118,16 @@ export class AtlasMap {
     this.invalidate();
   }
   grid = false;
+  private cacheView = false;
+  private storedKeys: ReadonlySet<string> = new Set();
+  setCacheView(
+    enabled: boolean,
+    storedKeys: ReadonlySet<string> = this.storedKeys,
+  ) {
+    this.cacheView = enabled;
+    this.storedKeys = storedKeys;
+    this.invalidate();
+  }
   selected: Peak | null = null;
   onPoiSelect?: (poi: Location) => void;
   private placeNames = true;
@@ -563,6 +573,10 @@ export class AtlasMap {
       style: this.style,
       view,
       resident: (key: string) => this.tiles.has(key),
+      cached: (key: string) =>
+        this.storedKeys.has(key) ||
+        this.reader.cache.has(key) ||
+        this.tiles.has(key),
       labels: this.labels,
       features: this.featureOverlay,
       places: this.visiblePlaces(),
@@ -576,6 +590,7 @@ export class AtlasMap {
         reachable: this.reachable,
         selection: this.selection,
         grid: this.grid,
+        cache: this.cacheView,
         route: this.route,
         endpoints: this.endpoints,
         location: this.location,

@@ -215,8 +215,16 @@ function stats(s: MapStats) {
     : `${s.tiles} visible tiles · ${formatBytes(reader.bytesRead)} this session.`;
   telemetry();
 }
-async function open(source: ByteSource) {
-  el("render-status").textContent = "Opening map package…";
+let session = 0;
+let reopening:
+  | { source: ByteSource; center?: [number, number]; zoom?: number }
+  | undefined;
+let cacheTimer: ReturnType<typeof setTimeout> | undefined;
+function closeSession() {
+  session++;
+  clearTimeout(cacheTimer);
+  cacheTimer = undefined;
+  reader?.dispose();
   extractor?.destroy();
   extractor = undefined;
   world?.destroy();
@@ -224,12 +232,23 @@ async function open(source: ByteSource) {
   search?.destroy();
   search = undefined;
   reachability?.destroy();
+  reachability = undefined;
   routing?.destroy();
   routing = undefined;
   operations?.destroy();
   operations = undefined;
   map?.destroy();
   map = undefined;
+}
+async function open(source: ByteSource) {
+  closeSession();
+  const opening = session;
+  el("cache-paused").hidden = true;
+  el("map").style.visibility = "";
+  document
+    .querySelectorAll<HTMLElement>(".sidebar, .inspector")
+    .forEach((e) => (e.inert = false));
+  el("render-status").textContent = "Opening map package…";
   events = [];
   el("error").hidden = true;
   el("query-result").hidden = true;
@@ -253,7 +272,8 @@ async function open(source: ByteSource) {
   );
   reader = nextReader;
   try {
-    await reader.open();
+    await nextReader.open();
+    if (session !== opening) return;
     el<HTMLInputElement>("offline").checked = reader.offline;
     if (reader.offline)
       el("connection-label").textContent = "Using cached blocks";
@@ -278,7 +298,7 @@ async function open(source: ByteSource) {
     heading.textContent = m.name;
     document.querySelector(".map-heading .eyebrow")!.textContent =
       `${((m.bounds[1] + m.bounds[3]) / 2).toFixed(1)}° N / ${((m.bounds[0] + m.bounds[2]) / 2).toFixed(1)}° E`;
-    map = await AtlasMap.create(
+    const nextMap = await AtlasMap.create(
       el<HTMLCanvasElement>("map"),
       reader,
       stats,
@@ -296,6 +316,11 @@ async function open(source: ByteSource) {
         pois: el<HTMLInputElement>("poi-labels").checked,
       },
     );
+    if (session !== opening) {
+      nextMap.destroy();
+      return;
+    }
+    map = nextMap;
     map.onSceneChange = (scene) => appearance.receiveScene(scene);
     const heights = m.buildingHeights;
     el("height-coverage").textContent = heights
@@ -360,18 +385,145 @@ async function open(source: ByteSource) {
       map.invalidate();
     }
     map.setGrid(el<HTMLInputElement>("tile-grid").checked);
+    refreshCacheView();
     setLayers();
     el<HTMLButtonElement>("highest-peak").disabled =
       !operations.enabled.has("queries") ||
       !m.capabilities.includes("peak-query");
     telemetry();
   } catch (e) {
+    if (session !== opening) return;
     error(e instanceof Error ? e.message : String(e));
     el("render-status").textContent = "Could not open package";
   } finally {
-    el<HTMLButtonElement>("open-file").disabled = false;
+    if (session === opening)
+      el<HTMLButtonElement>("open-file").disabled = false;
   }
 }
+async function refreshCacheView() {
+  clearTimeout(cacheTimer);
+  cacheTimer = undefined;
+  const enabled = el<HTMLInputElement>("cache-view").checked;
+  el("cache-legend").hidden = !enabled;
+  map?.setCacheView(enabled);
+  if (!enabled || !map) return;
+  const active = map;
+  const keys =
+    (await blockStore?.keys(active.reader.index.manifest.snapshot)) ?? [];
+  if (map === active)
+    active.setCacheView(
+      el<HTMLInputElement>("cache-view").checked,
+      new Set(keys),
+    );
+}
+blockStore?.subscribe(() => {
+  if (!el<HTMLInputElement>("cache-view").checked || cacheTimer) return;
+  cacheTimer = setTimeout(() => {
+    cacheTimer = undefined;
+    void refreshCacheView();
+  }, 200);
+});
+el<HTMLInputElement>("cache-view").onchange = () => {
+  void refreshCacheView();
+};
+el("purge-caches").onclick = async () => {
+  const button = el<HTMLButtonElement>("purge-caches");
+  button.disabled = true;
+  button.textContent = "Purging…";
+  if (reader && !reopening)
+    reopening = { source: reader.source, center: map?.center, zoom: map?.zoom };
+  closeSession();
+  // Other tabs must also release readers before the shared persistent cache clears.
+  cacheChannel?.postMessage("close");
+  showCachePause("Clearing Atlas caches…");
+  try {
+    await blockStore?.clear();
+    await shellRegistration;
+    const registration =
+      "serviceWorker" in navigator
+        ? await navigator.serviceWorker.getRegistration()
+        : undefined;
+    if (registration?.active)
+      await shellCommand(registration.active, "purge-atlas-caches");
+    if ("caches" in globalThis)
+      await Promise.all(
+        (await caches.keys())
+          .filter((k) => k.startsWith("atlas-shell-"))
+          .map((k) => caches.delete(k)),
+      );
+    el("cache-purge-status").textContent =
+      "Atlas caches cleared. Reopen to load this view afresh. Saved files and preferences are kept.";
+    el("shell-status").textContent =
+      "Offline app shell cleared. Reload online to cache the app again.";
+  } catch (e) {
+    el("cache-purge-status").textContent =
+      `Some caches could not be cleared: ${String(e)}. You can retry.`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Purge caches";
+    el<HTMLButtonElement>("reopen-map").disabled = false;
+  }
+};
+function showCachePause(message: string) {
+  el("map").style.visibility = "hidden";
+  document
+    .querySelectorAll<HTMLElement>(".sidebar, .inspector")
+    .forEach((e) => (e.inert = true));
+  el("cache-paused").hidden = false;
+  el("cache-purge-status").textContent = message;
+  el("error").hidden = true;
+  el("query-result").hidden = true;
+  el("render-status").textContent = "Map paused · caches released";
+  el("ready-state").textContent = "PAUSED";
+  el("ready-state").dataset.state = "paused";
+  el("tiles-stat").textContent = "0/0";
+  el("triangles-stat").textContent = "0";
+  el("draw-stat").textContent = "—";
+  el("transport-detail").textContent = "No map requests until you reopen.";
+  el("cached-count").textContent = "0";
+  el("cache-memory").replaceChildren();
+  delete el("cache-memory").dataset.memory;
+  el<HTMLButtonElement>("reopen-map").disabled = true;
+}
+el("reopen-map").onclick = async () => {
+  const saved = reopening;
+  if (!saved) return;
+  reopening = undefined;
+  await open(
+    saved.source instanceof HttpSource
+      ? new HttpSource(saved.source.url)
+      : saved.source,
+  );
+  if (map && saved.center && saved.zoom !== undefined) {
+    map.center = saved.center;
+    map.zoom = saved.zoom;
+    map.invalidate();
+  }
+};
+const cacheChannel =
+  typeof BroadcastChannel !== "undefined"
+    ? new BroadcastChannel("atlas-cache-control")
+    : undefined;
+if (cacheChannel)
+  cacheChannel.onmessage = async ({ data }) => {
+    if (data !== "close") return;
+    if (reader && !reopening)
+      reopening = {
+        source: reader.source,
+        center: map?.center,
+        zoom: map?.zoom,
+      };
+    closeSession();
+    showCachePause("Cache purge requested in another Atlas tab.");
+    // Drain this tab's queued writes too, even if the other tab cleared first.
+    try {
+      await blockStore?.clear();
+    } catch {
+      el("cache-purge-status").textContent =
+        "Could not clear shared storage. Retry Purge caches.";
+    }
+    el<HTMLButtonElement>("reopen-map").disabled = false;
+  };
 function configureOperations() {
   if (!operations) return;
   const enabled = [
@@ -484,16 +636,49 @@ el<HTMLInputElement>("file-input").onchange = async (event) => {
 };
 void open(new HttpSource("/maps/demo.atlas"));
 
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker
-    .register("/sw.js")
-    .then(() => navigator.serviceWorker.ready)
-    .then(() => {
-      el("shell-status").textContent =
-        "App ready offline. Viewed tiles and routing cells are cached up to 128 MiB; browser storage may be evicted. Save a .atlas file for a portable copy.";
-    })
-    .catch(() => {
-      el("shell-status").textContent =
-        "Offline app storage unavailable. Local map files still work while this tab stays open.";
-    });
+function shellCommand(worker: ServiceWorker, command: string) {
+  return new Promise<void>((resolve, reject) => {
+    const channel = new MessageChannel();
+    const timeout = setTimeout(() => {
+      channel.port1.close();
+      reject(new Error("Offline app cache operation timed out"));
+    }, 10000);
+    channel.port1.onmessage = ({ data }) => {
+      clearTimeout(timeout);
+      channel.port1.close();
+      if (data.ok) resolve();
+      else reject(new Error(data.error));
+    };
+    worker.postMessage(command, [channel.port2]);
+  });
 }
+const shellRegistration =
+  "serviceWorker" in navigator
+    ? navigator.serviceWorker
+        .register("/sw.js")
+        .then(async (registration) => {
+          const worker = registration.installing;
+          if (worker)
+            await new Promise<void>((resolve) => {
+              const check = () => {
+                if (
+                  worker.state === "activated" ||
+                  worker.state === "redundant"
+                )
+                  resolve();
+              };
+              worker.addEventListener("statechange", check);
+              check();
+            });
+          if (registration.active)
+            await shellCommand(registration.active, "restore-atlas-shell");
+        })
+        .then(() => {
+          el("shell-status").textContent =
+            "App ready offline. Viewed tiles and routing cells are cached up to 128 MiB; browser storage may be evicted. Save a .atlas file for a portable copy.";
+        })
+        .catch(() => {
+          el("shell-status").textContent =
+            "Offline app storage unavailable. Local map files still work while this tab stays open.";
+        })
+    : Promise.resolve();

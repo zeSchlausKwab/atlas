@@ -60,17 +60,21 @@ export interface ReadEvent {
   cached: boolean;
 }
 export interface ByteSource {
-  read(start: number, end: number): Promise<Uint8Array>;
+  read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array>;
 }
 export class HttpSource implements ByteSource {
   private etag?: string;
   constructor(readonly url: string) {}
-  async read(start: number, end: number) {
+  async read(start: number, end: number, signal?: AbortSignal) {
     const headers: Record<string, string> = {
       Range: `bytes=${start}-${end - 1}`,
     };
     if (this.etag) headers["If-Match"] = this.etag;
-    const response = await fetch(this.url, { headers, cache: "no-store" });
+    const response = await fetch(this.url, {
+      headers,
+      cache: "no-store",
+      signal,
+    });
     if (response.status === 412)
       throw new Error(
         "Package changed on the server. Reopen it to use the new snapshot.",
@@ -130,6 +134,19 @@ export class AtlasReader {
   requests = 0;
   cacheHits = 0;
   readonly cache: DecodedCache;
+  private disposed = false;
+  private abort = new AbortController();
+  private active() {
+    if (this.disposed) throw new Error("Map session closed");
+  }
+  /** Invalidate late reads before clearing persistent storage. */
+  dispose() {
+    this.disposed = true;
+    this.abort.abort();
+    this.cache.clear();
+    this.pages.clear();
+    this.byKey.clear();
+  }
   private pending = new Map<string, Promise<Uint8Array>>();
   private pages: BudgetCache<string, Block[]>;
   private pageRequests = new Map<string, Promise<Block[]>>();
@@ -163,6 +180,7 @@ export class AtlasReader {
     return { decoded: this.cache.stats, directory: this.pages.stats };
   }
   async open() {
+    this.active();
     let headerBytes: Uint8Array, indexBytes: Uint8Array;
     try {
       headerBytes = await this.readRange("header", 0, HEADER_SIZE);
@@ -181,6 +199,7 @@ export class AtlasReader {
       indexBytes = saved.index;
       this.offline = true;
     }
+    this.active();
     this.index = parseIndex(parseHeader(headerBytes), indexBytes);
     this.byKey = new Map(this.index.blocks.map((b) => [b.key, b]));
     if (this.options.sourceId)
@@ -191,7 +210,9 @@ export class AtlasReader {
     return this;
   }
   private async readRange(key: string, start: number, end: number) {
-    const bytes = await this.source.read(start, end);
+    this.active();
+    const bytes = await this.source.read(start, end, this.abort.signal);
+    this.active();
     this.requests++;
     this.bytesRead += bytes.length;
     this.bytesByPurpose[purposeOf(key)] += bytes.length;
@@ -242,6 +263,7 @@ export class AtlasReader {
         })
       )
         throw new Error("Invalid directory page contents");
+      this.active();
       for (const b of blocks) this.byKey.set(b.key, b);
       this.pages.set(page.key, blocks);
       this.cache.delete(page.key); // Retain parsed descriptors, not a duplicate JSON buffer.
@@ -377,6 +399,7 @@ export class AtlasReader {
     return result.sort((a, b) => a.offset - b.offset);
   }
   async block(key: string): Promise<Uint8Array> {
+    this.active();
     const kind = purposeOf(key);
     const purpose =
       kind === "streetNames" || kind === "pois" || kind === "placeNames"
@@ -410,6 +433,7 @@ export class AtlasReader {
     return this.readBlock(block);
   }
   private async readBlock(block: Block): Promise<Uint8Array> {
+    this.active();
     const key = block.key;
     const start = this.index.header.payloadOffset + block.offset;
     const cached = this.cache.get(key);
@@ -430,6 +454,7 @@ export class AtlasReader {
         this.index.manifest.snapshot,
         block,
       );
+      this.active();
       if (!stored && this.offline) throw new Error(`Not cached: ${key}`);
       const bytes =
         stored ?? (await this.readRange(key, start, start + block.length));
@@ -449,12 +474,14 @@ export class AtlasReader {
         block.codec === "gzip"
           ? await decompress(bytes, block.rawLength!)
           : bytes;
+      this.active();
       if (!stored)
         await this.options.store?.put(
           this.index.manifest.snapshot,
           block,
           bytes,
         );
+      this.active();
       this.cache.set(key, decoded);
       return decoded;
     })();

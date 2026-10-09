@@ -17,6 +17,13 @@
       >
       <span class="masthead-note">A geographic format experiment</span>
       <div class="masthead-right">
+        <button
+          id="purge-caches"
+          class="cache-purge"
+          title="Clear Atlas map, routing, search and offline app caches. Stops active tools; keeps files and preferences."
+        >
+          Purge caches
+        </button>
         <span class="prototype">PROTOTYPE 008</span
         ><a
           href="https://www.openstreetmap.org/copyright"
@@ -1063,8 +1070,23 @@
           <div class="transport-toggles">
             <label
               ><input id="tile-grid" type="checkbox" /> Tile boundaries</label
+            ><label
+              ><input id="cache-view" type="checkbox" /> Cache coverage</label
             ><label><input id="offline" type="checkbox" /> Cache only</label>
           </div>
+          <div id="cache-legend" class="cache-legend" hidden>
+            <span class="cache-ramp" aria-hidden="true"></span
+            ><span>0% → 100% cached</span>
+            <p>
+              Selected geometry at this zoom · memory or disk.<br />? unknown
+              directory · ∅ no blocks. Labels and routing excluded; memory may
+              not survive reload.
+            </p>
+          </div>
+        </div>
+        <div id="cache-paused" class="cache-paused" hidden>
+          <p id="cache-purge-status" role="status"></p>
+          <button id="reopen-map">Reopen map</button>
         </div>
         <div id="error" class="error" role="alert" hidden></div>
         <div class="map-attribution">

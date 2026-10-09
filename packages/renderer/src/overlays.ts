@@ -1,3 +1,4 @@
+import { cacheCoverage } from "./cache-coverage";
 import {
   project,
   unproject,
@@ -20,6 +21,7 @@ export interface OverlayFrame {
   style: MapStyle;
   view: TileView;
   resident: (key: string) => boolean;
+  cached: (key: string) => boolean;
   labels: MapLabels;
   features: FeatureOverlay;
   places: Place[];
@@ -30,6 +32,7 @@ export interface OverlayFrame {
     reachable: Reachable | null;
     selection: { points: Position[]; closed: boolean } | null;
     grid: boolean;
+    cache: boolean;
     route: Extract<WalkingResult, { status: "found" }> | null;
     endpoints: [Position | null, Position | null];
     location: {
@@ -457,6 +460,54 @@ export function defaultOverlays() {
         24,
         height - 44,
       );
+    },
+  });
+  registry.add({
+    id: "cache-coverage",
+    order: 25,
+    draw: ({ ctx, camera, view, cached, state }) => {
+      if (!state.cache) return;
+      const cells = cacheCoverage(view, cached);
+      for (const c of cells) {
+        const n = 2 ** c.z;
+        const corners = [
+          [c.x / n, c.y / n],
+          [(c.x + 1) / n, c.y / n],
+          [(c.x + 1) / n, (c.y + 1) / n],
+          [c.x / n, (c.y + 1) / n],
+        ].map((p) => worldToScreen(p as [number, number], camera));
+        ctx.beginPath();
+        corners.forEach(([x, y], i) =>
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y),
+        );
+        ctx.closePath();
+        ctx.fillStyle =
+          c.fraction === null || !c.total
+            ? "rgba(100,110,120,0.07)"
+            : `rgba(15, 95, 240, ${0.04 + 0.45 * c.fraction})`;
+        ctx.fill();
+        ctx.strokeStyle = "rgba(25,78,146,0.65)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash(c.fraction === null ? [4, 4] : []);
+        ctx.stroke();
+        const [x, y] = worldToScreen(
+          [(c.x + 0.5) / n, (c.y + 0.5) / n],
+          camera,
+        );
+        const label =
+          c.fraction === null
+            ? "? directory unknown"
+            : !c.total
+              ? "∅ no blocks"
+              : `${Math.round(c.fraction * 100)}% · ${c.cached}/${c.total}`;
+        ctx.font = "11px monospace";
+        ctx.textAlign = "center";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#fff";
+        ctx.strokeText(label, x, y);
+        ctx.fillStyle = "#104586";
+        ctx.fillText(label, x, y);
+      }
     },
   });
   return registry;

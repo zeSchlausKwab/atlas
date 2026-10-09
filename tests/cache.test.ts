@@ -161,3 +161,50 @@ test("a destroyed tile scheduler never uploads an in-flight response", async () 
   await Promise.resolve();
   expect(f.uploaded).toEqual([]);
 });
+
+test("disposed readers cannot refill decoded or persistent caches after late downloads", async () => {
+  const key = "tile/8/128/64";
+  const bytes = await encodePackage(manifest, [
+    { key, z: 8, x: 128, y: 64, features: 1, bytes: new Uint8Array([1, 2]) },
+  ]);
+  const file = new FileSource(new Blob([bytes]));
+  let unblock!: () => void, started!: () => void;
+  const waiting = new Promise<void>((r) => (started = r));
+  const gate = new Promise<void>((r) => (unblock = r));
+  let delay = false,
+    writes = 0;
+  const reader = await new AtlasReader(
+    {
+      read: async (s, e) => {
+        if (delay) {
+          started();
+          await gate;
+        }
+        return file.read(s, e);
+      },
+    },
+    undefined,
+    {
+      store: {
+        available: true,
+        getIndex: async () => undefined,
+        putIndex: async () => {},
+        get: async () => undefined,
+        put: async () => {
+          writes++;
+        },
+        keys: async () => [],
+      },
+    },
+  ).open();
+  delay = true;
+  const pending = reader.block(key);
+  void pending.catch(() => {});
+  await waiting;
+  reader.dispose();
+  unblock();
+  await expect(pending).rejects.toThrow("Map session closed");
+  expect(writes).toBe(0);
+  expect(reader.cache.size).toBe(0);
+  await expect(reader.block(key)).rejects.toThrow("Map session closed");
+});
