@@ -13,6 +13,7 @@ export interface HostPreview {
   selection(points: Position[], closed: boolean): void;
   picking(enabled: boolean): void;
   fit(): void;
+  focus(position: Position): void;
   view(): Bounds;
   destroy(): void;
 }
@@ -30,6 +31,7 @@ export async function createPreview(
   finish: () => void,
   cancel: () => void,
   status: (s: string) => void,
+  world = false,
 ): Promise<HostPreview> {
   container.replaceChildren();
   if (provider === "local") {
@@ -60,6 +62,7 @@ export async function createPreview(
             )
           : map.endPicking("host"),
       fit: () => map.fit(),
+      focus: (p) => map.focusLocation(p, "Selected position", 15),
       view: () => map.viewBounds(),
       destroy: () => {
         map.destroy();
@@ -106,35 +109,45 @@ export async function createPreview(
     ],
   });
   const fit = () =>
-    map.fitBounds(
-      [
-        [bounds[0], bounds[1]],
-        [bounds[2], bounds[3]],
-      ],
-      { padding: 45, duration: 0 },
-    );
+    world
+      ? map.fitBounds(
+          [
+            [-170, -55],
+            [170, 75],
+          ],
+          { padding: 20, duration: 0 },
+        )
+      : map.fitBounds(
+          [
+            [bounds[0], bounds[1]],
+            [bounds[2], bounds[3]],
+          ],
+          { padding: 45, duration: 0 },
+        );
   map.on("load", () => {
-    map.addSource("coverage", {
-      type: "geojson",
-      data: {
-        type: "Feature",
-        properties: {},
-        geometry: {
-          type: "Polygon",
-          coordinates: [[...rectangle(bounds), rectangle(bounds)[0]!]],
+    if (!world) {
+      map.addSource("coverage", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "Polygon",
+            coordinates: [[...rectangle(bounds), rectangle(bounds)[0]!]],
+          },
         },
-      },
-    });
-    map.addLayer({
-      id: "coverage-line",
-      type: "line",
-      source: "coverage",
-      paint: {
-        "line-color": "#397eaa",
-        "line-width": 2,
-        "line-dasharray": [3, 2],
-      },
-    });
+      });
+      map.addLayer({
+        id: "coverage-line",
+        type: "line",
+        source: "coverage",
+        paint: {
+          "line-color": "#397eaa",
+          "line-width": 2,
+          "line-dasharray": [3, 2],
+        },
+      });
+    }
     map.addSource("selection", { type: "geojson", data: collection() });
     map.addLayer({
       id: "selection-fill",
@@ -162,7 +175,11 @@ export async function createPreview(
         "circle-stroke-width": 2,
       },
     });
-    status("OpenFreeMap preview · blue dashed outline = source coverage.");
+    status(
+      world
+        ? "OpenFreeMap preview · choose an area, then check its OSM source."
+        : "OpenFreeMap preview · blue dashed outline = source coverage.",
+    );
   });
   map.on("error", () =>
     status(
@@ -170,7 +187,7 @@ export async function createPreview(
     ),
   );
   map.on("click", (e) => {
-    if (picking) pick([e.lngLat.lng, e.lngLat.lat]);
+    if (picking) pick([e.lngLat.wrap().lng, e.lngLat.lat]);
   });
   const key = (e: KeyboardEvent) => {
     if (!picking) return;
@@ -183,7 +200,7 @@ export async function createPreview(
     } else if (e.key === " ") {
       e.preventDefault();
       const c = map.getCenter();
-      pick([c.lng, c.lat]);
+      pick([c.wrap().lng, c.lat]);
     }
   };
   container.addEventListener("keydown", key);
@@ -201,6 +218,7 @@ export async function createPreview(
       map.getCanvas().style.cursor = on ? "crosshair" : "";
     },
     fit,
+    focus: (p) => map.jumpTo({ center: p, zoom: 15 }),
     view: () => {
       const b = map.getBounds();
       return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];

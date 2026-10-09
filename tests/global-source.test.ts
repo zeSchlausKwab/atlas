@@ -157,9 +157,14 @@ test("source planning pins a dated redirect, caps downloads and rejects unsafe r
   expect(p.region.url).toEndWith("child-261008.osm.pbf");
   expect(p.etag).toBe('"v1"');
   expect(sources.get(p.id)).toEqual(p);
+  const requests = seen.length;
+  await sources.plan({ ...area, maxSourceBytes: 2 * MiB });
+  expect(seen.length).toBe(requests);
   bytes = MiB + 1;
-  await expect(sources.plan(area)).rejects.toThrow("download limit");
-  expect(seen.filter((u) => u.endsWith("json"))).toHaveLength(1);
+  await expect(new PbfSources(fetcher).plan(area)).rejects.toThrow(
+    "download limit",
+  );
+  expect(seen.filter((u) => u.endsWith("json"))).toHaveLength(2);
   expect(() => sources.get("unknown")).toThrow("expired");
   const bad = new PbfSources(async (url: RequestInfo | URL) =>
     String(url).endsWith("json")

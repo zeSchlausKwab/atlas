@@ -311,16 +311,23 @@ async function main() {
     console.log(`Indexing ${imported.geojson.features.length} features…`);
     // Preserve the small regional footprint in world overviews. At normal map
     // scales, a half-pixel tolerance avoids shipping invisible vertex detail.
+    const displayFeatures = imported.geojson.features.filter(
+      (f) =>
+        !selected ||
+        selected.layers.includes(
+          layerForClass(Number(f.properties?.class ?? 3)),
+        ),
+    );
     const makeIndex = (overview: boolean) =>
       geojsonvt(
         overview
           ? {
               ...imported.geojson,
-              features: imported.geojson.features.filter(
+              features: displayFeatures.filter(
                 (f) => displayMinZoom(f.properties ?? {}) <= 5,
               ),
             }
-          : imported.geojson,
+          : { ...imported.geojson, features: displayFeatures },
         {
           maxZoom,
           extent: TILE_EXTENT,
@@ -414,33 +421,42 @@ async function main() {
         ? await addTransport(writer, input, selected?.profiles)
         : undefined;
     console.log("Building search and street indexes…");
-    const geocoding = buildGeocoding(imported.locations, imported.geojson);
+    const geocoding =
+      !selected ||
+      selected.search ||
+      selected.reverse ||
+      selected.streetNames ||
+      selected.pois
+        ? buildGeocoding(imported.locations, imported.geojson)
+        : undefined;
     if (!selected || selected.search)
       await writer.add({
         key: "search/locations",
-        features: geocoding.locations.records.length,
-        bytes: encoder.encode(JSON.stringify(geocoding.locations)),
+        features: geocoding!.locations.records.length,
+        bytes: encoder.encode(JSON.stringify(geocoding!.locations)),
       });
     if (!selected || selected.reverse)
       await writer.add({
         key: "search/streets",
-        features: geocoding.streets.streets.length,
-        bytes: encoder.encode(JSON.stringify(geocoding.streets)),
+        features: geocoding!.streets.streets.length,
+        bytes: encoder.encode(JSON.stringify(geocoding!.streets)),
       });
-    console.log("Partitioning street labels and POIs…");
-    const labels = partitionLabels(
-      buildLabels(geocoding.locations, geocoding.streets),
-    );
-    for (const [key, block] of labels)
-      if (
-        !selected ||
-        (key.includes("/roads/") ? selected.streetNames : selected.pois)
-      )
-        await writer.add({
-          key,
-          features: block.roads.length + block.pois.length,
-          bytes: encoder.encode(JSON.stringify(block)),
-        });
+    if (!selected || selected.streetNames || selected.pois) {
+      console.log("Partitioning street labels and POIs…");
+      const labels = partitionLabels(
+        buildLabels(geocoding!.locations, geocoding!.streets),
+      );
+      for (const [key, block] of labels)
+        if (
+          !selected ||
+          (key.includes("/roads/") ? selected.streetNames : selected.pois)
+        )
+          await writer.add({
+            key,
+            features: block.roads.length + block.pois.length,
+            bytes: encoder.encode(JSON.stringify(block)),
+          });
+    }
     if (flags.features) {
       console.log("Partitioning selectable source geometry…");
       const cells = buildFeatures(imported.geojson);
@@ -547,8 +563,8 @@ async function main() {
         features: imported.geojson.features.length,
         peaks: imported.peaks.length,
         routing: imported.routing,
-        locations: geocoding.locations.records.length,
-        streets: geocoding.streets.streets.length,
+        locations: geocoding?.locations.records.length ?? 0,
+        streets: geocoding?.streets.streets.length ?? 0,
         sourceSha256: hash,
       },
       format,

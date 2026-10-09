@@ -13,16 +13,42 @@ export class PbfSources {
   private catalog?: { at: number; regions: PbfRegion[] };
   private loading?: Promise<PbfRegion[]>;
   private plans = new Map<string, PbfPlan>();
+  private metadata = new Map<
+    string,
+    {
+      at: number;
+      url: string;
+      bytes: number;
+      lastModified: string;
+      etag?: string;
+    }
+  >();
+  private async request(url: string, init: RequestInit) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.fetcher(url, {
+          ...init,
+          keepalive: false,
+          signal: AbortSignal.timeout(20000),
+        });
+      } catch (e) {
+        if (attempt === 0) continue;
+        throw new Error(
+          `Geofabrik request failed for ${new URL(url).pathname}: ${e instanceof Error ? e.message : String(e)}. Check the source again.`,
+        );
+      }
+    }
+  }
   async regions() {
     if (this.catalog && Date.now() - this.catalog.at < 6 * 3600_000)
       return this.catalog.regions;
     if (!this.loading)
       this.loading = (async () => {
-        const r = await this.fetcher(
+        const r = await this.request(
           "https://download.geofabrik.de/index-v1.json",
           {
             redirect: "error",
-            signal: AbortSignal.timeout(30000),
+            headers: { Connection: "close" },
           },
         );
         if (!r.ok) throw new Error(`Geofabrik catalog: HTTP ${r.status}`);
@@ -40,34 +66,12 @@ export class PbfSources {
     const input = structuredClone(value),
       bounds = importBounds(input),
       region = coveringRegion(await this.regions(), bounds);
-    let sourceUrl = allowedPbfUrl(region.url),
-      response: Response | undefined;
-    for (let hop = 0; hop < 4; hop++) {
-      response = await this.fetcher(sourceUrl, {
-        method: "HEAD",
-        redirect: "manual",
-        signal: AbortSignal.timeout(20000),
-      });
-      if (![301, 302, 303, 307, 308].includes(response.status)) break;
-      const location = response.headers.get("location");
-      if (!location) throw new Error("Source redirect has no destination");
-      sourceUrl = allowedPbfUrl(new URL(location, sourceUrl).href);
-    }
-    if (!response) throw new Error("Cannot inspect source");
-    if (!response.ok)
-      throw new Error(`Cannot inspect ${region.name}: HTTP ${response.status}`);
-    const bytes = Number(response.headers.get("content-length")),
-      lastModified = response.headers.get("last-modified"),
-      etag = response.headers.get("etag");
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes <= 0 ||
-      !lastModified ||
-      !Number.isFinite(Date.parse(lastModified))
-    )
-      throw new Error(
-        "Source does not publish a usable size and modification date.",
-      );
+    const {
+      url: sourceUrl,
+      bytes,
+      lastModified,
+      etag,
+    } = await this.inspect(region);
     if (bytes > input.maxSourceBytes)
       throw new Error(
         `${region.name} is the smallest covering region by area, but its PBF is ${(bytes / 1048576).toFixed(0)} MiB, above your ${(input.maxSourceBytes / 1048576).toFixed(0)} MiB download limit. Choose another area or less routing padding. The full regional PBF must be downloaded before cropping.`,
@@ -89,6 +93,50 @@ export class PbfSources {
       this.plans.delete(this.plans.keys().next().value!);
     this.plans.set(plan.id, plan);
     return plan;
+  }
+  private async inspect(region: PbfRegion) {
+    const cached = this.metadata.get(region.url);
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached;
+    let sourceUrl = allowedPbfUrl(region.url),
+      response: Response | undefined;
+    for (let hop = 0; hop < 4; hop++) {
+      response = await this.request(sourceUrl, {
+        method: "HEAD",
+        redirect: "manual",
+        // Geofabrik's redirect proxy can stall Bun HEAD keep-alive connections.
+        headers: { Connection: "close" },
+      });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get("location");
+      if (!location) throw new Error("Source redirect has no destination");
+      sourceUrl = allowedPbfUrl(new URL(location, sourceUrl).href);
+    }
+    if (!response) throw new Error("Cannot inspect source");
+    if (!response.ok)
+      throw new Error(`Cannot inspect ${region.name}: HTTP ${response.status}`);
+    const bytes = Number(response.headers.get("content-length")),
+      lastModified = response.headers.get("last-modified"),
+      etag = response.headers.get("etag");
+    if (
+      !Number.isSafeInteger(bytes) ||
+      bytes <= 0 ||
+      !lastModified ||
+      !Number.isFinite(Date.parse(lastModified))
+    )
+      throw new Error(
+        "Source does not publish a usable size and modification date.",
+      );
+    const value = {
+      at: Date.now(),
+      url: sourceUrl,
+      bytes,
+      lastModified,
+      etag: etag && !etag.startsWith("W/") ? etag : undefined,
+    };
+    if (this.metadata.size >= 64)
+      this.metadata.delete(this.metadata.keys().next().value!);
+    this.metadata.set(region.url, value);
+    return value;
   }
   get(id: string) {
     const p = this.plans.get(id);

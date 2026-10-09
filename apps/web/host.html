@@ -31,10 +31,16 @@
       <section id="prepare" class="host-builder">
         <div class="host-list-heading">
           <h2>Prepare a map</h2>
-          <span class="eyebrow">FROM YOUR INSTALLED SOURCE</span>
+          <span class="eyebrow">LOCAL SNAPSHOT OR WORLDWIDE OSM</span>
         </div>
         <div class="host-builder-grid">
           <div class="host-picker">
+            <label class="host-field"
+              >Data source<select id="prepare-data-source">
+                <option value="installed">Installed Atlas snapshot</option>
+                <option value="global">Worldwide OSM PBF · Geofabrik</option>
+              </select></label
+            >
             <div class="host-picker-top">
               <label
                 >Preview
@@ -43,6 +49,14 @@
                   <option value="local">Local Atlas · source</option>
                 </select></label
               ><button id="prepare-fit" type="button">Fit source</button>
+            </div>
+            <div class="host-jump" id="prepare-jump-controls" hidden>
+              <label class="host-field"
+                >Go to latitude, longitude<input
+                  id="prepare-coordinates"
+                  placeholder="43.735, 7.423 · Monaco"
+              /></label>
+              <button id="prepare-jump" type="button">Go to coordinates</button>
             </div>
             <div
               id="prepare-map"
@@ -160,6 +174,31 @@
               extend beyond it. Search and label geometry are clipped. The
               output is checked against this size limit.
             </p>
+            <div id="prepare-global-controls" hidden>
+              <label class="host-field"
+                >Maximum source download (MiB)<input
+                  id="prepare-source-budget"
+                  type="number"
+                  min="1"
+                  max="2048"
+                  value="2048"
+              /></label>
+              <p class="quiet">
+                We download one covering regional PBF, then crop it locally.
+                This budget is separate from the finished Atlas file. Verified
+                PBF files stay on disk for reuse.
+              </p>
+              <button id="prepare-check-source" type="button" disabled>
+                Check PBF source
+              </button>
+              <div
+                id="prepare-source-plan"
+                class="host-source-note"
+                role="status"
+              >
+                Draw an area to find its source.
+              </div>
+            </div>
             <button
               id="prepare-submit"
               class="host-primary"

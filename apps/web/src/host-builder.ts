@@ -9,6 +9,8 @@ import type {
   TransportMode,
 } from "../../../packages/format/src/index";
 import type { FeatureKind } from "../../../packages/features/src/index";
+import type { PbfPlan } from "../../../packages/provisioning/src/global-source";
+import type { SelectionScope } from "../../../packages/provisioning/src/selection";
 import type { PackageSelection } from "../../../packages/provisioning/src/selection";
 import type { PreparationJob } from "../../server/preparations";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -26,6 +28,24 @@ let source: Manifest,
   closed = false,
   mode: "rect" | "polygon" | null = null,
   loading = false;
+let installedScope: SelectionScope,
+  globalScope: SelectionScope,
+  sourcePlan: PbfPlan | undefined;
+let checking = false,
+  submitting = false,
+  planKey = "";
+const global = () => el<HTMLSelectElement>("data-source").value === "global";
+const scope = () => (global() ? globalScope : installedScope);
+const sourceArea = () => ({
+  polygon: points,
+  paddingCells: Number(el<HTMLSelectElement>("padding").value),
+  profiles: selection().profiles,
+  maxSourceBytes: Number(el<HTMLInputElement>("source-budget").value) * 1048576,
+});
+const sourceKey = () => {
+  const a = sourceArea();
+  return JSON.stringify({ ...a, profiles: !!a.profiles.length });
+};
 const fields = new Map<string, HTMLInputElement>();
 function checked(k: string) {
   return fields.get(k)?.checked ?? false;
@@ -52,7 +72,20 @@ function update() {
   el<HTMLButtonElement>("finish").disabled =
     mode !== "polygon" || points.length < 3;
   el<HTMLButtonElement>("undo").disabled = !points.length;
-  el<HTMLButtonElement>("submit").disabled = !closed;
+  if (
+    sourcePlan &&
+    (planKey !== sourceKey() || sourcePlan.expiresAt <= Date.now())
+  ) {
+    sourcePlan = undefined;
+    el("source-plan").textContent =
+      "Selection changed or source plan expired. Check the PBF source again.";
+  }
+  el<HTMLButtonElement>("check-source").disabled = !closed || checking;
+  el<HTMLButtonElement>("submit").disabled =
+    !closed || submitting || (global() && !sourcePlan);
+  el("submit").textContent = global()
+    ? "Download, prepare & host ↗"
+    : "Prepare & host map ↗";
   el("area").textContent = closed
     ? `${points.length} corners · area ready`
     : mode === "rect"
@@ -69,8 +102,9 @@ function finish() {
     closed = true;
     mode = null;
     update();
-    el("message").textContent =
-      "Area ready. Choose the data to keep, then prepare your map.";
+    el("message").textContent = global()
+      ? "Area ready. Choose the data to keep, then check the PBF source."
+      : "Area ready. Choose the data to keep, then prepare your map.";
   } catch (e) {
     if (mode === "rect") {
       points = points.slice(0, 1);
@@ -87,6 +121,7 @@ function clear() {
 }
 function pick(p: [number, number]) {
   if (!mode) return;
+  const source = scope();
   if (
     p[0] < source.bounds[0] ||
     p[0] > source.bounds[2] ||
@@ -121,7 +156,7 @@ async function switchPreview() {
     preview = await createPreview(
       el("map"),
       select.value,
-      source.bounds,
+      scope().bounds,
       pick,
       finish,
       () => {
@@ -129,6 +164,7 @@ async function switchPreview() {
         update();
       },
       (s) => (el("preview-status").textContent = s),
+      global(),
     );
     update();
   } catch (e) {
@@ -140,7 +176,7 @@ async function switchPreview() {
 }
 function selection(): PackageSelection {
   return {
-    snapshot: source.snapshot,
+    snapshot: scope().snapshot,
     name: el<HTMLInputElement>("name").value,
     polygon: points,
     minZoom: Number(el<HTMLInputElement>("min").value),
@@ -193,6 +229,14 @@ function jobs(values: PreparationJob[]) {
     card.append(heading);
     if (job.state === "ready" && job.manifest) {
       const m = job.manifest;
+      if (job.sourcePlan)
+        card.append(
+          text(
+            "p",
+            `OSM source: ${job.sourcePlan.region.name} · ${bytes(job.sourcePlan.bytes)} PBF`,
+            "quiet",
+          ),
+        );
       card.append(
         text(
           "p",
@@ -229,14 +273,13 @@ function jobs(values: PreparationJob[]) {
       if (job.state === "running" || job.state === "cancelling") {
         const progress = document.createElement("progress");
         progress.max = job.progress.total || 1;
-        if (job.progress.total && job.progress.phase === "packing")
-          progress.value = job.progress.completed;
+        if (job.progress.total) progress.value = job.progress.completed;
         progress.setAttribute("aria-label", `Preparing ${job.name}`);
         card.append(
           progress,
           text(
             "p",
-            `${job.progress.phase} · ${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} blocks · ${bytes(job.progress.readBytes)} read · ${bytes(job.progress.writtenBytes)} written`,
+            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} blocks`) : ""} · ${bytes(job.progress.writtenBytes)} Atlas written`,
             "quiet",
           ),
         );
@@ -295,20 +338,26 @@ async function refresh() {
     loading = false;
   }
 }
-export async function startBuilder() {
-  const data = await refresh();
-  if (!data) return;
-  source = data.source;
-  const a = data.available;
-  el("source").textContent = source.name;
-  el("source-note").textContent =
-    `Source coverage: ${source.bounds.map((n: number) => n.toFixed(3)).join(", ")}. Prepare from this installed snapshot; OpenFreeMap is a preview only.`;
-  el<HTMLInputElement>("name").value = `${source.name} excerpt`;
+function configureSource() {
+  const current = scope(),
+    a = current.available;
+  for (const k of ["layers", "labels", "profiles", "queries", "features"])
+    for (const row of el(k).querySelectorAll("label")) row.remove();
+  fields.clear();
+  el("source").textContent = global()
+    ? "Worldwide OSM · Geofabrik extracts"
+    : source.name;
+  el("source-note").textContent = global()
+    ? "Choose an area anywhere in the supported coverage. The source check finds one covering Geofabrik region, including routing padding. OpenFreeMap supplies only the preview."
+    : `Source coverage: ${source.bounds.map((n: number) => n.toFixed(3)).join(", ")}. Prepare from this installed snapshot; OpenFreeMap is a preview only.`;
+  el<HTMLInputElement>("name").value = global()
+    ? "My OSM excerpt"
+    : `${source.name} excerpt`;
   for (const k of ["min", "max"]) {
     const input = el<HTMLInputElement>(k);
-    input.min = String(source.minZoom);
-    input.max = String(source.maxZoom);
-    input.value = String(k === "min" ? source.minZoom : source.maxZoom);
+    input.min = String(current.minZoom);
+    input.max = String(current.maxZoom);
+    input.value = String(k === "min" ? current.minZoom : current.maxZoom);
   }
   for (const [k, label] of [
     ["land", "Landscape"],
@@ -318,7 +367,13 @@ export async function startBuilder() {
     ["buildings", "Buildings & heights"],
     ["peaks", "Mountain geometry"],
   ])
-    checkbox("layers", `layer-${k}`, label!, a.layers.includes(k), true);
+    checkbox(
+      "layers",
+      `layer-${k}`,
+      label!,
+      a.layers.includes(k as MapLayer),
+      true,
+    );
   for (const [k, label] of [
     ["places", "Cities & villages"],
     ["streets", "Street names"],
@@ -330,7 +385,13 @@ export async function startBuilder() {
     ["cycling", "Cycling"],
     ["driving", "Driving"],
   ])
-    checkbox("profiles", `profile-${k}`, label!, a.profiles.includes(k), false);
+    checkbox(
+      "profiles",
+      `profile-${k}`,
+      label!,
+      a.profiles.includes(k as TransportMode),
+      false,
+    );
   checkbox("queries", "search", "Location search", a.search, false);
   checkbox(
     "queries",
@@ -351,9 +412,35 @@ export async function startBuilder() {
       "features",
       `feature-${k}`,
       label!,
-      a.featureKinds.includes(k),
+      a.featureKinds.includes(k as FeatureKind),
       false,
     );
+  el("global-controls").hidden = !global();
+  el("jump-controls").hidden = !global();
+  el("fit").textContent = global() ? "Fit world" : "Fit source";
+  const local = el<HTMLSelectElement>(
+    "provider",
+  ).querySelector<HTMLOptionElement>('option[value="local"]')!;
+  local.disabled = global();
+  if (global()) el<HTMLSelectElement>("provider").value = "openfreemap";
+  el<HTMLSelectElement>("preset").value = "view";
+  sourcePlan = undefined;
+  el("source-plan").textContent = "Draw an area to find its source.";
+  clear();
+}
+export async function startBuilder() {
+  const data = await refresh();
+  if (!data) return;
+  source = data.source;
+  installedScope = { ...source, available: data.available };
+  globalScope = data.globalSource;
+  const worldOption = el<HTMLSelectElement>(
+    "data-source",
+  ).querySelector<HTMLOptionElement>('option[value="global"]')!;
+  worldOption.disabled = !data.globalSource.ready;
+  if (!data.globalSource.ready)
+    worldOption.textContent += " · requires Osmium & Cargo";
+  configureSource();
   for (const k of ["rect", "polygon"] as const)
     el(k).onclick = () => {
       mode = k;
@@ -374,7 +461,7 @@ export async function startBuilder() {
   el("view").onclick = () => {
     if (!preview) return;
     const b = preview.view(),
-      s = source.bounds,
+      s = scope().bounds,
       w = Math.max(b[0], s[0]),
       south = Math.max(b[1], s[1]),
       e = Math.min(b[2], s[2]),
@@ -404,25 +491,108 @@ export async function startBuilder() {
               ["places", "streets", "pois"].includes(k))) ||
           (preset === "water-buildings" &&
             ["layer-water", "layer-buildings"].includes(k)));
+    update();
   };
   el<HTMLFormElement>("form").onsubmit = async (event) => {
     event.preventDefault();
-    const button = el<HTMLButtonElement>("submit");
-    button.disabled = true;
+    if (global() && (!sourcePlan || planKey !== sourceKey())) return;
+    submitting = true;
+    update();
     try {
-      await request("/admin/preparations", selection());
+      await request("/admin/preparations", {
+        ...selection(),
+        ...(global()
+          ? {
+              sourcePlanId: sourcePlan!.id,
+              maxSourceBytes: sourceArea().maxSourceBytes,
+            }
+          : {}),
+      });
       el("message").textContent =
         "Preparation started. You can leave this page and return to follow progress.";
       await refresh();
     } catch (e) {
       el("message").textContent = String(e);
     } finally {
-      button.disabled = !closed;
+      submitting = false;
+      update();
+    }
+  };
+  el("data-source").onchange = async () => {
+    configureSource();
+    await switchPreview();
+  };
+  el("form").addEventListener("input", update);
+  el("form").addEventListener("change", update);
+  el("jump").onclick = () => {
+    const parts = el<HTMLInputElement>("coordinates")
+      .value.split(",")
+      .map((v) => v.trim());
+    const [lat, lon] = parts.map(Number);
+    if (
+      parts.length !== 2 ||
+      parts.some((v) => !v) ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon) ||
+      Math.abs(lat!) > 85 ||
+      Math.abs(lon!) > 180
+    ) {
+      el("message").textContent =
+        "Enter latitude, longitude; for example 43.735, 7.423.";
+      return;
+    }
+    preview?.focus([lon!, lat!]);
+  };
+  el("check-source").onclick = async () => {
+    checking = true;
+    const key = sourceKey();
+    update();
+    el("source-plan").textContent =
+      "Finding a covering region and checking download size…";
+    try {
+      const plan = (await request(
+        "/admin/preparations/source-plan",
+        sourceArea(),
+      )) as PbfPlan;
+      if (!global() || key !== sourceKey()) {
+        el("source-plan").textContent =
+          "Selection changed or source plan expired. Check the PBF source again.";
+        return;
+      }
+      sourcePlan = plan;
+      planKey = key;
+      const card = el("source-plan"),
+        link = document.createElement("a");
+      link.href = plan.region.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "Source PBF ↗";
+      card.replaceChildren(
+        text("h3", plan.region.name),
+        text(
+          "p",
+          `${bytes(plan.bytes)} source download · published ${new Date(plan.lastModified).toLocaleDateString()}`,
+        ),
+        text(
+          "p",
+          "The entire regional PBF is needed before cropping. A verified copy already on this server will be reused. This plan is valid for 30 minutes.",
+        ),
+        link,
+      );
+    } catch (e) {
+      sourcePlan = undefined;
+      el("source-plan").textContent = String(e);
+    } finally {
+      checking = false;
+      update();
     }
   };
   await switchPreview();
   const poll = async () => {
-    if (!document.hidden) await refresh();
+    if (!document.hidden) {
+      await refresh();
+      if (sourcePlan && sourcePlan.expiresAt <= Date.now()) update();
+    }
     setTimeout(() => void poll(), 1500);
   };
   void poll();
