@@ -44,7 +44,7 @@ Legacy combined-layer archives need regeneration/splitting before this demo can 
 
 **Route across these maps** accepts coordinates or map picks, a travel mode, and a search-state limit. The initial points are central Vienna and Bratislava. Routing readers are created only on the first request; displaying geometry does not fetch graph cells. The result shows each source’s cell contribution. The worker uses the same Rust/WASM kernel as single-map routing and does not call server route APIs.
 
-The selectable limits are 250,000, 1 million and 2 million states; single-map defaults remain 250,000. Cell residency has a separate 32 MiB budget. Larger state limits can consume hundreds of MiB; these are bounded prototype searches, not a planet-scale hierarchical router. Cancellation terminates the worker. Source changes discard the graph session. **Use cached routing cells only** prevents routing network reads and reports missing cache coverage; it does not put the display reader offline.
+The selectable limits are 250,000, 1 million and 2 million states (the composition default); single-map defaults remain 250,000. Cell residency has a separate 32 MiB budget. Larger state limits can consume hundreds of MiB; these are bounded prototype searches, not a planet-scale hierarchical router. Cancellation terminates the worker. Source changes discard the graph session. **Use cached routing cells only** prevents routing network reads and reports missing cache coverage; it does not put the display reader offline.
 
 Tests exercise all three modes across actual cell boundaries, immutable shared cells, nested provenance, incompatible graphs, conflicts and cached replay.
 

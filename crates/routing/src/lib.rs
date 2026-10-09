@@ -213,7 +213,12 @@ impl Graph {
         Ok(self)
     }
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(12 + self.nodes.len() * 24 + self.segments.len() * 20);
+        let size = if self.profile.is_some() {
+            20 + self.nodes.len() * 24 + self.segments.len() * 28 + self.turns.len() * 32
+        } else {
+            12 + self.nodes.len() * 24 + self.segments.len() * 20
+        };
+        let mut out = Vec::with_capacity(size);
         out.extend_from_slice(if self.profile.is_some() {
             b"RTE2"
         } else {

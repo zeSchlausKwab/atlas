@@ -84,7 +84,17 @@ The following local-data experiments assume **Run tools on → This device**:
 
 ## Compose hosted maps
 
-Open **http://127.0.0.1:3100/compose**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Routing and search remain per-map through **Open tools**. See [composition design and limitations](docs/COMPOSITION.md).
+Open **http://127.0.0.1:3100/compose**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Walking, cycling and driving routes run on the client across excerpts of one shared compiled graph. Search, extraction and isochrones remain per-map through **Open tools**. See [composition design and limitations](docs/COMPOSITION.md).
+
+The larger four-region demo uses cached, pinned Austria/Slovakia/Hungary PBFs, builds one shared transport graph, and then generates the full-capability map files sequentially:
+
+```bash
+bun run data:danube --dry-run # inspect the recipe without writing
+bun run data:danube           # resumable; needs several GiB of temporary disk space
+bun run verify:composition   # graph seams + Vienna–Bratislava routes in all three modes
+```
+
+Generated recipes, preparation records and measurements live under ignored `data/`. The composition's default 2-million-state limit accommodates the longer driving search; a smaller limit is selectable. This is a bounded regional prototype, with no hierarchical planet routing yet.
 
 ## Runtime budgets and operation discovery
 
