@@ -1,6 +1,52 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Atlas — host console</title><link rel="stylesheet" href="/styles.css"></head><body class="host-page">
-<header class="masthead"><a class="brand" href="/">◭ atlas.</a><span class="masthead-note">HOST CONSOLE / 01</span><a href="/">Return to map ↗</a></header>
-<main class="host-workspace"><div class="host-heading"><div><p class="eyebrow">YOUR DATA. YOUR CAPABILITIES.</p><h1>Choose what<br>your map can do.</h1></div><p>Enable the operations you want to serve. Each tool describes its inputs and data needs; HTTP and ContextVM use the same registry.</p></div>
-<section class="host-package"><div><p class="eyebrow">CURRENT PACKAGE</p><h2 id="host-package">Loading…</h2><p id="host-coverage"></p></div><div><p class="eyebrow">CONTEXTVM</p><p id="host-cvm">Checking…</p></div></section>
-<div class="host-list-heading"><h2>Published operations</h2><button id="host-refresh">Refresh catalog</button></div><p id="host-status" role="status">Loading tools…</p><div id="host-tools"></div>
-<footer class="host-note">Local administration · Changes persist on disk. These switches control server computation; they do not remove downloadable data or disable a consumer’s locally installed tools. This first slice serves one package. Multi-package provisioning and federation come next.</footer></main><script type="module" src="/host.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Atlas — host console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="host-page">
+    <header class="masthead">
+      <a class="brand" href="/">◭ atlas.</a
+      ><span class="masthead-note">HOST CONSOLE / 01</span
+      ><a href="/">Return to map ↗</a>
+    </header>
+    <main class="host-workspace">
+      <div class="host-heading">
+        <div>
+          <p class="eyebrow">YOUR DATA. YOUR CAPABILITIES.</p>
+          <h1>Choose what<br />your map can do.</h1>
+        </div>
+        <p>
+          Enable the operations you want to serve. Each tool describes its
+          inputs and data needs; HTTP and ContextVM use the same registry.
+        </p>
+      </div>
+      <section class="host-package">
+        <div>
+          <p class="eyebrow">CURRENT PACKAGE</p>
+          <h2 id="host-package">Loading…</h2>
+          <p id="host-coverage"></p>
+        </div>
+        <div>
+          <p class="eyebrow">CONTEXTVM</p>
+          <p id="host-cvm">Checking…</p>
+        </div>
+      </section>
+      <div class="host-list-heading">
+        <h2>Published operations</h2>
+        <button id="host-refresh">Refresh catalog</button>
+      </div>
+      <p id="host-status" role="status">Loading tools…</p>
+      <div id="host-tools"></div>
+      <footer class="host-note">
+        Local administration · Changes persist on disk. These switches control
+        server computation; they do not remove downloadable data or disable a
+        consumer’s locally installed tools. This first slice serves one package.
+        Multi-package provisioning and federation come next.
+      </footer>
+    </main>
+    <script type="module" src="/host.js"></script>
+  </body>
+</html>

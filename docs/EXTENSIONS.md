@@ -1,6 +1,6 @@
 # Extensible geographic capabilities
 
-Architecture proposal — 2026-10-09. This document records the agreed direction, not an implemented plugin runtime. It extends [the hosting discussion](HOSTING-DISCUSSION.md).
+Architecture direction — 2026-10-09. The first trusted TypeScript operation slice is now implemented; see [the runnable plugin demo and current boundaries](PLUGIN-DEMO.md). The broader planning, build-plugin and federation interfaces below remain proposals. It extends [the hosting discussion](HOSTING-DISCUSSION.md).
 
 ## Principle
 
@@ -15,7 +15,7 @@ The consumer-facing interface describes and invokes capabilities. Conceptually:
 ```ts
 const operation = await atlas.capabilities.describe(operationRef, scope);
 const result = await atlas.invoke(operation.ref, input, {
-  scope,             // pinned dataset revisions + geography
+  scope, // pinned dataset revisions + geography
   execution: "auto", // or "device" / "server"
   signal,
 });
@@ -29,7 +29,10 @@ The author-facing interface gives a plugin access to data and computation. A del
 interface AtlasOperation<Input, Output> {
   descriptor: OperationDescriptor;
   plan(input: Input, context: PlanningContext): Promise<OperationPlan>;
-  run(input: Input, context: ExecutionContext): AsyncIterable<OperationEvent<Output>>;
+  run(
+    input: Input,
+    context: ExecutionContext,
+  ): AsyncIterable<OperationEvent<Output>>;
 }
 ```
 
@@ -41,16 +44,16 @@ These are illustrative types, not SDK code. `plan` reports prerequisites, availa
 
 One plugin can register several operations. Each operation declares:
 
-| Field | Purpose |
-| --- | --- |
-| Stable operation identity and semantic contract | Publisher namespace, meaning/version, documentation and conformance cases |
-| Input/output schemas | Structural validation and generated clients/forms; geometry CRS/axis order and units are explicit |
-| Data requirements | Required and optional schemas, fields, relationships and indexes; acceptable revisions and completeness |
-| Implementation identity | Plugin revision and immutable code digest; runtime/import ABI versions |
-| Execution support | Host, client, or both, with required imports and external dependencies |
-| Result behavior | Output type, streaming/checkpoint support, completeness/provenance and determinism |
-| Requested permissions and resource hints | Data scopes, optional external services, expected cost and execution needs |
-| Federation contract | Default one executor; optionally portable execution over a collection or an explicit partition/merge protocol |
+| Field                                           | Purpose                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Stable operation identity and semantic contract | Publisher namespace, meaning/version, documentation and conformance cases                                     |
+| Input/output schemas                            | Structural validation and generated clients/forms; geometry CRS/axis order and units are explicit             |
+| Data requirements                               | Required and optional schemas, fields, relationships and indexes; acceptable revisions and completeness       |
+| Implementation identity                         | Plugin revision and immutable code digest; runtime/import ABI versions                                        |
+| Execution support                               | Host, client, or both, with required imports and external dependencies                                        |
+| Result behavior                                 | Output type, streaming/checkpoint support, completeness/provenance and determinism                            |
+| Requested permissions and resource hints        | Data scopes, optional external services, expected cost and execution needs                                    |
+| Federation contract                             | Default one executor; optionally portable execution over a collection or an explicit partition/merge protocol |
 
 Host configuration separately sets enabled datasets, granted permissions, enforceable limits, pricing/access rules and publication. A plugin cannot grant itself access or raise its own quotas by editing its descriptor. Cost hints and completeness claims are claims to validate, not enforcement mechanisms.
 
@@ -84,11 +87,11 @@ Unknown optional families can be ignored by readers. A requested operation requi
 
 ## Execution choices
 
-| Authoring/execution option | Intended use | Portability |
-| --- | --- | --- |
-| Trusted TypeScript/Bun plugin | Host customization and wrapping today's engine | Host by default; browser support only when its dependencies permit it |
-| Portable Wasm module | Shared algorithms over Atlas-provided imports | Browser worker and native/server adapters after compatibility tests |
-| Native process or external module | Existing heavy engines, special hardware, private databases/services | Host-only unless another compatible implementation exists |
+| Authoring/execution option        | Intended use                                                         | Portability                                                           |
+| --------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Trusted TypeScript/Bun plugin     | Host customization and wrapping today's engine                       | Host by default; browser support only when its dependencies permit it |
+| Portable Wasm module              | Shared algorithms over Atlas-provided imports                        | Browser worker and native/server adapters after compatibility tests   |
+| Native process or external module | Existing heavy engines, special hardware, private databases/services | Host-only unless another compatible implementation exists             |
 
 Wasm is a useful portable target, not a requirement that every plugin must satisfy. The Component Model/WIT is a candidate for the typed binary interface. Its richer interface types and canonical ABI address cross-language calling conventions; browser delivery still needs compatible tooling/bindings and implementations of the imports. Evaluate that against the current Rust/core-Wasm pipeline before choosing an ABI.
 
@@ -125,7 +128,7 @@ Cache deterministic results by contract/version, implementation digest, normaliz
 
 ## Implementation path and proof
 
-The current prototype has a closed `OperationInputs`/`OperationResults` list, a manually derived capability catalog and an HTTP switch. Replace that operation-specific registration with descriptors/adapters incrementally; preserve existing route/search APIs as wrappers and parity tests. There is no need to rewrite the renderer or routing algorithm to establish the registry.
+The prototype now retains typed `OperationInputs`/`OperationResults` for existing convenience APIs, while a registry supplies open-ended plugin dispatch for HTTP, MCP and the Tools panel. The compatibility capability catalog remains alongside the new descriptor list. There is no need to rewrite the renderer or routing algorithm to establish the registry.
 
 First proof:
 
@@ -144,4 +147,4 @@ This proof tests the abstraction through a real additional adapter. Future flood
 - [WebAssembly Component Model and WIT](https://component-model.bytecodealliance.org/design/why-component-model.html).
 - [Wasmtime imports and sandbox model](https://docs.wasmtime.dev/security.html).
 
-These references establish underlying mechanisms. The Atlas registry, lifecycle, SDK and plugin distribution design above are proposals.
+These references establish underlying mechanisms. [PLUGIN-DEMO.md](PLUGIN-DEMO.md) distinguishes the implemented registry/HTTP/MCP/worker proof from the broader proposed lifecycle and distribution model.

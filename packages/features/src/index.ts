@@ -172,7 +172,10 @@ export function decodeFeatures(bytes: Uint8Array): MapFeature[] {
 }
 export class AtlasFeatures {
   constructor(readonly reader: AtlasReader) {}
-  async *scan(q: FeatureQuery, signal?: AbortSignal): AsyncGenerator<MapFeature> {
+  async *scan(
+    q: FeatureQuery,
+    signal?: AbortSignal,
+  ): AsyncGenerator<MapFeature> {
     validateFeatureQuery(q);
     const m = this.reader.index.manifest;
     if (!m.capabilities.includes("feature-extraction"))
@@ -192,14 +195,16 @@ export class AtlasFeatures {
       Math.floor(se[1] * n),
     );
     const seen = new Set<string>();
-    let scanned = 0, bytes = 0;
+    let scanned = 0,
+      bytes = 0;
     const [key, value] = q.tag?.split("=") ?? [];
     for (const b of blocks) {
       signal?.throwIfAborted();
       const data = await this.reader.block(b.key);
       signal?.throwIfAborted();
       bytes += data.byteLength;
-      if (bytes > 64 * 1024 * 1024) throw new Error("Feature scan exceeds 64 MiB; select a smaller area.");
+      if (bytes > 64 * 1024 * 1024)
+        throw new Error("Feature scan exceeds 64 MiB; select a smaller area.");
       for (const f of decodeFeatures(data)) {
         signal?.throwIfAborted();
         if (
@@ -211,7 +216,10 @@ export class AtlasFeatures {
         )
           continue;
         seen.add(f.id);
-        if (++scanned > 100000) throw new Error("Feature scan exceeds 100,000 objects; select a smaller area.");
+        if (++scanned > 100000)
+          throw new Error(
+            "Feature scan exceeds 100,000 objects; select a smaller area.",
+          );
         yield f;
       }
     }

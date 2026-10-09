@@ -285,46 +285,147 @@ export class OperationSession {
   }
   async catalog(signal?: AbortSignal): Promise<CatalogEntry[]> {
     if (this.mode === "server" && this.remote) {
-      if (this.reader.offline) throw new Error("Server tools need a connection.");
-      const response = await fetch(`${this.remote.url}/capabilities`, { signal });
+      if (this.reader.offline)
+        throw new Error("Server tools need a connection.");
+      const response = await fetch(`${this.remote.url}/capabilities`, {
+        signal,
+      });
       if (!response.ok) throw new Error("Could not load server tools");
       const catalog = await response.json();
-      if (catalog.snapshot !== this.reader.index.manifest.snapshot) throw new Error("Server snapshot changed; reopen the package.");
+      if (catalog.snapshot !== this.reader.index.manifest.snapshot)
+        throw new Error("Server snapshot changed; reopen the package.");
       return catalog.plugins;
     }
-    return [...this.engine.registry.catalog(), ...installedPlugins.map(p => ({ ...p.descriptor, implementation: p.implementation, enabled: true, available: p.descriptor.requirements.every(r => this.reader.index.manifest.capabilities.includes(r.capability)) }))];
+    return [
+      ...this.engine.registry.catalog(),
+      ...installedPlugins.map((p) => ({
+        ...p.descriptor,
+        implementation: p.implementation,
+        enabled: true,
+        available: p.descriptor.requirements.every(
+          (r) =>
+            !r.capability ||
+            this.reader.index.manifest.capabilities.includes(r.capability),
+        ),
+      })),
+    ];
   }
-  async invokePlugin(d: CatalogEntry, input: unknown, signal: AbortSignal, progress: (message: string) => void = () => {}, mode = this.mode) {
+  async invokePlugin(
+    d: CatalogEntry,
+    input: unknown,
+    signal: AbortSignal,
+    progress: (message: string) => void = () => {},
+    mode = this.mode,
+  ) {
     if (this.dead) throw new Error("Package closed");
-    for (const purpose of d.purposes) if (!this.enabled.has(purpose as Capability)) throw new Error(`${purpose} is disabled in Data settings.`);
-    if (!d.enabled || !d.available) throw new Error("This tool is unavailable or disabled by the host.");
+    if (!d.execution.includes(mode))
+      throw new Error(`This tool does not support ${mode} execution.`);
+    for (const purpose of d.purposes)
+      if (!this.enabled.has(purpose as Capability))
+        throw new Error(`${purpose} is disabled in Data settings.`);
+    if (!d.enabled || !d.available)
+      throw new Error("This tool is unavailable or disabled by the host.");
     this.pluginAbort?.abort();
-    const controller = this.pluginAbort = new AbortController();
+    const controller = (this.pluginAbort = new AbortController());
     const combined = AbortSignal.any([signal, controller.signal]);
-    const request = structuredClone(input), start = performance.now(), before = this.reader.bytesRead;
+    const request = structuredClone(input),
+      start = performance.now(),
+      before = this.reader.bytesRead;
     if (mode === "server") {
-      if (!this.remote || this.reader.offline) throw new Error("Server tools need a connection.");
-      const response = await fetch(`${this.remote.url}/${encodeURIComponent(d.id)}`, { signal: combined, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot: this.reader.index.manifest.snapshot, version: d.version, implementation: d.implementation, input: request }) });
-      const bytes = await response.arrayBuffer(), data = JSON.parse(new TextDecoder().decode(bytes));
+      if (!this.remote || this.reader.offline)
+        throw new Error("Server tools need a connection.");
+      const response = await fetch(
+        `${this.remote.url}/${encodeURIComponent(d.id)}`,
+        {
+          signal: combined,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            snapshot: this.reader.index.manifest.snapshot,
+            version: d.version,
+            implementation: d.implementation,
+            input: request,
+          }),
+        },
+      );
+      const bytes = await response.arrayBuffer(),
+        data = JSON.parse(new TextDecoder().decode(bytes));
       if (!response.ok) throw new Error(data.error ?? "Tool failed");
-      if (data.provenance?.snapshot !== this.reader.index.manifest.snapshot || data.provenance?.implementation !== d.implementation) throw new Error("Tool result identity mismatch");
+      if (
+        data.provenance?.snapshot !== this.reader.index.manifest.snapshot ||
+        data.provenance?.implementation !== d.implementation
+      )
+        throw new Error("Tool result identity mismatch");
       combined.throwIfAborted();
-      data.execution.responseBytes = bytes.byteLength; this.record(data.execution); return data;
+      data.execution.responseBytes = bytes.byteLength;
+      this.record(data.execution);
+      return data;
     }
     let result: unknown;
-    if (installedPlugins.some(p => p.descriptor.id === d.id)) result = await runPlugin(this.reader, d, request, combined, progress);
+    if (installedPlugins.some((p) => p.descriptor.id === d.id))
+      result = await runPlugin(this.reader, d, request, combined, progress);
     else {
       // Existing convenience tools keep their worker-backed transport implementation.
       this.engine.registry.check(d, request);
       const i = request as any;
-      if (d.id === "route") result = await this.localRoute(i.start, i.end, i.profile ?? "walking");
-      else if (d.id === "isochrone") result = await this.localIsochrone(i.start, i.bands, i.profile ?? "walking");
-      else result = await this.engine.registry.invoke(d, request, combined, progress);
+      if (d.id === "route" || d.id === "isochrone") {
+        const operation = d.id;
+        const cancel = () => this.cancelRoute(operation);
+        combined.throwIfAborted();
+        combined.addEventListener("abort", cancel, { once: true });
+        try {
+          const withExecution =
+            operation === "route"
+              ? await this.run(
+                  "route",
+                  i,
+                  (p) =>
+                    this.localRoute(p.start, p.end, p.profile ?? "walking"),
+                  "device",
+                )
+              : await this.run(
+                  "isochrone",
+                  i,
+                  (p) =>
+                    this.localIsochrone(
+                      p.start,
+                      p.bands,
+                      p.profile ?? "walking",
+                    ),
+                  "device",
+                );
+          const { execution: _execution, ...value } = withExecution;
+          result = value;
+        } finally {
+          combined.removeEventListener("abort", cancel);
+        }
+      } else
+        result = await this.engine.registry.invoke(
+          d,
+          request,
+          combined,
+          progress,
+        );
     }
     combined.throwIfAborted();
-    const execution: Execution = { side: "device", operation: d.id, computeMs: performance.now() - start, sourceBytes: this.reader.bytesRead - before, responseBytes: 0 };
+    const execution: Execution = {
+      side: "device",
+      operation: d.id,
+      computeMs: performance.now() - start,
+      sourceBytes: this.reader.bytesRead - before,
+      responseBytes: 0,
+    };
     this.record(execution);
-    return { result, execution, provenance: { id: d.id, version: d.version, implementation: d.implementation, snapshot: this.reader.index.manifest.snapshot } };
+    return {
+      result,
+      execution,
+      provenance: {
+        id: d.id,
+        version: d.version,
+        implementation: d.implementation,
+        snapshot: this.reader.index.manifest.snapshot,
+      },
+    };
   }
   destroy() {
     this.dead = true;

@@ -218,6 +218,6 @@ Integer zoom transitions retain the current visible geometry until the next deta
 
 ## Hosting and federation discussion
 
-[Hosting, ContextVM tools and composed maps](docs/HOSTING-DISCUSSION.md) defines the proposed dataset/package/offer/view split, host UI, capability semantics and shared-snapshot Vienna–Bratislava proof. These hosting/discovery features are not implemented yet.
+[Hosting, ContextVM tools and composed maps](docs/HOSTING-DISCUSSION.md) defines the proposed dataset/package/offer/view split, host UI, capability semantics and shared-snapshot Vienna–Bratislava proof. The first single-package host console and ContextVM operation adapter are implemented; multi-package provisioning, announcements and federation remain future work.
 
-[Extensible capabilities and plugins](docs/EXTENSIONS.md) develops the open operation registry, plugin SDK, data/build extensions and ContextVM tool projection. This is a design proposal, not an implemented plugin loader.
+[Extensible capabilities and plugins](docs/EXTENSIONS.md) develops the open operation registry, plugin SDK, data/build extensions and ContextVM tool projection. The first trusted TypeScript slice is working: a generic **Tools** tab, fingerprinted **Largest lakes** plugin, local/server comparison, GeoJSON selection/export and persisted **Host console** switches. [Try it or author a plugin](docs/PLUGIN-DEMO.md). Run `bun run demo:contextvm` for a real MCP/ContextVM round trip over an isolated local Nostr relay.

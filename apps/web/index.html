@@ -24,7 +24,8 @@
         >
           Purge caches
         </button>
-        <a href="/host">Host console ↗</a><span class="prototype">PROTOTYPE 009</span
+        <a href="/host">Host console ↗</a
+        ><span class="prototype">PROTOTYPE 009</span
         ><a
           href="https://www.openstreetmap.org/copyright"
           target="_blank"
@@ -95,7 +96,16 @@
           >
             Data
           </button>
-          <button id="tab-tools" role="tab" data-tab="tools" aria-controls="panel-tools" aria-selected="false" tabindex="-1">Tools</button>
+          <button
+            id="tab-tools"
+            role="tab"
+            data-tab="tools"
+            aria-controls="panel-tools"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Tools
+          </button>
         </div>
         <div class="execution-control">
           <label for="execution-mode">Run tools on</label
@@ -108,17 +118,41 @@
           </p>
         </div>
         <div class="sidebar-content">
-          <div id="panel-tools" role="tabpanel" aria-labelledby="tab-tools" hidden>
+          <div
+            id="panel-tools"
+            data-panel="tools"
+            tabindex="0"
+            role="tabpanel"
+            aria-labelledby="tab-tools"
+            hidden
+          >
             <section class="plugin-tools">
-              <p class="eyebrow">EXTENSIBLE OPERATIONS</p><h2>Tool workshop.</h2>
-              <p class="section-copy">Choose a tool, give it an area, and keep the result.</p>
+              <p class="eyebrow">EXTENSIBLE OPERATIONS</p>
+              <h2>Tool workshop.</h2>
+              <p class="section-copy">
+                Choose a tool, give it an area, and keep the result.
+              </p>
               <label for="tools-select">Available tools</label>
-              <div class="plugin-picker"><select id="tools-select"></select><button id="tools-refresh" title="Refresh tool catalog">Refresh</button></div>
-              <p id="tools-description" class="section-copy"></p><p id="tools-needs" class="quiet"></p>
+              <div class="plugin-picker">
+                <select id="tools-select"></select
+                ><button id="tools-refresh" title="Refresh tool catalog">
+                  Refresh
+                </button>
+              </div>
+              <p id="tools-description" class="section-copy"></p>
+              <p id="tools-needs" class="quiet"></p>
               <div id="tools-fields"></div>
-              <div class="plugin-actions"><button id="tools-run" class="primary-button">Run tool</button><button id="tools-compare">Compare device &amp; server</button><button id="tools-cancel">Cancel</button></div>
-              <p id="tools-status" role="status"></p><div id="tools-output"></div>
-              <div class="plugin-actions"><button id="tools-show" disabled>Select on map</button><button id="tools-download" disabled>Download result</button></div>
+              <div class="plugin-actions">
+                <button id="tools-run" class="primary-button">Run tool</button
+                ><button id="tools-compare">Compare device &amp; server</button
+                ><button id="tools-cancel">Cancel</button>
+              </div>
+              <p id="tools-status" role="status"></p>
+              <div id="tools-output"></div>
+              <div class="plugin-actions">
+                <button id="tools-show" disabled>Select on map</button
+                ><button id="tools-download" disabled>Download result</button>
+              </div>
               <p id="tools-identity" class="plugin-identity"></p>
             </section>
           </div>

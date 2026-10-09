@@ -16,7 +16,8 @@
     "test": "bun test",
     "test:rust": "cargo test --workspace",
     "typecheck": "tsc --noEmit",
-    "data:vienna": "bun scripts/vienna-plus.ts"
+    "data:vienna": "bun scripts/vienna-plus.ts",
+    "demo:contextvm": "bun scripts/contextvm-demo.ts"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

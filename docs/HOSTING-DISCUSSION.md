@@ -1,6 +1,6 @@
 # Hosting, capabilities and composed maps
 
-Discussion draft — 2026-10-09. Cache controls are implemented in this change. The hosting, ContextVM and federation work below is a proposal, not an implemented feature.
+Discussion draft — 2026-10-09. Cache controls and the first single-package host console, operation registry and ContextVM adapter are implemented; see [PLUGIN-DEMO.md](PLUGIN-DEMO.md). Multi-package provisioning, announcements and federation below remain proposals.
 
 Decision from this discussion: the first Vienna–Bratislava federation demo uses slices of **one shared source snapshot**. Compile once and partition the canonical output; independent compilation of different extracts is not yet a compatibility guarantee.
 
@@ -8,12 +8,12 @@ Decision from this discussion: the first Vienna–Bratislava federation demo use
 
 A map presented to a person should be a **view**. It may resolve data from a local file, one server, several mirrors, or compatible adjoining packages. Its presentation style belongs to the consumer. The data and operations available underneath it are explicit.
 
-| Concept | What it declares | Who controls it |
-| --- | --- | --- |
-| Dataset revision | Source revision, compiler/schema/profile versions, stable feature identities, immutable authenticated block catalog | Dataset producer |
-| Package | Selected geography, data families, representation/detail levels, dependency closure, completeness and attribution | Producer or excerpt builder |
-| Host offer | Package/root, delivery endpoints, enabled remote operations, limits, availability and optional price/access policy | Hoster |
-| View | Required coverage/layers, style, preferred providers, freshness and execution policy | Consumer |
+| Concept          | What it declares                                                                                                    | Who controls it             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Dataset revision | Source revision, compiler/schema/profile versions, stable feature identities, immutable authenticated block catalog | Dataset producer            |
+| Package          | Selected geography, data families, representation/detail levels, dependency closure, completeness and attribution   | Producer or excerpt builder |
+| Host offer       | Package/root, delivery endpoints, enabled remote operations, limits, availability and optional price/access policy  | Hoster                      |
+| View             | Required coverage/layers, style, preferred providers, freshness and execution policy                                | Consumer                    |
 
 Two hosts can offer the same package with different compute policies. A client may download routing data and compute locally even if the host does not offer a routing tool. Conversely, a host may offer routing results without offering graph downloads. Disabling a server operation does not revoke capabilities inherent in already downloaded public data.
 
@@ -31,12 +31,12 @@ Display zoom is not semantic completeness. A z4 picture of a mountain does not c
 
 Examples of distinct products a host could install:
 
-| Package | Data | Remote operations |
-| --- | --- | --- |
-| World countries | Generalized country polygons, stable identifiers, names | None required; ideal static asset |
-| World water + administrative areas | Chosen water detail and boundary hierarchy through municipalities | Lake extraction only if semantic lake objects are included |
-| Planet display | Selected display layers and zooms | None required |
-| Austria complete | Display, semantic objects, search indexes, routing profiles | Route, isochrone, search, reverse, extraction and supported aggregates |
+| Package                            | Data                                                              | Remote operations                                                      |
+| ---------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| World countries                    | Generalized country polygons, stable identifiers, names           | None required; ideal static asset                                      |
+| World water + administrative areas | Chosen water detail and boundary hierarchy through municipalities | Lake extraction only if semantic lake objects are included             |
+| Planet display                     | Selected display layers and zooms                                 | None required                                                          |
+| Austria complete                   | Display, semantic objects, search indexes, routing profiles       | Route, isochrone, search, reverse, extraction and supported aggregates |
 
 Administrative hierarchy is a semantic selection separate from zoom. We still need a boundary importer/representation for the first two examples; the current archive is not a ready-made global administrative dataset. Global coverage needs a suitable global source even if the resulting package is tiny. A regional file cannot supply missing world geometry.
 
@@ -46,14 +46,14 @@ The selector should show dependencies before download: choosing bicycle routing 
 
 A host installs custom plugins and enables their versioned operations and allowed parameters. Registration is an open extension mechanism, not an Atlas-maintained whitelist. Plugin authors define their semantics; the built-in operations below are examples. Effective availability is the intersection of installed implementations, package data, runtime support and host policy. See [Extensible geographic capabilities](EXTENSIONS.md) for the proposed registry, author interface and data/build extensions.
 
-| User phrase | Suggested operation | Required definition/data |
-| --- | --- | --- |
-| Find highest peak | `atlas_peak_max` | Scope; peak classification; numeric elevation and datum/units; unknown-elevation handling; complete candidate coverage |
-| Find longest road | `atlas_road_rank` | First define road: OSM way, named connected road, or route relation; measure clipped length or whole-object length; define distance method and identity/deduplication |
-| Allow lake extract | `atlas_extract_features` with kind `lake` | Explicit lake classification; retained polygons/holes and IDs; spatial index; clipped versus whole intersecting objects; limits and pagination |
-| Routing | `atlas_route` | Snapshot/package collection, origin/destination, profile and cost-model version, graph coverage, restrictions |
-| Isochrones | `atlas_isochrone` | Same traversal semantics as routing; origin, profile, time bands, contour algorithm/version |
-| Search / geocoding | `atlas_search`, `atlas_reverse_geocode` | Query/coordinate, scope and optional bias; language/ranking semantics; source completeness |
+| User phrase        | Suggested operation                       | Required definition/data                                                                                                                                              |
+| ------------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Find highest peak  | `atlas_peak_max`                          | Scope; peak classification; numeric elevation and datum/units; unknown-elevation handling; complete candidate coverage                                                |
+| Find longest road  | `atlas_road_rank`                         | First define road: OSM way, named connected road, or route relation; measure clipped length or whole-object length; define distance method and identity/deduplication |
+| Allow lake extract | `atlas_extract_features` with kind `lake` | Explicit lake classification; retained polygons/holes and IDs; spatial index; clipped versus whole intersecting objects; limits and pagination                        |
+| Routing            | `atlas_route`                             | Snapshot/package collection, origin/destination, profile and cost-model version, graph coverage, restrictions                                                         |
+| Isochrones         | `atlas_isochrone`                         | Same traversal semantics as routing; origin, profile, time bands, contour algorithm/version                                                                           |
+| Search / geocoding | `atlas_search`, `atlas_reverse_geocode`   | Query/coordinate, scope and optional bias; language/ranking semantics; source completeness                                                                            |
 
 “Highest known recorded peak in this covered area” can be answered honestly with missing elevation counts. “Highest mountain in Europe” needs a definition of Europe and verified candidate coverage for that scope. Return the definition, snapshots used, coverage, unknowns, truncation and completeness with the result. A host signature authenticates the provider; a content hash authenticates bytes. Neither alone proves that an aggregate was calculated correctly or that the source maps the real world completely.
 

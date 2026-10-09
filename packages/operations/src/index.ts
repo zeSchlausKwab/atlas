@@ -35,8 +35,11 @@ export class AtlasEngine {
     this.router = new AtlasRouter(reader, initialize);
     this.geocoder = new AtlasGeocoder(reader);
     this.features = new AtlasFeatures(reader);
-    this.registry = new OperationRegistry(reader.index.manifest, { scanFeatures: (q, signal) => this.features.scan(q, signal) });
-    for (const plugin of builtins(this)) this.registry.register(plugin, "atlas-core-1");
+    this.registry = new OperationRegistry(reader.index.manifest, {
+      scanFeatures: (q, signal) => this.features.scan(q, signal),
+    });
+    for (const plugin of builtins(this))
+      this.registry.register(plugin, "atlas-core-1");
   }
   route(start: Position, end: Position, profile: TransportMode = "walking") {
     return this.router.route(start, end, profile);

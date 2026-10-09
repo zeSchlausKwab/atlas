@@ -87,7 +87,10 @@ self.addEventListener("fetch", (event) => {
   if (
     event.request.method !== "GET" ||
     url.origin !== location.origin ||
-    !(SHELL.includes(url.pathname) || /^\/plugins\/[a-f0-9]{64}\.js$/.test(url.pathname))
+    !(
+      SHELL.includes(url.pathname) ||
+      /^\/plugins\/[a-f0-9]{64}\.js$/.test(url.pathname)
+    )
   )
     return;
   if (event.request.mode === "navigate") paused = false;

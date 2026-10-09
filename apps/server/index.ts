@@ -22,7 +22,10 @@ const snapshot = await PackageSource.open(mapPath);
 const etag = snapshot.etag;
 const pluginAssets = await buildPlugins(root);
 const plugins = await loadPlugins(root, pluginAssets);
-const installed = pluginAssets.map((asset, i) => ({ ...asset, descriptor: plugins[i]!.plugin.descriptor }));
+const installed = pluginAssets.map((asset, i) => ({
+  ...asset,
+  descriptor: plugins[i]!.plugin.descriptor,
+}));
 const built = await Bun.build({
   define: { ATLAS_PLUGIN_ASSETS: JSON.stringify(installed) },
   entrypoints: [
@@ -50,14 +53,29 @@ const engine = new AtlasEngine(
 for (const p of plugins) engine.registry.register(p.plugin, p.implementation);
 const host = new OperationHost(engine);
 let cvm: Awaited<ReturnType<typeof startContextVM>>;
-const policy = await hostPolicy(host, resolve(root, process.env.ATLAS_HOST_POLICY ?? "data/host-policy.json"), () => { void cvm?.sendToolListChanged().catch(console.error); });
+const policy = await hostPolicy(
+  host,
+  resolve(root, process.env.ATLAS_HOST_POLICY ?? "data/host-policy.json"),
+  () => {
+    void cvm?.sendToolListChanged().catch(console.error);
+  },
+);
 cvm = await startContextVM(host);
 const api = createApiHandler(engine, host);
 const routes = new Map([
   ["/host", ["apps/web/host.html", "text/html; charset=utf-8"]],
   ["/host.js", ["dist/host.js", "text/javascript; charset=utf-8"]],
-  ["/plugin-worker.js", ["dist/plugin-worker.js", "text/javascript; charset=utf-8"]],
-  ...pluginAssets.map(p => [p.url, [`dist${p.url}`, "text/javascript; charset=utf-8"]] as [string, string[]]),
+  [
+    "/plugin-worker.js",
+    ["dist/plugin-worker.js", "text/javascript; charset=utf-8"],
+  ],
+  ...pluginAssets.map(
+    (p) =>
+      [p.url, [`dist${p.url}`, "text/javascript; charset=utf-8"]] as [
+        string,
+        string[],
+      ],
+  ),
   [
     "/wasm/atlas_renderer_bg.wasm",
     ["packages/renderer/pkg/atlas_renderer_bg.wasm", "application/wasm"],
@@ -86,7 +104,8 @@ const server = Bun.serve({
   maxRequestBodySize: 16384,
   async fetch(request, bunServer) {
     const path = new URL(request.url).pathname;
-    if (path === "/admin/operations") return policy(request, bunServer.requestIP(request)?.address);
+    if (path === "/admin/operations")
+      return policy(request, bunServer.requestIP(request)?.address);
     if (path.startsWith("/api/")) return api(request);
     if (path === "/maps/demo.atlas") {
       try {
@@ -97,7 +116,13 @@ const server = Bun.serve({
       }
     }
     if (path === "/health")
-      return Response.json({ ok: true, bytes: snapshot.size, etag, name: engine.reader.index.manifest.name, contextvm: !!cvm });
+      return Response.json({
+        ok: true,
+        bytes: snapshot.size,
+        etag,
+        name: engine.reader.index.manifest.name,
+        contextvm: !!cvm,
+      });
     if (path === "/favicon.ico") return new Response(null, { status: 204 });
     const asset = routes.get(path);
     if (asset && ["GET", "HEAD"].includes(request.method))
