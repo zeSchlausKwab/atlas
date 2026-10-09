@@ -23,7 +23,7 @@ export const recipe = {
   minZoom: 0,
   maxZoom: 16,
   targetBytes: GiB,
-  maxBytes: 1.5 * GiB,
+  maxBytes: 2 * GiB,
   chunks: [
     {
       key: "vienna",
@@ -56,11 +56,16 @@ const work = resolve(root, "data/danube-build"),
 await mkdir(work, { recursive: true });
 await mkdir(hosted, { recursive: true });
 const saved = resolve(work, "recipe.json");
-if (
-  (await Bun.file(saved).exists()) &&
-  JSON.stringify(await Bun.file(saved).json()) !== JSON.stringify(recipe)
-)
-  throw new Error("Build recipe changed. Use a new build directory.");
+if (await Bun.file(saved).exists()) {
+  const previous = await Bun.file(saved).json();
+  // Raising/lowering a byte ceiling does not change the requested data. All
+  // geographic and capability changes still require a separate build directory.
+  if (
+    JSON.stringify({ ...previous, maxBytes: recipe.maxBytes }) !==
+    JSON.stringify(recipe)
+  )
+    throw new Error("Build recipe changed. Use a new build directory.");
+}
 await Bun.write(saved, JSON.stringify(recipe, null, 2));
 async function space(bytes = 3 * GiB) {
   const s = await statfs(work);
@@ -197,6 +202,8 @@ for (const chunk of recipe.chunks) {
   const record = resolve(work, chunk.key + ".job.json");
   if (await Bun.file(record).exists()) {
     const job = await Bun.file(record).json();
+    if (job.size > recipe.maxBytes)
+      throw new Error("An existing chunk exceeds the new size ceiling.");
     if (await Bun.file(resolve(hosted, job.id + ".atlas")).exists()) {
       jobs.push(job);
       continue;
