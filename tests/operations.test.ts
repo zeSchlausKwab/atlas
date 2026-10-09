@@ -346,7 +346,12 @@ test("capability discovery describes actual dependencies and legacy coverage wit
   expect(catalog.snapshot).toBe(reader.index.manifest.snapshot);
   expect(catalog.operations.route.parameters.profiles).toEqual(["walking"]);
   expect(catalog.operations.route.dependencies).toEqual([
-    { family: "routing/walking", schema: "rte", versions: [1] },
+    {
+      profile: "walking",
+      family: "routing/walking",
+      schema: "rte",
+      versions: [1],
+    },
   ]);
   expect(catalog.operations.isochrone.available).toBe(false);
   expect(catalog.operations.search.available).toBe(true);

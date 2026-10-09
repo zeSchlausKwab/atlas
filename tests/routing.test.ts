@@ -84,6 +84,7 @@ describe("Package → verified block → Rust/WASM route", () => {
         [9.018, 47],
       ]);
       expect(route.snapshot).toBe(reader.index.manifest.snapshot);
+      reader.cache.clear(); // The decoded graph owns its data after byte-cache eviction.
       reader.offline = true;
       const reverse = await router.route([9.018, 47], [9.002, 47]);
       expect(reverse.status).toBe("found");

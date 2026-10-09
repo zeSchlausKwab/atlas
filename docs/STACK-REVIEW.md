@@ -1,5 +1,37 @@
 # Stack review after transport and isochrones
 
+## Implementation update — 2026-10-09
+
+The foundation pass implements the six code-boundary changes below and the first scaling priority. The original review remains below as historical rationale. No archive regeneration or wire-version change was required.
+
+| Measure                   | Implemented boundary                                                                                                                                                                                     |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File-backed delivery      | `apps/server/package-source.ts`: pinned read-only descriptor, positional reads, bounded streaming, incremental ETag hashing, mutation detection. Atomic path replacement preserves the serving snapshot. |
+| Independent WASM facades  | `crates/routing-wasm` and `packages/routing/pkg`; server and routing worker no longer import renderer bindings. Current release binaries: render 102,748 bytes; routing 139,965 bytes.                   |
+| Map responsibilities      | `input.ts`, `tile-scheduler.ts`, `overlays.ts`; the map facade fell from 1,059 to 602 lines. Overlays have stable ordering, isolated canvas state and replacement/disposal.                              |
+| Typed operation lifecycle | Shared input/result contract and `OperationController`; immutable request input, per-tool cancellation, subscriptions, stale progress/result suppression and remote fetch abort.                         |
+| Native search boundaries  | `cells/codec.rs`, `cells/cache.rs`, `cells/snap.rs`; search retains common route/isochrone expansion. Cell memory accounting no longer rescans all resident cells for every total.                       |
+| Import ownership          | `atlas-osm-import` library owns display, transport and shared access policy; both binaries only parse arguments and call it.                                                                             |
+| Capability negotiation    | Derived catalog v1 centralizes legacy/cell profiles, schema versions, dependencies, parameter limits and extract coverage. Available through `AtlasEngine.capabilities` and `GET /api/capabilities`.     |
+
+The reader now has independent weighted LRU budgets for decoded map/label/routing/semantic/directory buffers and parsed directory pages. A wide query collects results independently of residency, so eviction cannot silently drop earlier pages. Cache-only reads also work when a verified payload remains resident after its directory page is evicted.
+
+GPU meshes use an exact vertex-buffer byte count and a 96 MiB default budget; visible tiles and zoom-transition fallbacks are protected. Parsed labels/projected road geometry use an estimated 16 MiB budget. Upload preparation is queued into approximately 4 ms frame slices, with at most six fetched/queued tiles; one expensive individual mesh can still exceed a slice. Recent offscreen meshes are retained for reuse. The UI exposes cache bytes, limits, evictions and active-view overages. See the [runtime budget contract](../README.md#runtime-budgets-and-operation-discovery) for configurable defaults and excluded working memory. This is not a total RSS or WASM heap cap; regional semantic indexes remain a scaling limitation.
+
+### Measurements and compatibility checks
+
+Visible Chromium, 1700 × 1050, normal geometry plus place/street/POI labels:
+
+- The final cold wheel/pan trace had p95 frames of 18.6 / 18.6 / 18.5 ms, maxima of 18.7 / 18.6 / 18.6 ms, and no long tasks. This preserves the preceding responsiveness gain; it is not a MapLibre comparison.
+- A 24-pan out-and-back trace around Vienna at z15.9 retained at most 100,661,988 GPU bytes, within the 100,663,296-byte budget, evicted 93 old meshes, and reported no active overage. Sampled decoded map bytes peaked at 5,111,013; parsed descriptors at 3,553,668; estimated parsed/projected labels at 12,039,712. These are retained cache measurements, not browser process memory.
+- Tilting and panning with a walking isochrone visible: p95 17.9 ms, maximum 18.7 ms, no long tasks or browser errors. Reset restored the top-down view. Independent scheduler tests prove a pan-back hit does not reupload a retained mesh.
+- Three-mode browser routes and contours still match device/server results exactly. GeoJSON export, cache-only execution, persistent reload, missing-cell pause/resume, actual disconnected reload, picker cancellation and the 390 px layout passed.
+- Full build, TypeScript, 75 Bun tests and 39 native tests passed, including the final lifecycle and cache-eviction edge checks. Shared importer tests now execute once in the library; the prior 43-test count included duplicated walking-policy tests in the two binaries.
+
+### Remaining scaling work
+
+Routing hierarchy/shortcuts, explicit per-cell completeness, all-mode polygon extraction, paged text/spatial/aggregate indexes, a disk-backed compiler, and Hashtree/Nostr remain separate feature slices. The capability catalog exposes the existing coverage limits; it does not solve them. A label/mesh worker or GPU text pipeline remains contingent on measured stalls in more demanding workloads. No such worker or WebGPU rewrite was introduced by this pass.
+
 ## What this slice establishes
 
 A single archive can deliver different representations for different jobs. Rendering, routing by mode, source-object extraction, labels and search use independent blocks. Browser and server consume the same verified bytes and run the same operation engine. Isochrones reuse routing access/cost rules and its missing-data continuation rather than becoming a separate server product.
@@ -27,7 +59,7 @@ Changes made:
 
 Visual content was not reduced. This is a small local before/after result, **not** a claim of parity with MapLibre/PMTiles. The visible CPU draw counter still measures GPU command submission, not GPU execution or total frame time. A controlled comparison needs identical geometry/detail, labels, viewport, device pixel ratio, pitch, cold/warm caches and interaction traces. Include p95/p99 frames, input latency, time to complete detail, transferred/decoded bytes and memory after a long pan.
 
-## Code boundaries to improve
+## Original code-boundary review
 
 | Current seam                                                                          | Why it matters                                                                                         | Recommended next change                                                                                                                                                                                     |
 | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -40,7 +72,7 @@ Visual content was not reduced. This is a small local before/after result, **not
 
 These are proposed boundaries, not an instruction to rewrite everything at once. The transport tests and current browser behavior are the compatibility checkpoints.
 
-## Scaling work, in order
+## Original scaling priorities
 
 1. **File-backed server and a complete cache budget.** The server currently materializes the entire archive in a Blob; range delivery should use a pinned read-only file descriptor and positional reads. Preserve snapshot consistency across path replacement. Bound decoded display bytes, directory descriptors, labels and prepared meshes independently. GPU tiles currently disappear as soon as they leave the retained view, causing repeat work when panning back.
 2. **Renderer scheduling and labels.** Measure representative dense/cold/tilted views and active isochrones. A bounded mesh/label worker pipeline is the next candidate if preparation or placement again dominates. GPU text/label placement or retained overlay geometry should be justified by those measurements. Do not assume WebGPU alone solves CPU layout and cache churn.

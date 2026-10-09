@@ -89,3 +89,17 @@ test("cancel rejects immediately even if a local read is pending, without cancel
   expect(await search).toBe("Vienna");
   pending.resolve();
 });
+
+test("disposing a controller cancels all channels and rejects new work", async () => {
+  const c = new OperationController(),
+    pending = deferred<void>();
+  const result = c
+    .run("search", { query: "Vienna" }, async () => pending.promise)
+    .catch((e) => e.name);
+  c.destroy();
+  expect(await result).toBe("AbortError");
+  await expect(
+    c.run("search", { query: "Vienna" }, async () => "late"),
+  ).rejects.toThrow("disposed");
+  pending.resolve();
+});

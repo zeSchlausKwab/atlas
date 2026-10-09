@@ -137,7 +137,7 @@ export class AtlasRouter {
       !this.reader.options.purposes.includes("routing")
     )
       throw new Error("Routing is disabled");
-    const graphCached = this.reader.cache.has(metadata.block);
+    const graphCached = !!this.engine || this.reader.cache.has(metadata.block);
     if (!this.engine) {
       if (!graphCached && this.reader.offline)
         throw new Error(

@@ -99,6 +99,7 @@ export function createApiHandler(engine: AtlasEngine) {
     pending++;
     const work = tail
       .then(async () => {
+        if (request.signal.aborted) return error("Request cancelled", 499);
         const started = performance.now(),
           before = engine.reader.bytesRead;
         try {

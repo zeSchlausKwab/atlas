@@ -135,6 +135,7 @@ describe("Local geocoding", () => {
     reader.offline = false;
     await geocoder.search("Vaduz");
     reader.offline = true;
+    reader.cache.clear();
     expect((await geocoder.search("Vaduz")).cached).toBe(true);
     await expect(geocoder.reverse([9.515, 47.14])).rejects.toThrow(
       "not cached",
@@ -142,6 +143,7 @@ describe("Local geocoding", () => {
     reader.offline = false;
     await geocoder.reverse([9.515, 47.14]);
     reader.offline = true;
+    reader.cache.clear();
     expect((await geocoder.reverse([9.515, 47.14])).cached).toBe(true);
     expect(reader.requests).toBe(4);
   });

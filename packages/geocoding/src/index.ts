@@ -127,7 +127,7 @@ export class AtlasGeocoder {
   async search(query: string, limit = 8): Promise<SearchResult> {
     const q = normalize(query),
       snapshot = this.reader.index.manifest.snapshot,
-      cached = this.reader.cache.has("search/locations");
+      cached = !!this.names || this.reader.cache.has("search/locations");
     if (!Number.isInteger(limit) || limit < 1 || limit > 30)
       throw new Error("Search limit must be 1–30");
     if (q.length < 2 || q.length > 120)
@@ -179,7 +179,7 @@ export class AtlasGeocoder {
   async reverse(point: Position): Promise<ReverseResult> {
     if (!validPosition(point))
       throw new Error("Invalid longitude/latitude coordinate");
-    const cached = this.reader.cache.has("search/streets");
+    const cached = !!this.roads || this.reader.cache.has("search/streets");
     if (!this.roads) {
       this.pendingRoads ??= this.load("search/streets", "reverse-street")
         .then((bytes) => {

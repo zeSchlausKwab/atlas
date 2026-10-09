@@ -46,7 +46,7 @@ The server prefers Vienna Plus when present. **Draw your offline world** selects
 | Format + reader   | `packages/format`, `docs/FORMAT.md`    | Experimental single-file layout, block directory, SHA-256 checks, local-file and HTTP readers                                            |
 | Delivery server   | `apps/server`                          | Bun HTTP server, byte ranges, strong ETags, pinned map operations and browser assets                                                     |
 
-`crates/routing` contains the shared native/WASM graph codec, snapping and shortest-path engine; `packages/routing` connects it to the package reader. See [routing design and profile](docs/ROUTING.md). `packages/geocoding` compiles and reads named-location and street indexes for local forward/reverse lookup; see [geocoding design](docs/GEOCODING.md).
+`crates/routing` contains the shared native graph codec, snapping and shortest-path engine; `crates/routing-wasm` exposes it independently of rendering. `packages/routing` connects that facade to the package reader. See [routing design and profile](docs/ROUTING.md). `packages/geocoding` compiles and reads named-location and street indexes for local forward/reverse lookup; see [geocoding design](docs/GEOCODING.md).
 
 `apps/web` is an instrumented demo using those components. Roads, landcover, water, buildings, railways, paths, and peak markers are rendered by the WASM library. Place labels, the scale bar, grid, search/nearest-street highlights, route line/endpoint markers, and selected-peak overlay currently use a separate Canvas2D overlay.
 
@@ -79,6 +79,29 @@ The following local-data experiments assume **Run tools on → This device**:
 - Enable **Cache only**, then move to another zoom/area: missing tiles are reported as partial. Re-enable network reads to finish the view. Viewed map blocks, directory pages and routing cells persist in a 128 MiB IndexedDB cache. It can be evicted; it is not a complete offline package.
 - Download the package, then use **Open a local file**. Data reads now use `Blob.slice`; the map package no longer comes from the server. After the app reports it is saved for offline use, its service worker also serves the HTML/JS/WASM without a network connection. You must explicitly reopen your saved map file.
 - Inspect byte counts, actual range reads, and a pinned snapshot in the right panel. The panel is hidden on narrow screens.
+
+## Runtime budgets and operation discovery
+
+The server pins a read-only file descriptor and streams byte ranges. It hashes the archive in 1 MiB chunks at startup to retain a strong ETag, so startup still reads the entire file but never allocates an archive-sized Blob. Publish regenerated archives by atomic rename, then restart the server to switch snapshots. Replacing the path while running preserves the old descriptor; modification in place is rejected.
+
+The inspector’s **Memory & reuse** section reports retained bytes, budgets and evictions. Reader defaults are 32 MiB decoded map data, 8 MiB label bytes, 16 MiB routing bytes, 16 MiB other semantic bytes, 1 MiB temporary directory bytes and an estimated 16 MiB parsed directory descriptors. The renderer separately retains an estimated 16 MiB parsed labels/projected roads and 96 MiB GPU vertex buffers. Recently visited GPU meshes are reused when panning back. Visible meshes, transition fallbacks and visible label blocks stay pinned; an oversized active view is reported as an overage, then trimmed when released.
+
+These are cache budgets, not a total-process limit. The immutable root, returned query results, in-flight payloads, regional parsed search/street indexes, place names, WASM linear-memory high-water marks, driver overhead and the current render/search working sets are additional memory. Oversized decoded blocks can be used for an operation without being retained in the reader cache. IndexedDB remains a separate 128 MiB compressed cache.
+
+```ts
+const reader = await new AtlasReader(new HttpSource(url), onRead, {
+  cacheBudgets: { map: 24 * 1024 * 1024, routing: 16 * 1024 * 1024 },
+  directoryBudget: 8 * 1024 * 1024,
+}).open();
+const map = await AtlasMap.create(canvas, reader, onStats, onError, {
+  cacheBudgets: { meshes: 64 * 1024 * 1024, labels: 12 * 1024 * 1024 },
+});
+console.log(map.memory); // retained bytes, budgets, entries, evictions, active overage
+```
+
+`GET /api/capabilities` returns a versioned, snapshot-bound operation catalog without reading data payloads. It describes block families, accepted schema versions, per-profile routing dependencies, parameter limits and source-extract coverage. The same catalog is available as `AtlasEngine.capabilities`. It adapts legacy walking archives and new transport archives without a format migration; it does not claim complete coverage outside the extract. Offline polygon export still advertises walking only.
+
+Operation requests/results have shared TypeScript contracts. The operation controller snapshots inputs, scopes cancellation to each tool, and publishes progress through subscriptions. Route and isochrone jobs share one worker channel; a newer transport job supersedes the old one. Clearing an inactive route does not cancel an isochrone. Cancelling remote work aborts its fetch; already-running server computation may finish, but its result is discarded. The server skips cancelled queued requests and keeps its bounded serialized operation queue.
 
 ## CLI
 
@@ -169,7 +192,7 @@ Before layer separation, the directory/geometry optimization reduced the Vienna 
 - Tile-directory pages are fetched only for the selected layers, region and zoom.
 - Display geometry has zoom-appropriate detail; stored z16 retains full detail and all levels z0–16 remain present.
 - Street names and POIs have separate first-visible zoom tiers. Turning either off avoids its future payload requests.
-- Routing, geocoding, queries and source geometry load only on explicit use. Disable them in Data to block tool use and future payload reads. Routing/search remain regional blocks; source geometry is paged by category and region. Server mode returns results without downloading these source blocks.
+- Routing, geocoding, queries and source geometry load only on explicit use. Disable them in Data to block tool use and future payload reads. Routing uses profile-specific cells; search remains regional blocks and source geometry is paged by category and region. Server mode returns results without downloading these source blocks.
 - Offline export includes selected display layers and labels. Add routing, search or peak queries explicitly.
 
 A restricted consumer can make the contract explicit:

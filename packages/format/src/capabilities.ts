@@ -30,6 +30,8 @@ export interface Dependency {
   schema: string;
   versions: number[];
   optional?: boolean;
+  /** Only this travel mode requires this block family. */
+  profile?: TransportMode;
 }
 export interface CapabilityDescription {
   available: boolean;
@@ -53,6 +55,7 @@ export function operationCatalog(m: Manifest) {
     profiles.map((profile) => {
       const p = routingCapability(m, profile)!;
       return {
+        profile,
         family: p.storage === "cells" ? p.prefix : p.block,
         schema: p.codec.replace(/\d+$/, ""),
         versions: [Number(p.codec.at(-1))],

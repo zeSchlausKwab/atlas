@@ -11,6 +11,7 @@ const channel = (op: Operation) =>
  * requesting tool, so clearing an old route cannot kill an active isochrone. */
 export class OperationController {
   private sequence = 0;
+  private dead = false;
   private active = new Map<
     string,
     { operation: Operation; id: number; abort: AbortController }
@@ -38,6 +39,8 @@ export class OperationController {
       progress: (p: RoutingProgress) => void,
     ) => Promise<R>,
   ): Promise<R> {
+    if (this.dead) throw new Error("Operation controller disposed");
+    const snapshot = structuredClone(input);
     const key = channel(operation),
       previous = this.active.get(key);
     if (previous) this.cancel(previous.operation);
@@ -47,8 +50,7 @@ export class OperationController {
       abort: new AbortController(),
     };
     this.active.set(key, job);
-    const signal = job.abort.signal,
-      snapshot = structuredClone(input);
+    const signal = job.abort.signal;
     let rejectAbort: () => void = () => {};
     const aborted = new Promise<never>((_, reject) => {
       rejectAbort = () => reject(signal.reason);
@@ -75,6 +77,7 @@ export class OperationController {
     }
   }
   destroy() {
+    this.dead = true;
     this.cancel();
     this.listeners.clear();
   }
