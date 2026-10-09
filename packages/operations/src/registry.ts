@@ -57,6 +57,20 @@ export class OperationError extends Error {
     super(message);
   }
 }
+export function requirementAvailable(
+  m: Manifest,
+  r: Descriptor["requirements"][number],
+) {
+  if (r.capability && !m.capabilities.includes(r.capability)) return false;
+  if (
+    r.family.startsWith("features/") &&
+    r.family !== "features/{kind}" &&
+    m.featureKinds &&
+    !m.featureKinds.includes(r.family.slice(9) as any)
+  )
+    return false;
+  return true;
+}
 const ajv = new Ajv({ strict: false, allErrors: true, ownProperties: true });
 export class OperationRegistry {
   private entries = new Map<
@@ -104,9 +118,8 @@ export class OperationRegistry {
       enabled: !this.disabled.has(p.descriptor.id),
       available:
         p.available?.(this.manifest) ??
-        p.descriptor.requirements.every(
-          (r) =>
-            !r.capability || this.manifest.capabilities.includes(r.capability),
+        p.descriptor.requirements.every((r) =>
+          requirementAvailable(this.manifest, r),
         ),
     }));
   }

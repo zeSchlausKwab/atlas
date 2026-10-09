@@ -182,6 +182,10 @@ export class AtlasFeatures {
       throw new Error(
         "This package has no selectable source geometry. Generate it with --features.",
       );
+    if (m.featureKinds && !m.featureKinds.includes(q.kind))
+      throw new Error(
+        `This package does not contain ${q.kind} source features.`,
+      );
     const z = m.featureZoom!,
       n = 2 ** z,
       nw = project(q.bounds[0], q.bounds[3]),

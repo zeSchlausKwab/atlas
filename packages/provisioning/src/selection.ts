@@ -1,0 +1,244 @@
+import {
+  MAP_LAYERS,
+  TRANSPORT_MODES,
+  project,
+  spatialAddress,
+  type Block,
+  type Manifest,
+  type MapLayer,
+  type TransportMode,
+} from "../../format/src/index";
+import { FEATURE_KINDS, type FeatureKind } from "../../features/src/index";
+import type { AtlasReader } from "../../format/src/reader";
+import {
+  bounds,
+  selectedCell,
+  intersectsRectangle,
+  validatePolygon,
+  type Polygon,
+} from "../../offline/src/geometry";
+export interface PackageSelection {
+  snapshot: string;
+  name: string;
+  polygon: Polygon;
+  minZoom: number;
+  maxZoom: number;
+  layers: MapLayer[];
+  placeNames: boolean;
+  streetNames: boolean;
+  pois: boolean;
+  profiles: TransportMode[];
+  search: boolean;
+  reverse: boolean;
+  peaks: boolean;
+  featureKinds: FeatureKind[];
+  paddingCells: number;
+  maxBytes: number;
+}
+export interface PreparationProgress {
+  phase: "planning" | "packing" | "indexing" | "verifying";
+  message: string;
+  completed: number;
+  total: number;
+  readBytes: number;
+  writtenBytes: number;
+}
+export function availability(m: Manifest) {
+  return {
+    layers: m.capabilities.includes("vector-rendering")
+      ? (m.tileLayers ?? [...MAP_LAYERS])
+      : [],
+    profiles: TRANSPORT_MODES.filter((p) => !!m.transport?.profiles[p]),
+    featureKinds: m.capabilities.includes("feature-extraction")
+      ? (m.featureKinds ?? [...FEATURE_KINDS])
+      : [],
+    labels: m.capabilities.includes("map-labels"),
+    search: m.capabilities.includes("location-search"),
+    reverse: m.capabilities.includes("reverse-street"),
+    peaks: m.capabilities.includes("peak-query"),
+  };
+}
+export function validateSelection(
+  value: unknown,
+  m: Manifest,
+): asserts value is PackageSelection {
+  if (!value || typeof value !== "object")
+    throw new Error("Invalid package selection");
+  const s = value as PackageSelection;
+  if (s.snapshot !== m.snapshot)
+    throw new Error("Source snapshot changed. Reload the host console.");
+  if (typeof s.name !== "string" || !s.name.trim() || s.name.length > 80)
+    throw new Error("Give the package a name of 1–80 characters.");
+  if (!Array.isArray(s.polygon)) throw new Error("Draw an area first.");
+  validatePolygon(s.polygon);
+  if (!intersectsRectangle(s.polygon, m.bounds))
+    throw new Error("Selection does not intersect the source map.");
+  if (
+    s.polygon.some(
+      ([x, y]) =>
+        x < m.bounds[0] ||
+        x > m.bounds[2] ||
+        y < m.bounds[1] ||
+        y > m.bounds[3],
+    )
+  )
+    throw new Error("Keep all corners inside the source map bounds.");
+  if (
+    ![s.minZoom, s.maxZoom].every(Number.isInteger) ||
+    s.minZoom < m.minZoom ||
+    s.maxZoom > m.maxZoom ||
+    s.minZoom > s.maxZoom
+  )
+    throw new Error("Choose a zoom range within the source package.");
+  const a = availability(m);
+  const subset = (v: unknown, all: readonly string[]) =>
+    Array.isArray(v) &&
+    v.every((x) => typeof x === "string" && all.includes(x)) &&
+    new Set(v).size === v.length;
+  if (
+    !subset(s.layers, a.layers) ||
+    !subset(s.profiles, a.profiles) ||
+    !subset(s.featureKinds, a.featureKinds)
+  )
+    throw new Error(
+      "A selected layer, feature category or travel mode is not available.",
+    );
+  for (const k of [
+    "placeNames",
+    "streetNames",
+    "pois",
+    "search",
+    "reverse",
+    "peaks",
+  ] as const)
+    if (typeof s[k] !== "boolean") throw new Error(`Invalid ${k} selection`);
+  if (
+    ((s.placeNames || s.streetNames || s.pois) && !a.labels) ||
+    (s.search && !a.search) ||
+    (s.reverse && !a.reverse) ||
+    (s.peaks && !a.peaks)
+  )
+    throw new Error("A selected capability is absent from this source.");
+  if (
+    !Number.isInteger(s.paddingCells) ||
+    s.paddingCells < 0 ||
+    s.paddingCells > 4
+  )
+    throw new Error("Routing padding must be 0–4 cells.");
+  if (
+    !Number.isSafeInteger(s.maxBytes) ||
+    s.maxBytes < 1024 * 1024 ||
+    s.maxBytes > 2_147_483_648
+  )
+    throw new Error("Choose an output budget between 1 MiB and 2 GiB.");
+  if (
+    !s.layers.length &&
+    !s.profiles.length &&
+    !s.featureKinds.length &&
+    !s.placeNames &&
+    !s.streetNames &&
+    !s.pois &&
+    !s.search &&
+    !s.reverse &&
+    !s.peaks
+  )
+    throw new Error("Select at least one data capability.");
+}
+export async function planPreparation(
+  reader: AtlasReader,
+  s: PackageSelection,
+  signal = new AbortController().signal,
+  report = (_: string) => {},
+) {
+  validateSelection(s, reader.index.manifest);
+  const m = reader.index.manifest,
+    box = bounds(s.polygon),
+    nw = project(box[0], box[3]),
+    se = project(box[2], box[1]),
+    chosen = new Map<string, Block>();
+  const add = (blocks: Block[]) => {
+    for (const b of blocks) chosen.set(b.key, b);
+  };
+  async function spatial(prefix: string, z: number, padding = 0) {
+    signal.throwIfAborted();
+    const n = 2 ** z;
+    return (
+      await reader.spatial(
+        prefix,
+        z,
+        Math.max(0, Math.floor(nw[0] * n) - padding),
+        Math.min(n - 1, Math.floor(se[0] * n) + padding),
+        Math.max(0, Math.floor(nw[1] * n) - padding),
+        Math.min(n - 1, Math.floor(se[1] * n) + padding),
+      )
+    ).filter((b) => {
+      const a = spatialAddress(b.key)!;
+      return selectedCell(s.polygon, z, a.x, a.y, padding);
+    });
+  }
+  for (let z = s.minZoom; z <= s.maxZoom; z++) {
+    report(`Finding selected map layers at z${z}…`);
+    for (const prefix of m.tileLayers
+      ? s.layers.map((l) => `tile/${l}`)
+      : s.layers.length
+        ? ["tile"]
+        : [])
+      add(await spatial(prefix, z));
+  }
+  for (const kind of s.featureKinds) {
+    report(`Finding ${kind} source objects…`);
+    add(await spatial(`features/${kind}`, m.featureZoom!));
+  }
+  for (const mode of s.profiles) {
+    const p = m.transport!.profiles[mode]!;
+    report(`Finding ${mode} graph cells…`);
+    add(await spatial(p.prefix, p.zoom, s.paddingCells));
+  }
+  for (const b of reader.index.blocks) {
+    if (b.key === "labels/places") {
+      if (s.placeNames) add([b]);
+      continue;
+    }
+    if (b.key.startsWith("labels/")) {
+      const [, z, x, y, family] = b.key.split("/");
+      if (
+        (family === "roads" && !s.streetNames) ||
+        (family === "pois" && !s.pois) ||
+        (!family && !s.streetNames && !s.pois)
+      )
+        continue;
+      if (selectedCell(s.polygon, +z!, +x!, +y!)) add([b]);
+    }
+    if (
+      (s.search && b.key === "search/locations") ||
+      (s.reverse && b.key === "search/streets") ||
+      (s.peaks && b.key === "query/peaks")
+    )
+      add([b]);
+  }
+  signal.throwIfAborted();
+  const blocks = [...chosen.values()].sort((a, b) => a.offset - b.offset);
+  if (!blocks.length) throw new Error("No selected data intersects this area.");
+  const families: Record<string, { blocks: number; bytes: number }> = {};
+  for (const b of blocks) {
+    const key = b.key.startsWith("tile/")
+      ? "Map geometry"
+      : b.key.startsWith("routing/")
+        ? "Routing & isochrones"
+        : b.key.startsWith("features/")
+          ? "Source features"
+          : b.key.startsWith("labels/")
+            ? "Labels"
+            : b.key.startsWith("search/")
+              ? "Search & geocoding"
+              : "Peak queries";
+    const f = (families[key] ??= { blocks: 0, bytes: 0 });
+    f.blocks++;
+    f.bytes += b.length;
+  }
+  return {
+    blocks,
+    sourceBytes: blocks.reduce((n, b) => n + b.length, 0),
+    families,
+  };
+}

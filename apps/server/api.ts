@@ -6,7 +6,7 @@ export function createApiHandler(
   host = new OperationHost(engine),
 ) {
   return async (request: Request): Promise<Response> => {
-    const operation = new URL(request.url).pathname.replace("/api/", "");
+    const operation = new URL(request.url).pathname.split("/api/").at(-1)!;
     const headers = {
       "Cache-Control": "no-store",
       "X-Atlas-Snapshot": engine.reader.index.manifest.snapshot,

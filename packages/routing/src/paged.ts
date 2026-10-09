@@ -1,3 +1,4 @@
+import { selectedCell } from "../../offline/src/geometry";
 import init, { CellWalkingRouter } from "../pkg/atlas_routing_wasm";
 import type { AtlasReader } from "../../format/src/reader";
 import {
@@ -52,7 +53,26 @@ export async function readRoutingCell(
       +m[3]!,
       +m[3]!,
     );
-    if (!blocks.length) return { empty: true, fetchedBytes: 0 };
+    if (!blocks.length) {
+      const selection = reader.index.manifest.selection;
+      if (
+        selection?.routingPaddingCells !== undefined &&
+        !selectedCell(
+          selection.polygon,
+          14,
+          +m[2]!,
+          +m[3]!,
+          selection.routingPaddingCells,
+        )
+      )
+        return {
+          missing: true,
+          reason:
+            "The route or isochrone needs cells beyond this prepared map’s routing coverage.",
+          fetchedBytes: 0,
+        };
+      return { empty: true, fetchedBytes: 0 };
+    }
     return {
       bytes: await reader.block(key),
       fetchedBytes: reader.bytesByPurpose.routing - before,

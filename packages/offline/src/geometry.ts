@@ -1,3 +1,4 @@
+import { unproject } from "../../format/src/index";
 import { validPosition, type Position } from "../../geocoding/src/model";
 export type Polygon = Position[];
 const EPS = 1e-12;
@@ -139,4 +140,24 @@ export function intersectsRectangle(
   return p.some(
     (v, i) => clipSegment(v, p[(i + 1) % p.length]!, corners).length > 0,
   );
+}
+
+/** A cell belongs to the selection if it or one of its padding neighbours intersects the polygon. */
+export function selectedCell(
+  polygon: Polygon,
+  z: number,
+  x: number,
+  y: number,
+  padding = 0,
+) {
+  const n = 2 ** z,
+    sw = unproject(
+      Math.max(0, x - padding) / n,
+      Math.min(n, y + 1 + padding) / n,
+    ),
+    ne = unproject(
+      Math.min(n, x + 1 + padding) / n,
+      Math.max(0, y - padding) / n,
+    );
+  return intersectsRectangle(polygon, [...sw, ...ne]);
 }

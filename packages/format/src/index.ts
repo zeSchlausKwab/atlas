@@ -69,7 +69,8 @@ export interface TransportProfile {
 }
 export interface TransportMetadata {
   version: 1;
-  profiles: Record<TransportMode, TransportProfile>;
+  profiles: Partial<Record<TransportMode, TransportProfile>>;
+  statistics?: "cell-records";
 }
 export function isRoutingCell(key: string) {
   return /^routing\/(?:walking\/|cycling\/|driving\/)?cells\//.test(key);
@@ -116,6 +117,7 @@ export interface Manifest {
   transport?: TransportMetadata;
   labelZoom?: number;
   featureZoom?: number;
+  featureKinds?: ("buildings" | "water" | "railways" | "roads" | "land")[];
   tileLayers?: MapLayer[];
   buildingHeights?: {
     tagged: number;
@@ -129,6 +131,7 @@ export interface Manifest {
     polygon: [number, number][];
     parentSnapshot: string;
     boundaryPolicy: string;
+    routingPaddingCells?: number;
   };
 }
 export interface Block {
@@ -306,17 +309,36 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     )
       throw new Error("Invalid selection metadata");
   }
+  if (
+    manifest.featureKinds &&
+    (!Array.isArray(manifest.featureKinds) ||
+      new Set(manifest.featureKinds).size !== manifest.featureKinds.length ||
+      manifest.featureKinds.some(
+        (k) => !["buildings", "water", "railways", "roads", "land"].includes(k),
+      ))
+  )
+    throw new Error("Invalid feature category metadata");
+  if (
+    manifest.selection?.routingPaddingCells !== undefined &&
+    (!Number.isInteger(manifest.selection.routingPaddingCells) ||
+      manifest.selection.routingPaddingCells < 0 ||
+      manifest.selection.routingPaddingCells > 4)
+  )
+    throw new Error("Invalid routing selection padding");
   if (manifest.transport) {
     if (
       manifest.transport.version !== 1 ||
       !manifest.transport.profiles ||
-      Object.keys(manifest.transport.profiles).length !== 3
+      Object.keys(manifest.transport.profiles).length === 0 ||
+      Object.keys(manifest.transport.profiles).some(
+        (k) => !TRANSPORT_MODES.includes(k as TransportMode),
+      )
     )
       throw new Error("Invalid transport metadata");
     for (const mode of TRANSPORT_MODES) {
       const p = manifest.transport.profiles[mode];
+      if (!p) continue;
       if (
-        !p ||
         p.prefix !== `routing/${mode}/cells` ||
         p.zoom !== 14 ||
         p.codec !== "rcl2" ||

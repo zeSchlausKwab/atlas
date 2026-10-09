@@ -20,6 +20,14 @@ export class DiskWriter {
     readonly output: string,
     readonly maxBytes: number,
   ) {}
+  get bytesWritten() {
+    return this.length;
+  }
+  async abort() {
+    await this.spool?.close().catch(() => {});
+    await rm(`${this.output}.payload.part`, { force: true });
+    await rm(`${this.output}.part`, { force: true });
+  }
   async open() {
     this.spool = await open(`${this.output}.payload.part`, "w");
     return this;
