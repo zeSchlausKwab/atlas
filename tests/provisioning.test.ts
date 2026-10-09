@@ -176,9 +176,15 @@ test("selection validates snapshot, capabilities, bounds and polygon before read
       ],
     },
     { ...s, featureKinds: [] },
-    { ...s, maxBytes: 2 ** 32 },
+    { ...s, maxBytes: Number.MAX_SAFE_INTEGER + 1 },
   ])
     expect(() => validateSelection(invalid, f.reader.index.manifest)).toThrow();
+  expect(() =>
+    validateSelection(
+      { ...s, maxBytes: 10 * 1024 * 1024 * 1024 },
+      f.reader.index.manifest,
+    ),
+  ).not.toThrow();
   expect(f.reader.bytesByPurpose.features).toBe(0);
   const abort = new AbortController();
   abort.abort();
@@ -194,6 +200,15 @@ test("background jobs publish atomically, restore after restart, reject CSRF, an
     f.reader.index.manifest,
   );
   try {
+    const info = await manager.handle(
+      new Request("http://localhost/admin/preparations"),
+      "127.0.0.1",
+    );
+    const payload = await info.json();
+    expect(payload.storage.availableBytes).toBeGreaterThan(0);
+    expect(payload.storage.totalBytes).toBeGreaterThanOrEqual(
+      payload.storage.availableBytes,
+    );
     const bad = await manager.handle(
       new Request("http://localhost/admin/preparations", {
         method: "POST",

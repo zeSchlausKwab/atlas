@@ -164,11 +164,26 @@
               >Maximum output size (MiB)<input
                 id="prepare-budget"
                 type="number"
+                step="any"
                 value="2048"
                 min="1"
-                max="2048"
                 required
             /></label>
+            <input
+              id="prepare-budget-slider"
+              class="host-budget-slider"
+              type="range"
+              min="0"
+              max="1000"
+              step="1"
+              aria-label="Maximum output size slider"
+              aria-describedby="prepare-budget-value"
+            />
+            <output
+              id="prepare-budget-value"
+              class="host-budget-value"
+              for="prepare-budget prepare-budget-slider"
+            ></output>
             <p class="quiet">
               Tiles, source objects and routing cells touching the outline can
               extend beyond it. Search and label geometry are clipped. The
@@ -179,10 +194,25 @@
                 >Maximum source download (MiB)<input
                   id="prepare-source-budget"
                   type="number"
+                  step="any"
                   min="1"
-                  max="2048"
                   value="2048"
               /></label>
+              <input
+                id="prepare-source-budget-slider"
+                class="host-budget-slider"
+                type="range"
+                min="0"
+                max="1000"
+                step="1"
+                aria-label="Maximum source download slider"
+                aria-describedby="prepare-source-budget-value"
+              />
+              <output
+                id="prepare-source-budget-value"
+                class="host-budget-value"
+                for="prepare-source-budget prepare-source-budget-slider"
+              ></output>
               <p class="quiet">
                 We download one covering regional PBF, then crop it locally.
                 This budget is separate from the finished Atlas file. Verified
@@ -199,6 +229,30 @@
                 Draw an area to find its source.
               </div>
             </div>
+            <section class="host-storage" aria-label="Server storage">
+              <div class="host-storage-heading">
+                <h3>Server storage</h3>
+                <button id="prepare-storage-refresh" type="button">
+                  Refresh space
+                </button>
+              </div>
+              <p id="prepare-storage-free" role="status">
+                Checking available disk space…
+              </p>
+              <meter
+                id="prepare-storage-meter"
+                min="0"
+                max="1"
+                value="0"
+                aria-label="Available server disk space"
+              ></meter>
+              <p id="prepare-storage-estimate"></p>
+              <p class="quiet">
+                Space on the server’s map storage volume. Preparation also needs
+                temporary files. This estimate is checked again before starting;
+                it does not reserve disk space or measure RAM.
+              </p>
+            </section>
             <button
               id="prepare-submit"
               class="host-primary"

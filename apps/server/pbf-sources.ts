@@ -74,7 +74,7 @@ export class PbfSources {
     } = await this.inspect(region);
     if (bytes > input.maxSourceBytes)
       throw new Error(
-        `${region.name} is the smallest covering region by area, but its PBF is ${(bytes / 1048576).toFixed(0)} MiB, above your ${(input.maxSourceBytes / 1048576).toFixed(0)} MiB download limit. Choose another area or less routing padding. The full regional PBF must be downloaded before cropping.`,
+        `${region.name} is the smallest covering region by area, but its PBF is ${(bytes / 1048576).toFixed(0)} MiB, above your ${(input.maxSourceBytes / 1048576).toFixed(0)} MiB download limit. Increase the source budget, or choose a smaller area or less routing padding. The full regional PBF must be downloaded before cropping.`,
       );
     const plan: PbfPlan = {
       id: crypto.randomUUID(),
@@ -103,7 +103,7 @@ export class PbfSources {
       response = await this.request(sourceUrl, {
         method: "HEAD",
         redirect: "manual",
-        // Geofabrik's redirect proxy can stall Bun HEAD keep-alive connections.
+        // Metadata probes are infrequent; use a fresh connection for each one.
         headers: { Connection: "close" },
       });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;

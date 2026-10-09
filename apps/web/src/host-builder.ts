@@ -1,3 +1,10 @@
+import { budgetControl, storageSize } from "./host-budget";
+import {
+  preparationSpace,
+  capacityBudget,
+  validBudget,
+  type StorageInfo,
+} from "../../../packages/provisioning/src/capacity";
 import { createPreview, type HostPreview } from "./host-preview";
 import {
   validatePolygon,
@@ -31,6 +38,46 @@ let source: Manifest,
 let installedScope: SelectionScope,
   globalScope: SelectionScope,
   sourcePlan: PbfPlan | undefined;
+let storage: StorageInfo | undefined;
+let outputBudget: ReturnType<typeof budgetControl> | undefined,
+  sourceBudget: ReturnType<typeof budgetControl> | undefined;
+const outputBytes = () =>
+  el<HTMLInputElement>("budget").valueAsNumber * 1048576;
+const sourceBytes = () =>
+  el<HTMLInputElement>("source-budget").valueAsNumber * 1048576;
+function spaceNeeded() {
+  return preparationSpace(
+    outputBytes(),
+    global() ? (sourcePlan?.bytes ?? sourceBytes()) : undefined,
+  );
+}
+function renderStorage() {
+  const available = storage?.availableBytes;
+  el("storage-meter").hidden = available === undefined;
+  if (available !== undefined) {
+    el("storage-free").textContent =
+      `${storageSize(available)} available of ${storageSize(storage!.totalBytes)}`;
+    const meter = el<HTMLMeterElement>("storage-meter");
+    meter.max = storage!.totalBytes || 1;
+    meter.value = available;
+    outputBudget?.setCapacity(capacityBudget(available, "output", global()));
+    sourceBudget?.setCapacity(capacityBudget(available, "source", global()));
+  }
+  const estimate = el("storage-estimate");
+  if (
+    !validBudget(outputBytes()) ||
+    (global() && !validBudget(sourceBytes()))
+  ) {
+    estimate.textContent = "Enter valid budgets to estimate preparation space.";
+    estimate.dataset.insufficient = "false";
+    return;
+  }
+  const needed = spaceNeeded();
+  estimate.dataset.insufficient = String(
+    available !== undefined && needed > available,
+  );
+  estimate.textContent = `${storageSize(needed)} estimated workspace${global() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
+}
 let checking = false,
   submitting = false,
   planKey = "";
@@ -80,9 +127,16 @@ function update() {
     el("source-plan").textContent =
       "Selection changed or source plan expired. Check the PBF source again.";
   }
-  el<HTMLButtonElement>("check-source").disabled = !closed || checking;
+  const valid =
+    validBudget(outputBytes()) && (!global() || validBudget(sourceBytes()));
+  el<HTMLButtonElement>("check-source").disabled =
+    !closed || checking || !validBudget(sourceBytes());
   el<HTMLButtonElement>("submit").disabled =
-    !closed || submitting || (global() && !sourcePlan);
+    !closed ||
+    submitting ||
+    !valid ||
+    (global() && !sourcePlan) ||
+    (storage !== undefined && spaceNeeded() > storage.availableBytes);
   el("submit").textContent = global()
     ? "Download, prepare & host ↗"
     : "Prepare & host map ↗";
@@ -93,6 +147,7 @@ function update() {
       : mode === "polygon"
         ? `${points.length} corners · click to add, then Finish polygon.`
         : "Choose Rectangle or Polygon to draw an area.";
+  renderStorage();
   for (const k of ["rect", "polygon"])
     el(k).setAttribute("aria-pressed", String(mode === k));
 }
@@ -331,6 +386,14 @@ async function refresh() {
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
     jobs(data.jobs);
+    storage =
+      typeof data.storage?.availableBytes === "number"
+        ? data.storage
+        : undefined;
+    if (!storage)
+      el("storage-free").textContent =
+        "Server disk information is unavailable. Preparation will check again before starting.";
+    renderStorage();
     return data;
   } catch (e) {
     el("message").textContent = String(e);
@@ -416,6 +479,8 @@ function configureSource() {
       false,
     );
   el("global-controls").hidden = !global();
+  el<HTMLInputElement>("source-budget").disabled = !global();
+  el<HTMLInputElement>("source-budget").required = global();
   el("jump-controls").hidden = !global();
   el("fit").textContent = global() ? "Fit world" : "Fit source";
   const local = el<HTMLSelectElement>(
@@ -429,6 +494,18 @@ function configureSource() {
   clear();
 }
 export async function startBuilder() {
+  outputBudget = budgetControl("prepare-budget");
+  sourceBudget = budgetControl("prepare-source-budget");
+  el("storage-refresh").onclick = async () => {
+    const button = el<HTMLButtonElement>("storage-refresh");
+    button.disabled = true;
+    try {
+      await refresh();
+      update();
+    } finally {
+      button.disabled = false;
+    }
+  };
   const data = await refresh();
   if (!data) return;
   source = data.source;
@@ -592,6 +669,13 @@ export async function startBuilder() {
     if (!document.hidden) {
       await refresh();
       if (sourcePlan && sourcePlan.expiresAt <= Date.now()) update();
+      else
+        el<HTMLButtonElement>("submit").disabled =
+          !closed ||
+          submitting ||
+          !validBudget(outputBytes()) ||
+          (global() && (!sourcePlan || !validBudget(sourceBytes()))) ||
+          (storage !== undefined && spaceNeeded() > storage.availableBytes);
     }
     setTimeout(() => void poll(), 1500);
   };

@@ -1,4 +1,6 @@
-import { mkdir, readdir, rename, rm, statfs } from "node:fs/promises";
+import { preparationSpace } from "../../packages/provisioning/src/capacity";
+import { readStorage } from "./storage";
+import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Manifest } from "../../packages/format/src/index";
 import {
@@ -117,16 +119,11 @@ export class Preparations {
     const id = crypto.randomUUID();
     this.active = id;
     try {
-      const disk = await statfs(this.directory);
-      if (
-        disk.bavail * disk.bsize <
-        (plan
-          ? plan.bytes * 3 + Math.max(value.maxBytes, 64 * 1048576) * 6
-          : value.maxBytes * 2) +
-          64 * 1024 * 1024
-      )
+      const disk = await readStorage(this.directory);
+      const needed = preparationSpace(value.maxBytes, plan?.bytes);
+      if (disk.availableBytes < needed)
         throw new Error(
-          "Insufficient free disk space for the source, selected output budget and temporary compilation files. Lower the budget or choose a smaller area.",
+          `Not enough server disk space: ${(needed / 1073741824).toFixed(2)} GiB estimated, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Lower the output budget or select a smaller source.`,
         );
       const job: PreparationJob = {
         id,
@@ -271,6 +268,9 @@ export class Preparations {
       return json({ error: "Local administration only" }, 403);
     if (request.method === "GET" && url.pathname === "/admin/preparations")
       return json({
+        storage: await readStorage(this.directory).catch(() => ({
+          error: "Server disk information is unavailable.",
+        })),
         source: this.source,
         available: availability(this.source),
         globalSource: {

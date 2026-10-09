@@ -1,3 +1,4 @@
+import { validBudget } from "./capacity";
 import area from "@turf/area";
 import difference from "@turf/difference";
 import type { Feature, MultiPolygon, Polygon as GeoPolygon } from "geojson";
@@ -77,12 +78,10 @@ export function validateSourceArea(v: unknown): asserts v is SourceArea {
     new Set(a.profiles).size !== a.profiles.length
   )
     throw new Error("Invalid travel modes.");
-  if (
-    !Number.isSafeInteger(a.maxSourceBytes) ||
-    a.maxSourceBytes < 1048576 ||
-    a.maxSourceBytes > 2147483648
-  )
-    throw new Error("Source download budget must be 1–2048 MiB.");
+  if (!validBudget(a.maxSourceBytes))
+    throw new Error(
+      "Enter a source download budget of at least 1 MiB, with an exact whole-byte value.",
+    );
 }
 /** Import full z14 cells plus a one-cell guard; final preparation selects the requested polygon/cells. */
 export function importBounds(a: SourceArea): Bounds {

@@ -1,3 +1,4 @@
+import { validBudget } from "./capacity";
 import {
   MAP_LAYERS,
   TRANSPORT_MODES,
@@ -152,12 +153,10 @@ export function validateSelectionScope(
     s.paddingCells > 4
   )
     throw new Error("Routing padding must be 0–4 cells.");
-  if (
-    !Number.isSafeInteger(s.maxBytes) ||
-    s.maxBytes < 1024 * 1024 ||
-    s.maxBytes > 2_147_483_648
-  )
-    throw new Error("Choose an output budget between 1 MiB and 2 GiB.");
+  if (!validBudget(s.maxBytes))
+    throw new Error(
+      "Enter an output budget of at least 1 MiB, with an exact whole-byte value.",
+    );
   if (
     !s.layers.length &&
     !s.profiles.length &&
