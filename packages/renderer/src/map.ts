@@ -1,5 +1,7 @@
+import { defaultOverlays } from "./overlays";
+import { MapInput } from "./input";
 import type { Reachable } from "../../routing/src/index";
-import { TilePresentation, type TileView } from "./tile-presentation";
+import { TileScheduler } from "./tile-scheduler";
 import { PLACE_LABEL_KEY, decodePlaces } from "../../labels/src/places";
 import type { Place } from "../../format/src/index";
 import {
@@ -11,13 +13,10 @@ import {
   type MapScene,
 } from "./style";
 import {
-  worldProjector,
   cameraBounds,
   fitZoom,
   groundDelta,
   metersPerPixel,
-  projectScreen,
-  worldToScreen,
   screenToWorld,
   type Camera,
 } from "./camera";
@@ -44,6 +43,7 @@ export interface MapOptions {
   placeNames?: boolean;
   streetNames?: boolean;
   pois?: boolean;
+  cacheBudgets?: { meshes?: number; labels?: number };
 }
 export interface MapStats {
   zoom: number;
@@ -58,6 +58,7 @@ export interface MapStats {
 }
 export class AtlasMap {
   renderer!: Renderer;
+  readonly overlays = defaultOverlays();
   private featureOverlay = new FeatureOverlay();
   onFeatureSelect?: (id: string) => void;
   setFeatures(features: MapFeature[], selected: Set<string>) {
@@ -157,26 +158,10 @@ export class AtlasMap {
   private endpoints: [Position | null, Position | null] = [null, null];
   private route: Extract<WalkingResult, { status: "found" }> | null = null;
   private layerMask = 255;
-  private loaded = new Set<string>();
-  private presentation = new TilePresentation();
-  private loading = new Set<string>();
-  private failed = new Set<string>();
-  private wanted: string[] = [];
-  private catalogLoading = new Set<string>();
-  private catalogFailed = new Set<string>();
-  private catalogMissing = 0;
+  private tiles!: TileScheduler;
   private dead = false;
   private frame = 0;
-  private drag: {
-    mode: "pan" | "orbit";
-    pointerId: number;
-    x: number;
-    y: number;
-    startX: number;
-    startY: number;
-    moved: boolean;
-  } | null = null;
-  private abort = new AbortController();
+  private input!: MapInput;
   private observer: ResizeObserver;
   private lastDraw = 0;
   private triangles = 0;
@@ -186,8 +171,14 @@ export class AtlasMap {
     readonly reader: AtlasReader,
     readonly onStats: (stats: MapStats) => void,
     readonly onError: (message: string) => void,
+    options: MapOptions,
   ) {
-    this.labels = new MapLabels(reader, () => this.invalidate(), onError);
+    this.labels = new MapLabels(
+      reader,
+      () => this.invalidate(),
+      onError,
+      options.cacheBudgets?.labels,
+    );
     this.overlay = document.createElement("canvas");
     this.overlay.className = "map-overlay";
     canvas.after(this.overlay);
@@ -202,8 +193,22 @@ export class AtlasMap {
     options: MapOptions = {},
   ) {
     await init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
-    const map = new AtlasMap(canvas, reader, onStats, onError);
+    const map = new AtlasMap(canvas, reader, onStats, onError, options);
     map.renderer = new Renderer(canvas);
+    map.tiles = new TileScheduler(
+      reader,
+      {
+        upload: (b, bytes) => {
+          map.renderer.add_tile_part(b.key, b.z!, b.x!, b.y!, bytes);
+          return map.renderer.tile_bytes(b.key);
+        },
+        remove: (key) => map.renderer.remove_tile(key),
+        show: (keys) => map.renderer.set_visible(keys.join(",")),
+      },
+      () => map.invalidate(),
+      onError,
+      options.cacheBudgets?.meshes,
+    );
     map.setStyle(options.style ?? PAPER);
     map.setScene(options.scene ?? FLAT_SCENE);
     map.setLayers(options.layers ?? 255);
@@ -217,188 +222,54 @@ export class AtlasMap {
     return map;
   }
   private events() {
-    const options = { signal: this.abort.signal };
-    this.canvas.addEventListener(
-      "pointerdown",
-      (event) => {
-        if (this.drag || ![0, 2].includes(event.button)) return;
-        event.preventDefault();
-        this.canvas.focus({ preventScroll: true });
-        this.drag = {
-          mode:
-            event.button === 2 || event.metaKey || event.ctrlKey
-              ? "orbit"
-              : "pan",
-          pointerId: event.pointerId,
-          x: event.clientX,
-          y: event.clientY,
-          startX: event.clientX,
-          startY: event.clientY,
-          moved: false,
-        };
-        this.canvas.setPointerCapture(event.pointerId);
-      },
-      options,
-    );
-    this.canvas.addEventListener(
-      "pointermove",
-      (event) => {
-        if (!this.drag || this.drag.pointerId !== event.pointerId) return;
-        if (
-          Math.hypot(
-            event.clientX - this.drag.startX,
-            event.clientY - this.drag.startY,
-          ) > 5
-        )
-          this.drag.moved = true;
-        if (!this.drag.moved) return;
-        if (this.drag.mode === "orbit") {
-          this.orbit(event.clientX - this.drag.x, event.clientY - this.drag.y);
-          this.drag.x = event.clientX;
-          this.drag.y = event.clientY;
-          return;
-        }
-        const scale = 256 * 2 ** this.zoom;
+    this.input = new MapInput(this.canvas, {
+      pan: (x, y) => {
         const [dx, dy] = groundDelta(
-          event.clientX - this.drag.x,
-          event.clientY - this.drag.y,
+          x,
+          y,
           this.scene.pitch,
           this.scene.bearing,
         );
+        const scale = 256 * 2 ** this.zoom;
         this.center = [
           this.center[0] - dx / scale,
           this.center[1] - dy / scale,
         ];
-        this.drag.x = event.clientX;
-        this.drag.y = event.clientY;
         this.invalidate();
       },
-      options,
-    );
-    this.canvas.addEventListener(
-      "pointerup",
-      (event) => {
-        if (!this.drag || this.drag.pointerId !== event.pointerId) return;
-        if (this.drag.mode === "orbit") {
-          this.drag = null;
+      orbit: (x, y) => this.orbit(x, y),
+      zoom: (delta, x, y) => this.zoomAt(this.zoom + delta, x, y),
+      click: (x, y) => {
+        if (this.picker) {
+          this.picker.choose(unproject(...screenToWorld([x, y], this.camera)));
           return;
         }
-        const wasPicking = !!this.picker;
-        if (this.drag && !this.drag.moved && this.picker) {
-          const box = this.canvas.getBoundingClientRect();
-          this.picker?.choose(
-            unproject(
-              ...screenToWorld(
-                [event.clientX - box.left, event.clientY - box.top],
-                this.camera,
-              ),
-            ),
-          );
-        }
-        if (this.drag && !this.drag.moved && !wasPicking) {
-          const box = this.canvas.getBoundingClientRect();
-          const feature = this.featureOverlay.pick(
-            this.overlay.getContext("2d")!,
-            event.clientX - box.left,
-            event.clientY - box.top,
-          );
-          if (feature) {
-            this.onFeatureSelect?.(feature);
-            this.drag = null;
-            return;
-          }
-          const poi = this.labels.pick(
-            event.clientX - box.left,
-            event.clientY - box.top,
-          );
-          if (poi) this.onPoiSelect?.(poi);
-        }
-        this.drag = null;
-      },
-      options,
-    );
-    for (const name of ["pointercancel", "lostpointercapture"])
-      this.canvas.addEventListener(
-        name,
-        () => {
-          this.drag = null;
-        },
-        options,
-      );
-    this.canvas.addEventListener(
-      "contextmenu",
-      (event) => event.preventDefault(),
-      options,
-    );
-    this.canvas.addEventListener(
-      "wheel",
-      (event) => {
-        event.preventDefault();
-        const unit =
-          event.deltaMode === 1
-            ? 16
-            : event.deltaMode === 2
-              ? this.canvas.clientHeight
-              : 1;
-        if (event.metaKey) {
-          this.orbit(event.deltaX * unit, event.deltaY * unit);
-          return;
-        }
-        const box = this.canvas.getBoundingClientRect();
-        this.zoomAt(
-          this.zoom - event.deltaY * unit * 0.002,
-          event.clientX - box.left - box.width / 2,
-          event.clientY - box.top - box.height / 2,
+        const feature = this.featureOverlay.pick(
+          this.overlay.getContext("2d")!,
+          x,
+          y,
         );
+        if (feature) {
+          this.onFeatureSelect?.(feature);
+          return;
+        }
+        const poi = this.labels.pick(x, y);
+        if (poi) this.onPoiSelect?.(poi);
       },
-      { ...options, passive: false },
-    );
-    this.canvas.addEventListener(
-      "keydown",
-      (event) => {
-        const shifts: Record<string, [number, number]> = {
-          ArrowLeft: [-80, 0],
-          ArrowRight: [80, 0],
-          ArrowUp: [0, -80],
-          ArrowDown: [0, 80],
-        };
-        if (event.key === "Enter" && this.picker) {
-          event.preventDefault();
-          if (this.picker.finish) this.picker.finish();
-          else this.picker.choose(unproject(...this.center));
-        } else if (event.key === " " && this.picker) {
-          event.preventDefault();
-          this.picker.choose(unproject(...this.center));
-        } else if (event.key === "Escape" && this.picker) {
-          const cancel = this.picker.cancel;
-          this.endPicking(this.picker.owner);
-          cancel();
-        } else if (
-          shifts[event.key] &&
-          (event.metaKey || event.ctrlKey || event.shiftKey)
-        ) {
-          event.preventDefault();
-          this.orbit(shifts[event.key]![0] / 4, shifts[event.key]![1] / 4);
-        } else if (event.key.toLowerCase() === "r") {
-          event.preventDefault();
+      command: (command) => {
+        if (command === "reset") {
           this.resetView();
-        } else if (shifts[event.key]) {
-          event.preventDefault();
-          const [x, y] = groundDelta(
-            ...shifts[event.key]!,
-            this.scene.pitch,
-            this.scene.bearing,
-          );
-          this.center = [
-            this.center[0] + x / (256 * 2 ** this.zoom),
-            this.center[1] + y / (256 * 2 ** this.zoom),
-          ];
-          this.invalidate();
-        } else if (event.key === "+" || event.key === "=") this.zoomBy(1);
-        else if (event.key === "-") this.zoomBy(-1);
+          return;
+        }
+        const picker = this.picker;
+        if (!picker) return;
+        if (command === "cancel") {
+          this.endPicking(picker.owner);
+          picker.cancel();
+        } else if (command === "finish" && picker.finish) picker.finish();
+        else picker.choose(unproject(...this.center));
       },
-      options,
-    );
+    });
   }
   private orbit(dx: number, dy: number) {
     const pitch = Math.max(0, Math.min(65, this.scene.pitch - dy * 0.35));
@@ -559,8 +430,7 @@ export class AtlasMap {
   }
   setOffline(offline: boolean) {
     this.reader.offline = offline;
-    this.failed.clear();
-    this.catalogFailed.clear();
+    this.tiles.retry();
     this.labels.retry();
     this.placesFailed = false;
     this.invalidate();
@@ -593,35 +463,18 @@ export class AtlasMap {
     const layers = MAP_LAYERS.filter(
       (l) => (this.layerMask & LAYER_MASKS[l]) !== 0,
     );
-    const known = this.reader.tilesCached(...range, layers),
-      key = `${range.join("/")}/${layers.join(",")}`;
-    this.catalogMissing = known.complete ? 0 : 1;
-    if (
-      !known.complete &&
-      !this.catalogLoading.has(key) &&
-      !this.catalogFailed.has(key)
-    ) {
-      this.catalogLoading.add(key);
-      this.reader
-        .tiles(...range, layers)
-        .catch((e) => {
-          if (!this.dead) {
-            this.catalogFailed.add(key);
-            this.onError(String(e));
-          }
-        })
-        .finally(() => {
-          this.catalogLoading.delete(key);
-          this.invalidate();
-        });
-    }
     return {
-      blocks: known.blocks,
-      complete: known.complete,
-      zoom: z,
+      range,
       layers,
-      bounds: [w, north, e, south],
-    } satisfies TileView;
+      bounds: [w, north, e, south] as [number, number, number, number],
+    };
+  }
+  get memory() {
+    return {
+      reader: this.reader.memory,
+      meshes: this.tiles.memory,
+      labels: this.labels.memory,
+    };
   }
   invalidate() {
     if (!this.frame && !this.dead)
@@ -642,50 +495,7 @@ export class AtlasMap {
       if (c.height !== Math.round(height * ratio))
         c.height = Math.round(height * ratio);
     }
-    const view = this.visibleTiles(),
-      visible = view.blocks;
-    this.wanted = visible.map((b) => b.key);
-    const presented = this.presentation.select(view, this.loaded);
-    const retained = new Set([...this.wanted, ...presented.map((b) => b.key)]);
-    for (const key of this.loaded) {
-      if (!retained.has(key)) {
-        this.renderer.remove_tile(key);
-        this.loaded.delete(key);
-      }
-    }
-    this.renderer.set_visible(presented.map((b) => b.key).join(","));
-    for (const block of visible) {
-      if (this.loading.size >= 6) break;
-      if (
-        this.loaded.has(block.key) ||
-        this.loading.has(block.key) ||
-        this.failed.has(block.key)
-      )
-        continue;
-      this.loading.add(block.key);
-      this.reader
-        .block(block.key)
-        .then((bytes) => {
-          if (this.dead || !this.wanted.includes(block.key)) return;
-          this.renderer.add_tile_part(
-            block.key,
-            block.z!,
-            block.x!,
-            block.y!,
-            bytes,
-          );
-          this.loaded.add(block.key);
-        })
-        .catch((error) => {
-          if (this.dead) return;
-          this.failed.add(block.key);
-          this.onError(String(error));
-        })
-        .finally(() => {
-          this.loading.delete(block.key);
-          this.invalidate();
-        });
-    }
+    const state = this.tiles.update(this.visibleTiles());
     const start = performance.now();
     this.triangles = this.renderer.render(
       ...this.center,
@@ -700,18 +510,17 @@ export class AtlasMap {
       this.scene.shading,
     );
     this.lastDraw = performance.now() - start;
-    this.drawOverlay(width, height, ratio);
+    this.drawOverlay(width, height, ratio, state.view);
     this.onStats({
       zoom: this.zoom,
-      tiles: this.wanted.filter((key) => this.loaded.has(key)).length,
-      wanted: this.wanted.length,
-      missing:
-        this.wanted.filter((key) => !this.loaded.has(key)).length +
-        this.catalogMissing,
+      tiles: state.tiles,
+      wanted: state.wanted,
+      missing: state.missing,
       triangles: this.triangles,
-      fallbackTiles: presented.filter((b) => b.z !== view.zoom).length,
+      fallbackTiles: state.presented.filter((b) => b.z !== state.view.zoom)
+        .length,
       drawMs: this.lastDraw,
-      loading: this.loading.size + this.catalogLoading.size,
+      loading: state.loading,
       labels: this.labelStats,
     });
   }
@@ -739,318 +548,52 @@ export class AtlasMap {
     }
     return this.places ?? [];
   }
-  private drawOverlay(width: number, height: number, ratio: number) {
+  private drawOverlay(
+    width: number,
+    height: number,
+    ratio: number,
+    view: import("./tile-presentation").TileView,
+  ) {
     const ctx = this.overlay.getContext("2d")!;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    const world = 256 * 2 ** this.zoom;
-    const camera = this.camera,
-      toScreen = worldProjector(camera);
-    const screen = (lon: number, lat: number) => toScreen(project(lon, lat));
-    for (const c of this.routingCells) {
-      const parts = c.key.split("/").slice(-3),
-        z = Number(parts[0]),
-        x = Number(parts[1]),
-        y = Number(parts[2]),
-        n = 2 ** z;
-      const corners = [
-        [x / n, y / n],
-        [(x + 1) / n, y / n],
-        [(x + 1) / n, (y + 1) / n],
-        [x / n, (y + 1) / n],
-      ].map((p) => worldToScreen(p as [number, number], this.camera));
-      if (
-        corners.every((p) => p[0] < 0) ||
-        corners.every((p) => p[0] > width) ||
-        corners.every((p) => p[1] < 0) ||
-        corners.every((p) => p[1] > height)
-      )
-        continue;
-      const color =
-        (
-          {
-            cached: "#397657",
-            loaded: "#397ea2",
-            loading: "#bb842f",
-            missing: "#c34d40",
-          } as Record<string, string>
-        )[c.state] ?? "#397657";
-      ctx.beginPath();
-      corners.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-      ctx.closePath();
-      ctx.fillStyle = color + "16";
-      ctx.fill();
-      ctx.strokeStyle = color + "b0";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    if (this.reachable) {
-      const colors = ["#22776f", "#578fac", "#c89949", "#a479ae"];
-      for (let i = this.reachable.contours.features.length - 1; i >= 0; i--) {
-        const feature = this.reachable.contours.features[i]!;
-        ctx.beginPath();
-        for (const polygon of feature.geometry.coordinates)
-          for (const ring of polygon) {
-            ring.forEach((p, j) => {
-              const [x, y] = screen(p[0]!, p[1]!);
-              if (j) ctx.lineTo(x, y);
-              else ctx.moveTo(x, y);
-            });
-            ctx.closePath();
-          }
-        ctx.fillStyle = colors[i] + "35";
-        ctx.fill("evenodd");
-        ctx.strokeStyle = colors[i]!;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-      const [x, y] = screen(...this.reachable.start.coordinates);
-      ctx.beginPath();
-      ctx.arc(x, y, 7, 0, Math.PI * 2);
-      ctx.fillStyle = "#22776f";
-      ctx.fill();
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    }
-    if (this.selection?.points.length) {
-      ctx.beginPath();
-      this.selection.points.forEach((p, i) => {
-        const [x, y] = screen(...p);
-        if (i === 0) ctx.moveTo(x!, y!);
-        else ctx.lineTo(x!, y!);
-      });
-      if (this.selection.closed) ctx.closePath();
-      ctx.fillStyle = "#507b4325";
-      ctx.fill();
-      ctx.strokeStyle = "#345d48";
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash(this.selection.closed ? [] : [6, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      for (const p of this.selection.points) {
-        const [x, y] = screen(...p);
-        ctx.beginPath();
-        ctx.arc(x!, y!, 4, 0, Math.PI * 2);
-        ctx.fillStyle = "#fbfaf5";
-        ctx.fill();
-        ctx.stroke();
-      }
-    }
-    if (this.grid) {
-      ctx.lineWidth = 1;
-      ctx.font = "10px monospace";
-      for (const b of this.visibleTiles().blocks) {
-        const n = 2 ** b.z!;
-        const corners = [
-          [b.x! / n, b.y! / n],
-          [(b.x! + 1) / n, b.y! / n],
-          [(b.x! + 1) / n, (b.y! + 1) / n],
-          [b.x! / n, (b.y! + 1) / n],
-        ].map((p) => worldToScreen(p as [number, number], this.camera));
-        ctx.strokeStyle = this.loaded.has(b.key) ? "#65897688" : "#c65b47";
-        ctx.beginPath();
-        corners.forEach(([x, y], i) =>
-          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y),
-        );
-        ctx.closePath();
-        ctx.stroke();
-        ctx.fillStyle = this.style.labels.color;
-        ctx.fillText(
-          `${b.z}/${b.x}/${b.y}`,
-          corners[0]![0] + 6,
-          corners[0]![1] + 15,
-        );
-      }
-    }
-    ctx.font = `500 ${12 * this.style.labels.scale}px "Avenir Next", sans-serif`;
-    ctx.textAlign = "center";
-    this.featureOverlay.draw(ctx, this.camera);
-    const occupied: Array<[number, number]> = [];
-    for (const place of this.visiblePlaces()) {
-      const [x, y] = screen(...place.coordinates);
-      if (
-        x! < 25 ||
-        y! < 25 ||
-        x! > width - 25 ||
-        y! > height - 25 ||
-        occupied.some(
-          ([a, b]) =>
-            Math.abs(a - x!) < 85 * this.style.labels.scale &&
-            Math.abs(b - y!) < 23 * this.style.labels.scale,
-        )
-      )
-        continue;
-      occupied.push([x!, y!]);
-      ctx.strokeStyle = this.style.labels.halo;
-      ctx.lineWidth = 3;
-      ctx.strokeText(place.name, x!, y!);
-      ctx.fillStyle = this.style.labels.color;
-      ctx.fillText(place.name, x!, y!);
-    }
-    this.labelStats = this.labels.draw(
+    const frame = {
       ctx,
-      this.camera,
-      this.style.labels,
-      occupied.map(([x, y]) => [
-        x - 44 * this.style.labels.scale,
-        y - 12 * this.style.labels.scale,
-        x + 44 * this.style.labels.scale,
-        y + 5 * this.style.labels.scale,
-      ]),
-    );
-    this.labelStats.places = occupied.length;
-    this.labelStats.loading += this.placesLoading ? 1 : 0;
-    this.labelStats.missing +=
-      this.placeNames &&
-      !this.places &&
-      this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY)
-        ? 1
-        : 0;
-    if (this.route) {
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      this.route.coordinates.forEach((p, i) => {
-        const [x, y] = screen(...p);
-        if (i === 0) ctx.moveTo(x!, y!);
-        else ctx.lineTo(x!, y!);
-      });
-      ctx.strokeStyle = "#fff8e9";
-      ctx.lineWidth = 8;
-      ctx.stroke();
-      ctx.strokeStyle = "#be5438";
-      ctx.lineWidth = 4;
-      ctx.stroke();
-      // Dotted offsets show snapping, not a claimed walkable connection.
-      [this.route.start.coordinates, this.route.end.coordinates].forEach(
-        (p, i) => {
-          const request = this.endpoints[i];
-          if (!request) return;
-          const [x, y] = screen(...request),
-            [sx, sy] = screen(...p);
-          ctx.beginPath();
-          ctx.moveTo(x!, y!);
-          ctx.lineTo(sx!, sy!);
-          ctx.strokeStyle = "#be5438";
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([3, 4]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        },
-      );
-    }
-    this.endpoints.forEach((p, i) => {
-      if (!p) return;
-      const [x, y] = screen(...p);
-      ctx.beginPath();
-      ctx.arc(x!, y!, 13, 0, Math.PI * 2);
-      ctx.fillStyle = i === 0 ? "#345d48" : "#be5438";
-      ctx.fill();
-      ctx.strokeStyle = "#fff8e9";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#fff8e9";
-      ctx.font = 'bold 12px "Avenir Next", sans-serif';
-      ctx.fillText(i === 0 ? "A" : "B", x!, y!);
-      ctx.textBaseline = "alphabetic";
-    });
-    if (this.location) {
-      const selected = this.location;
-      if (selected.street) {
-        ctx.beginPath();
-        selected.street.forEach((p, i) => {
-          const [x, y] = screen(...p);
-          if (i === 0) ctx.moveTo(x!, y!);
-          else ctx.lineTo(x!, y!);
-        });
-        ctx.strokeStyle = "#fff9e9";
-        ctx.lineWidth = 8;
-        ctx.stroke();
-        ctx.strokeStyle = "#39708a";
-        ctx.lineWidth = 4;
-        ctx.stroke();
-      }
-      const [x, y] = screen(...selected.coordinates);
-      if (selected.requested) {
-        const [rx, ry] = screen(...selected.requested);
-        ctx.beginPath();
-        ctx.moveTo(rx!, ry!);
-        ctx.lineTo(x!, y!);
-        ctx.setLineDash([3, 4]);
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "#39708a";
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.arc(rx!, ry!, 5, 0, Math.PI * 2);
-        ctx.fillStyle = "#fff9e9";
-        ctx.fill();
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.arc(x!, y!, 7, 0, Math.PI * 2);
-      ctx.fillStyle = "#39708a";
-      ctx.fill();
-      ctx.strokeStyle = "#fff9e9";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.font = '600 12px "Avenir Next", sans-serif';
-      ctx.textAlign = "center";
-      ctx.strokeText(selected.name, x!, y! - 17);
-      ctx.fillStyle = "#254e63";
-      ctx.fillText(selected.name, x!, y! - 17);
-    }
-    if (this.selected) {
-      const [x, y] = screen(...this.selected.coordinates);
-      ctx.beginPath();
-      ctx.arc(x!, y!, 12, 0, Math.PI * 2);
-      ctx.fillStyle = "#d15b37";
-      ctx.fill();
-      ctx.strokeStyle = "#fff8e9";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.font = '600 13px "Avenir Next", sans-serif';
-      ctx.strokeText(this.selected.name, x!, y! - 23);
-      ctx.fillStyle = "#693923";
-      ctx.fillText(this.selected.name, x!, y! - 23);
-    }
-    const [, lat] = unproject(...this.center);
-    const metersPerPixel =
-      (Math.cos((lat * Math.PI) / 180) * 40075016.686) / world;
-    const ideal = 110 * metersPerPixel;
-    const base = 10 ** Math.floor(Math.log10(ideal));
-    const distance =
-      [1, 2, 5, 10]
-        .map((n) => n * base)
-        .filter((n) => n <= ideal)
-        .pop() ?? base;
-    const pixels = distance / metersPerPixel;
-    ctx.strokeStyle = this.style.labels.color;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(24, height - 39);
-    ctx.lineTo(24, height - 34);
-    ctx.lineTo(24 + pixels, height - 34);
-    ctx.lineTo(24 + pixels, height - 39);
-    ctx.stroke();
-    ctx.font = "10px monospace";
-    ctx.textAlign = "left";
-    ctx.fillStyle = this.style.labels.color;
-    ctx.fillText(
-      distance >= 1000 ? `${distance / 1000} km` : `${distance} m`,
-      24,
-      height - 44,
-    );
+      camera: this.camera,
+      style: this.style,
+      view,
+      resident: (key: string) => this.tiles.has(key),
+      labels: this.labels,
+      features: this.featureOverlay,
+      places: this.visiblePlaces(),
+      placesLoading: this.placesLoading,
+      placesMissing:
+        this.placeNames &&
+        !this.places &&
+        this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY),
+      state: {
+        routingCells: this.routingCells,
+        reachable: this.reachable,
+        selection: this.selection,
+        grid: this.grid,
+        route: this.route,
+        endpoints: this.endpoints,
+        location: this.location,
+        selected: this.selected,
+      },
+      labelStats: { roads: 0, pois: 0, loading: 0, missing: 0 },
+    };
+    this.overlays.draw(frame);
+    this.labelStats = frame.labelStats;
   }
   destroy() {
     if (this.picker) this.endPicking(this.picker.owner);
     this.dead = true;
     this.labels.destroy();
+    this.overlays.destroy();
+    this.tiles.destroy();
     cancelAnimationFrame(this.frame);
-    this.abort.abort();
+    this.input.destroy();
     this.observer.disconnect();
     this.renderer.clear();
     this.renderer.free();

@@ -151,7 +151,33 @@ function telemetry(event?: ReadEvent) {
     list.append(li);
   }
 }
+let memoryUpdated = 0;
 function stats(s: MapStats) {
+  if (map && performance.now() - memoryUpdated > 250) {
+    memoryUpdated = performance.now();
+    const m = map.memory;
+    const entries = [
+      ...Object.entries(m.reader.decoded).map(
+        ([k, v]) => [`${k} bytes`, v] as const,
+      ),
+      ["Directory descriptors", m.reader.directory] as const,
+      ["Parsed labels", m.labels] as const,
+      ["GPU meshes", m.meshes] as const,
+    ];
+    const list = el("cache-memory");
+    list.replaceChildren();
+    for (const [name, v] of entries) {
+      const row = document.createElement("div"),
+        term = document.createElement("dt"),
+        value = document.createElement("dd");
+      term.textContent = name;
+      value.textContent = `${formatBytes(v.bytes)} / ${formatBytes(v.budget)}`;
+      value.title = `${v.entries} entries · ${v.evictions} evictions${v.overage ? ` · ${formatBytes(v.overage)} active overage` : ""}`;
+      row.append(term, value);
+      list.append(row);
+    }
+    list.dataset.memory = JSON.stringify(m);
+  }
   el<HTMLButtonElement>("zoom-in").disabled = s.zoom >= MAX_VIEW_ZOOM;
   el<HTMLButtonElement>("zoom-out").disabled =
     s.zoom <= Math.max(0, reader.index.manifest.minZoom - 1);

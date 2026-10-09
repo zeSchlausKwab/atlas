@@ -557,6 +557,13 @@ impl Renderer {
         self.tiles.insert(key.to_owned(), Tile { z, x, y, layers });
         Ok(features.len() as u32)
     }
+    /// Exact vertex-buffer bytes retained on the GPU (driver overhead excluded).
+    pub fn tile_bytes(&self, key: &str) -> u32 {
+        self.tiles
+            .get(key)
+            .map(|t| t.layers.iter().map(|l| l.count as u32 * 7 * 4).sum())
+            .unwrap_or(0)
+    }
     pub fn remove_tile(&mut self, key: &str) {
         if let Some(tile) = self.tiles.remove(key) {
             for layer in tile.layers {

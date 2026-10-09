@@ -1,3 +1,4 @@
+import { BudgetCache } from "../../format/src/cache";
 import { project } from "../../format/src/index";
 import { AtlasReader } from "../../format/src/reader";
 import { worldProjector, cameraBounds, type Camera } from "./camera";
@@ -159,7 +160,10 @@ export class MapLabels {
     }
     return geometry;
   }
-  private blocks = new Map<string, LabelBlock>();
+  private blocks: BudgetCache<string, { labels: LabelBlock; bytes: number }>;
+  get memory() {
+    return this.blocks.stats;
+  }
   private pending = new Set<string>();
   private failed = new Set<string>();
   private wanted: string[] = [];
@@ -169,7 +173,10 @@ export class MapLabels {
     readonly reader: AtlasReader,
     readonly invalidate: () => void,
     readonly error: (message: string) => void,
+    budget = 16 * 1024 * 1024,
   ) {
+    // Includes parsed strings/coordinates and lazily projected road geometry.
+    this.blocks = new BudgetCache(budget, (block) => block.bytes);
     if (typeof document !== "undefined")
       document.fonts?.ready.then(() => {
         if (!this.dead) {
@@ -203,6 +210,8 @@ export class MapLabels {
     const z = this.reader.index.manifest.labelZoom;
     if (z === undefined || zoom < 13 || (!this.roads && !this.pois)) {
       this.wanted = [];
+      this.blocks.protect([]);
+      this.candidates = { signature: "", roads: [], pois: [] };
       return stats;
     }
     const n = 2 ** z,
@@ -228,6 +237,9 @@ export class MapLabels {
           }
         }
       }
+    this.blocks.protect(this.wanted);
+    for (const key of this.failed)
+      if (!this.wanted.includes(key)) this.failed.delete(key);
     for (const key of this.wanted) {
       if (
         this.blocks.has(key) ||
@@ -240,7 +252,11 @@ export class MapLabels {
       this.reader
         .block(key)
         .then((bytes) => {
-          if (!this.dead) this.blocks.set(key, decodeLabels(bytes));
+          if (!this.dead)
+            this.blocks.set(key, {
+              labels: decodeLabels(bytes),
+              bytes: bytes.length * 4,
+            });
         })
         .catch((e) => {
           if (!this.dead) {
@@ -264,7 +280,7 @@ export class MapLabels {
       const roads: RoadLabel[] = [],
         pois: Location[] = [];
       for (const key of this.wanted) {
-        const b = this.blocks.get(key);
+        const b = this.blocks.get(key)?.labels;
         if (b) {
           roads.push(...b.roads);
           pois.push(...b.pois);
@@ -382,5 +398,7 @@ export class MapLabels {
   destroy() {
     this.dead = true;
     this.blocks.clear();
+    this.widths.clear();
+    this.candidates = { signature: "", roads: [], pois: [] };
   }
 }

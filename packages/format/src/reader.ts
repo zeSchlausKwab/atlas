@@ -1,4 +1,8 @@
-import { isRoutingCell } from "./index";
+import {
+  BudgetCache,
+  DecodedCache,
+  type DEFAULT_DECODED_BUDGETS,
+} from "./cache";
 import type { BlockStore } from "./store";
 import {
   MAP_LAYERS,
@@ -125,10 +129,10 @@ export class AtlasReader {
   };
   requests = 0;
   cacheHits = 0;
-  readonly cache = new Map<string, Uint8Array>();
+  readonly cache: DecodedCache;
   private pending = new Map<string, Promise<Uint8Array>>();
-  private loadedPages = new Set<string>();
-  private pageRequests = new Map<string, Promise<void>>();
+  private pages: BudgetCache<string, Block[]>;
+  private pageRequests = new Map<string, Promise<Block[]>>();
   private byKey = new Map<string, Block>();
   constructor(
     readonly source: ByteSource,
@@ -137,8 +141,27 @@ export class AtlasReader {
       purposes?: readonly DataPurpose[];
       store?: BlockStore;
       sourceId?: string;
+      cacheBudgets?: Partial<typeof DEFAULT_DECODED_BUDGETS>;
+      /** Estimated retained descriptor bytes, excluding the immutable root. */
+      directoryBudget?: number;
     } = {},
-  ) {}
+  ) {
+    this.cache = new DecodedCache(options.cacheBudgets);
+    this.pages = new BudgetCache(
+      options.directoryBudget ?? 16 * 1024 * 1024,
+      (blocks) =>
+        blocks.reduce(
+          (n, b) => n + 192 + b.key.length * 2 + b.hash.length * 2,
+          0,
+        ),
+      (blocks) => {
+        for (const b of blocks) this.byKey.delete(b.key);
+      },
+    );
+  }
+  get memory() {
+    return { decoded: this.cache.stats, directory: this.pages.stats };
+  }
   async open() {
     let headerBytes: Uint8Array, indexBytes: Uint8Array;
     try {
@@ -195,8 +218,9 @@ export class AtlasReader {
         p.y <= Math.floor(ymax / INDEX_PAGE_SIZE),
     );
   }
-  private async loadPage(page: IndexPage): Promise<void> {
-    if (this.loadedPages.has(page.key)) return;
+  private async loadPage(page: IndexPage): Promise<Block[]> {
+    const cached = this.pages.get(page.key);
+    if (cached) return cached;
     if (this.pageRequests.has(page.key))
       return this.pageRequests.get(page.key)!;
     const task = (async () => {
@@ -219,12 +243,13 @@ export class AtlasReader {
       )
         throw new Error("Invalid directory page contents");
       for (const b of blocks) this.byKey.set(b.key, b);
-      this.loadedPages.add(page.key);
+      this.pages.set(page.key, blocks);
       this.cache.delete(page.key); // Retain parsed descriptors, not a duplicate JSON buffer.
+      return blocks;
     })();
     this.pageRequests.set(page.key, task);
     try {
-      await task;
+      return await task;
     } finally {
       this.pageRequests.delete(page.key);
     }
@@ -248,8 +273,8 @@ export class AtlasReader {
     const prefixes = this.tilePrefixes(layers);
     return {
       complete: prefixes.every((prefix) =>
-        this.pagesFor(prefix, z, xmin, xmax, ymin, ymax).every((p) =>
-          this.loadedPages.has(p.key),
+        this.pagesFor(prefix, z, xmin, xmax, ymin, ymax).every(
+          (p) => this.pages.get(p.key) !== undefined,
         ),
       ),
       blocks: this.spatialCached(prefixes, z, xmin, xmax, ymin, ymax),
@@ -263,12 +288,7 @@ export class AtlasReader {
     ymax: number,
     layers: readonly MapLayer[] = MAP_LAYERS,
   ) {
-    await Promise.all(
-      this.tilePrefixes(layers)
-        .flatMap((prefix) => this.pagesFor(prefix, z, xmin, xmax, ymin, ymax))
-        .map((p) => this.loadPage(p)),
-    );
-    return this.tilesCached(z, xmin, xmax, ymin, ymax, layers).blocks;
+    return this.query(this.tilePrefixes(layers), z, xmin, xmax, ymin, ymax);
   }
   async spatial(
     prefix: string,
@@ -278,12 +298,41 @@ export class AtlasReader {
     ymin: number,
     ymax: number,
   ) {
-    await Promise.all(
-      this.pagesFor(prefix, z, xmin, xmax, ymin, ymax).map((p) =>
-        this.loadPage(p),
-      ),
+    return this.query([prefix], z, xmin, xmax, ymin, ymax);
+  }
+  private async query(
+    prefixes: string[],
+    z: number,
+    xmin: number,
+    xmax: number,
+    ymin: number,
+    ymax: number,
+  ) {
+    const matches = (b: Block) => {
+      const a = spatialAddress(b.key);
+      return (
+        a &&
+        prefixes.includes(a.prefix) &&
+        a.z === z &&
+        a.x >= xmin &&
+        a.x <= xmax &&
+        a.y >= ymin &&
+        a.y <= ymax
+      );
+    };
+    const result = this.index.blocks.filter(matches);
+    const pages = prefixes.flatMap((p) =>
+      this.pagesFor(p, z, xmin, xmax, ymin, ymax),
     );
-    return this.spatialCached([prefix], z, xmin, xmax, ymin, ymax);
+    // Collect owned results before LRU eviction. A broad query must not silently
+    // lose its first pages when its descriptor working set exceeds the budget.
+    for (let i = 0; i < pages.length; i += 8) {
+      const batch = await Promise.all(
+        pages.slice(i, i + 8).map((p) => this.loadPage(p)),
+      );
+      for (const blocks of batch) result.push(...blocks.filter(matches));
+    }
+    return result.sort((a, b) => a.offset - b.offset);
   }
   /** Small viewport queries cost only their own addresses, not all visited tiles. */
   private spatialCached(
@@ -322,8 +371,10 @@ export class AtlasReader {
 
   /** Explicit full-catalog operation for auditing, never needed to display a view. */
   async allBlocks() {
-    for (const page of this.index.pages) await this.loadPage(page);
-    return [...this.byKey.values()].sort((a, b) => a.offset - b.offset);
+    const result = [...this.index.blocks];
+    for (const page of this.index.pages)
+      result.push(...(await this.loadPage(page)));
+    return result.sort((a, b) => a.offset - b.offset);
   }
   async block(key: string): Promise<Uint8Array> {
     const kind = purposeOf(key);
@@ -337,13 +388,24 @@ export class AtlasReader {
       !this.options.purposes.includes(purpose)
     )
       throw new Error(`Data purpose not enabled: ${purpose}`);
-    const address = spatialAddress(key);
-    if (!this.byKey.has(key) && address) {
-      const a = address;
-      await this.spatial(a.prefix, a.z, a.x, a.x, a.y, a.y);
+    // A verified decoded block remains usable even after its directory page was
+    // evicted. In particular, cache-only mode must not refetch that page.
+    if (!this.byKey.has(key)) {
+      const bytes = this.cache.get(key);
+      if (bytes) {
+        this.cacheHits++;
+        this.onRead?.({ key, start: 0, end: 0, bytes: 0, cached: true });
+        return bytes;
+      }
     }
-
-    const block = this.byKey.get(key);
+    const address = spatialAddress(key);
+    let block = this.byKey.get(key);
+    if (!block && address) {
+      const a = address;
+      block = (await this.spatial(a.prefix, a.z, a.x, a.x, a.y, a.y)).find(
+        (b) => b.key === key,
+      );
+    }
     if (!block) throw new Error(`Block not present in this package: ${key}`);
     return this.readBlock(block);
   }
@@ -394,20 +456,6 @@ export class AtlasReader {
           bytes,
         );
       this.cache.set(key, decoded);
-      // Bound decoded routing bytes separately from the kernel's decoded-cell cache.
-      if (isRoutingCell(key)) {
-        let size = [...this.cache].reduce(
-          (n, [k, v]) => n + (isRoutingCell(k) ? v.length : 0),
-          0,
-        );
-        for (const [k, v] of this.cache) {
-          if (size <= 16 * 1024 * 1024) break;
-          if (isRoutingCell(k)) {
-            this.cache.delete(k);
-            size -= v.length;
-          }
-        }
-      }
       return decoded;
     })();
     this.pending.set(key, request);

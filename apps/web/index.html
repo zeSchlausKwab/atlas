@@ -1181,6 +1181,16 @@
             <strong id="cached-count">0</strong><span>cached blocks</span>
           </div>
         </div>
+        <details class="limitations">
+          <summary>Memory &amp; reuse</summary>
+          <dl id="cache-memory" class="transfer-breakdown"></dl>
+          <p class="transfer-note">
+            Retained / budget. Meshes count vertex buffers; labels and
+            directories use estimates. A visible view may exceed the mesh or
+            label budget. Root metadata, active work, WASM heaps and regional
+            search indexes are additional memory.
+          </p>
+        </details>
         <div class="ledger-title">
           <h3>Recent reads</h3>
           <span>OFFSET → SIZE</span>
