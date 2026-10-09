@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v18";
+const CACHE = "atlas-shell-v19";
 let generation = 0;
 let paused = false;
 const writes = new Set();
@@ -56,6 +56,7 @@ const SHELL = [
   "/main.js",
   "/offline-worker.js",
   "/routing-worker.js",
+  "/plugin-worker.js",
   "/wasm/atlas_renderer_bg.wasm",
   "/wasm/atlas_routing_wasm_bg.wasm",
 ];
@@ -86,7 +87,7 @@ self.addEventListener("fetch", (event) => {
   if (
     event.request.method !== "GET" ||
     url.origin !== location.origin ||
-    !SHELL.includes(url.pathname)
+    !(SHELL.includes(url.pathname) || /^\/plugins\/[a-f0-9]{64}\.js$/.test(url.pathname))
   )
     return;
   if (event.request.mode === "navigate") paused = false;

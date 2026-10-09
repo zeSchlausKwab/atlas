@@ -1,3 +1,5 @@
+import { ToolControls } from "./tools";
+let tools: ToolControls | undefined;
 import { ReachabilityControls } from "./reachability";
 import { BrowserBlockStore } from "../../../packages/format/src/store";
 const blockStore =
@@ -225,6 +227,8 @@ function closeSession() {
   clearTimeout(cacheTimer);
   cacheTimer = undefined;
   reader?.dispose();
+  tools?.destroy();
+  tools = undefined;
   extractor?.destroy();
   extractor = undefined;
   world?.destroy();
@@ -356,6 +360,7 @@ async function open(source: ByteSource) {
     );
     search = new SearchControls(reader, map, routing, operations);
     extractor = new ExtractControls(map, operations);
+    tools = new ToolControls(map, operations, extractor);
     map.onPoiSelect = (poi) => search?.select(poi);
     for (const id of ["street-labels", "poi-labels"])
       el<HTMLInputElement>(id).disabled =
@@ -543,6 +548,7 @@ function configureOperations() {
   reachability?.refresh();
   search?.refresh();
   extractor?.refresh();
+  void tools?.refresh();
   world?.refresh();
   el<HTMLButtonElement>("highest-peak").disabled =
     !enabled.includes("queries") ||

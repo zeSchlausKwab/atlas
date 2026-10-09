@@ -40,6 +40,14 @@ export class ExtractControls {
     this.render();
     this.refresh();
   }
+  showResult(result: FeatureResult) {
+    this.revision++;
+    this.result = result;
+    this.selected = new Set(result.features.map(f => f.id));
+    this.render();
+    el("status").textContent = `${result.features.length} tool results. Click objects to select them, then export GeoJSON or polylines.`;
+    activateTab("extract");
+  }
   refresh() {
     this.revision++;
     this.busy = false;
@@ -144,6 +152,7 @@ export class ExtractControls {
       this.selected.has(f.id),
     );
     const data = {
+      ...this.result,
       type: "FeatureCollection",
       features: lines ? asPolylines(selected) : selected,
       snapshot: this.result.snapshot,

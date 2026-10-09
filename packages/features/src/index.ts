@@ -172,7 +172,7 @@ export function decodeFeatures(bytes: Uint8Array): MapFeature[] {
 }
 export class AtlasFeatures {
   constructor(readonly reader: AtlasReader) {}
-  async query(q: FeatureQuery): Promise<FeatureResult> {
+  async *scan(q: FeatureQuery, signal?: AbortSignal): AsyncGenerator<MapFeature> {
     validateFeatureQuery(q);
     const m = this.reader.index.manifest;
     if (!m.capabilities.includes("feature-extraction"))
@@ -191,22 +191,36 @@ export class AtlasFeatures {
       Math.floor(nw[1] * n),
       Math.floor(se[1] * n),
     );
-    const found = new Map<string, MapFeature>();
+    const seen = new Set<string>();
+    let scanned = 0, bytes = 0;
     const [key, value] = q.tag?.split("=") ?? [];
     for (const b of blocks) {
-      for (const f of decodeFeatures(await this.reader.block(b.key))) {
+      signal?.throwIfAborted();
+      const data = await this.reader.block(b.key);
+      signal?.throwIfAborted();
+      bytes += data.byteLength;
+      if (bytes > 64 * 1024 * 1024) throw new Error("Feature scan exceeds 64 MiB; select a smaller area.");
+      for (const f of decodeFeatures(data)) {
+        signal?.throwIfAborted();
         if (
-          found.has(f.id) ||
+          seen.has(f.id) ||
           f.properties.kind !== q.kind ||
           !overlap(f.bbox, q.bounds) ||
           (key && f.properties.tags[key] !== value) ||
           !geometryIntersects(f.geometry, q.bounds)
         )
           continue;
-        found.set(f.id, f);
+        seen.add(f.id);
+        if (++scanned > 100000) throw new Error("Feature scan exceeds 100,000 objects; select a smaller area.");
+        yield f;
       }
     }
-    const all = [...found.values()].sort((a, b) => a.id.localeCompare(b.id)),
+  }
+  async query(q: FeatureQuery, signal?: AbortSignal): Promise<FeatureResult> {
+    const found: MapFeature[] = [];
+    for await (const f of this.scan(q, signal)) found.push(f);
+    const m = this.reader.index.manifest;
+    const all = found.sort((a, b) => a.id.localeCompare(b.id)),
       limit = q.limit ?? 200;
     return {
       type: "FeatureCollection",

@@ -1,3 +1,5 @@
+import { OperationRegistry } from "./registry";
+import { builtins } from "./builtins";
 import { operationCatalog } from "../../format/src/capabilities";
 import { AtlasReader } from "../../format/src/reader";
 import {
@@ -12,7 +14,7 @@ import type { Operation, OperationInputs, OperationResults } from "./contract";
 export type { Operation, OperationInputs, OperationResults } from "./contract";
 export interface Execution {
   side: "device" | "server";
-  operation: Operation;
+  operation: string;
   computeMs: number;
   sourceBytes: number;
   responseBytes: number;
@@ -22,6 +24,7 @@ export class AtlasEngine {
   get capabilities() {
     return operationCatalog(this.reader.index.manifest);
   }
+  readonly registry: OperationRegistry;
   readonly router: AtlasRouter;
   readonly geocoder: AtlasGeocoder;
   readonly features: AtlasFeatures;
@@ -32,6 +35,8 @@ export class AtlasEngine {
     this.router = new AtlasRouter(reader, initialize);
     this.geocoder = new AtlasGeocoder(reader);
     this.features = new AtlasFeatures(reader);
+    this.registry = new OperationRegistry(reader.index.manifest, { scanFeatures: (q, signal) => this.features.scan(q, signal) });
+    for (const plugin of builtins(this)) this.registry.register(plugin, "atlas-core-1");
   }
   route(start: Position, end: Position, profile: TransportMode = "walking") {
     return this.router.route(start, end, profile);

@@ -12,6 +12,8 @@
   },
   "include": [
     "apps/**/*.ts",
+    "plugins/**/*.ts",
+    "atlas.plugins.ts",
     "packages/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts"
