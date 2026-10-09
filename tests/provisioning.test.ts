@@ -1,3 +1,4 @@
+import geojsonvt from "geojson-vt";
 import { encodeTile } from "../packages/cli/src/tile-codec";
 import { encodePackage } from "../packages/format/src/writer";
 import { decodeLabels } from "../packages/labels/src/index";
@@ -15,7 +16,7 @@ import { AtlasEngine } from "../packages/operations/src/index";
 import { readRoutingCell } from "../packages/routing/src/paged";
 import { createApiHandler } from "../apps/server/api";
 import { Preparations } from "../apps/server/preparations";
-import { pluginFixture, polygon } from "./helpers/plugin-fixture";
+import { pluginFixture, polygon, water } from "./helpers/plugin-fixture";
 import { transportFixture, points } from "./helpers/transport-fixture";
 import { operationCatalog } from "../packages/format/src/capabilities";
 import { project } from "../packages/format/src/index";
@@ -52,7 +53,10 @@ function selection(reader: AtlasReader): PackageSelection {
 }
 const signal = () => new AbortController().signal;
 test("a source-feature-only excerpt preserves lake IDs and holes, with an honest capability catalog", async () => {
-  const f = await pluginFixture(),
+  const f = await pluginFixture([
+      water(1, 0.04, { water: "lake" }, 0.01),
+      water(2, 0.1),
+    ]),
     dir = await mkdtemp("/tmp/atlas-provision-");
   try {
     const s = selection(f.reader),
@@ -238,20 +242,12 @@ test("display preparation removes unselected layers and clips independently sele
   const f = await pluginFixture(),
     dir = await mkdtemp("/tmp/atlas-provision-display-");
   const json = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
-  const tile = encodeTile([
-    {
-      type: 3,
-      tags: { class: 1 },
-      geometry: [
-        [
-          [0, 0],
-          [100, 0],
-          [100, 100],
-          [0, 0],
-        ],
-      ],
-    },
-  ]);
+  const tile = encodeTile(
+    geojsonvt(
+      { type: "FeatureCollection", features: [water(1, 0.04)] },
+      { maxZoom: 0 },
+    ).getTile(0, 0, 0)!.features,
+  );
   const [x, y] = project(9.02, 47.02).map((v) => Math.floor(v * 4096));
   const label = {
     schema: "labels-v1",

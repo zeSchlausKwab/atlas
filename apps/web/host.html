@@ -4,48 +4,218 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Atlas — host console</title>
+    <link rel="stylesheet" href="/maplibre.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="host-page">
     <header class="masthead">
       <a class="brand" href="/">◭ atlas.</a
-      ><span class="masthead-note">HOST CONSOLE / 01</span
+      ><span class="masthead-note">HOST CONSOLE / 02</span
       ><a href="/">Return to map ↗</a>
     </header>
     <main class="host-workspace">
       <div class="host-heading">
         <div>
           <p class="eyebrow">YOUR DATA. YOUR CAPABILITIES.</p>
-          <h1>Choose what<br />your map can do.</h1>
+          <h1>A piece of the world.<br />Exactly what you need.</h1>
         </div>
         <p>
-          Enable the operations you want to serve. Each tool describes its
-          inputs and data needs; HTTP and ContextVM use the same registry.
+          Draw an area. Choose its data. Prepare a portable map on your server,
+          then serve it or take the file with you.
         </p>
       </div>
-      <section class="host-package">
-        <div>
-          <p class="eyebrow">CURRENT PACKAGE</p>
-          <h2 id="host-package">Loading…</h2>
-          <p id="host-coverage"></p>
+      <nav class="host-section-nav" aria-label="Host console sections">
+        <a href="#prepare">01 / Prepare</a><a href="#library">02 / Library</a
+        ><a href="#operations">03 / Operations</a>
+      </nav>
+      <section id="prepare" class="host-builder">
+        <div class="host-list-heading">
+          <h2>Prepare a map</h2>
+          <span class="eyebrow">FROM YOUR INSTALLED SOURCE</span>
         </div>
-        <div>
-          <p class="eyebrow">CONTEXTVM</p>
-          <p id="host-cvm">Checking…</p>
+        <div class="host-builder-grid">
+          <div class="host-picker">
+            <div class="host-picker-top">
+              <label
+                >Preview
+                <select id="prepare-provider">
+                  <option value="openfreemap">OpenFreeMap · world</option>
+                  <option value="local">Local Atlas · source</option>
+                </select></label
+              ><button id="prepare-fit" type="button">Fit source</button>
+            </div>
+            <div
+              id="prepare-map"
+              class="host-preview"
+              role="region"
+              aria-label="Map area picker"
+            ></div>
+            <div class="host-draw-toolbar" aria-label="Area drawing controls">
+              <button id="prepare-rect" type="button" aria-pressed="false">
+                Rectangle</button
+              ><button id="prepare-polygon" type="button" aria-pressed="false">
+                Polygon</button
+              ><button id="prepare-finish" type="button" disabled>
+                Finish polygon</button
+              ><button id="prepare-undo" type="button" disabled>
+                Undo corner</button
+              ><button id="prepare-clear" type="button">Clear</button
+              ><button id="prepare-view" type="button">Use visible area</button>
+            </div>
+            <p id="prepare-area" role="status">
+              Choose Rectangle or Polygon to draw an area.
+            </p>
+            <p class="quiet">
+              Pan and zoom to your area. Rectangle: click two opposite corners.
+              Polygon: click corners, then Finish polygon or Enter. Escape stops
+              drawing. With the map focused, Space adds its center.
+            </p>
+            <p id="prepare-preview-status" class="quiet" role="status"></p>
+            <div class="host-source-note">
+              <p class="eyebrow">AVAILABLE SOURCE</p>
+              <h3 id="prepare-source">Loading…</h3>
+              <p id="prepare-source-note"></p>
+            </div>
+          </div>
+          <form id="prepare-form" class="host-prepare-form">
+            <label class="host-field"
+              >Map name<input id="prepare-name" required maxlength="80"
+            /></label>
+            <label class="host-field"
+              >Start with<select id="prepare-preset">
+                <option value="view">Just view the map</option>
+                <option value="water-buildings">Water & buildings only</option>
+                <option value="all">Everything available</option>
+              </select></label
+            >
+            <div class="host-field-pair">
+              <label class="host-field"
+                >Minimum zoom<input
+                  id="prepare-min"
+                  type="number"
+                  min="0"
+                  max="16"
+                  required /></label
+              ><label class="host-field"
+                >Maximum zoom<input
+                  id="prepare-max"
+                  type="number"
+                  min="0"
+                  max="16"
+                  required
+              /></label>
+            </div>
+            <details open>
+              <summary>Display layers & labels</summary>
+              <fieldset id="prepare-layers">
+                <legend>Map geometry</legend>
+              </fieldset>
+              <fieldset id="prepare-labels"><legend>Labels</legend></fieldset>
+            </details>
+            <details>
+              <summary>Routing & isochrones</summary>
+              <fieldset id="prepare-profiles">
+                <legend>Travel modes</legend>
+              </fieldset>
+              <label class="host-field"
+                >Routing padding<select id="prepare-padding">
+                  <option value="0">No extra cells</option>
+                  <option value="1" selected>1 cell beyond the area</option>
+                  <option value="2">2 cells beyond the area</option>
+                  <option value="4">4 cells beyond the area</option>
+                </select></label
+              >
+              <p class="quiet">
+                Both routing and isochrones use these graph cells. Routes
+                leaving the included cells report missing coverage.
+              </p>
+            </details>
+            <details>
+              <summary>Search & queries</summary>
+              <fieldset id="prepare-queries">
+                <legend>Indexes to include</legend>
+              </fieldset>
+            </details>
+            <details>
+              <summary>Extractable source features</summary>
+              <fieldset id="prepare-features">
+                <legend>GeoJSON categories</legend>
+              </fieldset>
+              <p class="quiet">
+                Full source objects for extraction and tools. Independent of
+                display geometry.
+              </p>
+            </details>
+            <label class="host-field"
+              >Maximum output size (MiB)<input
+                id="prepare-budget"
+                type="number"
+                value="2048"
+                min="1"
+                max="2048"
+                required
+            /></label>
+            <p class="quiet">
+              Tiles, source objects and routing cells touching the outline can
+              extend beyond it. Search and label geometry are clipped. The
+              output is checked against this size limit.
+            </p>
+            <button
+              id="prepare-submit"
+              class="host-primary"
+              type="submit"
+              disabled
+            >
+              Prepare & host map ↗
+            </button>
+            <p id="prepare-message" role="status">
+              Select only the data your consumers need.
+            </p>
+          </form>
         </div>
+        <div class="host-list-heading">
+          <h3>Preparation progress</h3>
+          <span class="quiet">Saved on this server</span>
+        </div>
+        <div id="prepare-jobs" aria-live="polite"></div>
       </section>
-      <div class="host-list-heading">
-        <h2>Published operations</h2>
-        <button id="host-refresh">Refresh catalog</button>
-      </div>
-      <p id="host-status" role="status">Loading tools…</p>
-      <div id="host-tools"></div>
-      <footer class="host-note">
-        Local administration · Changes persist on disk. These switches control
-        server computation; they do not remove downloadable data or disable a
-        consumer’s locally installed tools. This first slice serves one package.
-        Multi-package provisioning and federation come next.
-      </footer>
+      <section id="library">
+        <div class="host-list-heading">
+          <h2>Your map library</h2>
+          <span id="prepare-library-count" class="eyebrow">00</span>
+        </div>
+        <div id="prepare-library" class="host-library"></div>
+        <p class="quiet">
+          Each prepared file has its own snapshot, download URL and HTTP tools.
+          The source package below continues to serve the main demo.
+        </p>
+      </section>
+      <section id="operations">
+        <section class="host-package">
+          <div>
+            <p class="eyebrow">CURRENT PACKAGE</p>
+            <h2 id="host-package">Loading…</h2>
+            <p id="host-coverage"></p>
+          </div>
+          <div>
+            <p class="eyebrow">CONTEXTVM</p>
+            <p id="host-cvm">Checking…</p>
+          </div>
+        </section>
+        <div class="host-list-heading">
+          <h2>Published operations</h2>
+          <button id="host-refresh">Refresh catalog</button>
+        </div>
+        <p id="host-status" role="status">Loading tools…</p>
+        <div id="host-tools"></div>
+        <footer class="host-note">
+          Local administration · Changes persist on disk. These switches control
+          server computation; they do not remove downloadable data or disable a
+          consumer’s locally installed tools. These switches and ContextVM apply
+          to the source package; prepared maps expose their available operations
+          at their own HTTP endpoints.
+        </footer>
+      </section>
     </main>
     <script type="module" src="/host.js"></script>
   </body>

@@ -1,3 +1,4 @@
+import { startBuilder } from "./host-builder";
 import type { CatalogEntry } from "../../../packages/operations/src/registry";
 const el = (id: string) => document.getElementById(`host-${id}`)!;
 async function load() {
@@ -77,3 +78,5 @@ function render(catalog: any) {
 }
 el("refresh").onclick = () => void load();
 void load();
+
+void startBuilder();

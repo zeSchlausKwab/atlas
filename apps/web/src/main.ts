@@ -282,6 +282,15 @@ async function open(source: ByteSource) {
     if (reader.offline)
       el("connection-label").textContent = "Using cached blocks";
     const m = reader.index.manifest;
+    for (const checkbox of document.querySelectorAll<HTMLInputElement>(
+      "[data-mask]",
+    )) {
+      checkbox.disabled =
+        !!m.tileLayers &&
+        !m.tileLayers.some(
+          (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
+        );
+    }
     el("layer-transport").textContent = m.tileLayers
       ? "Choose any combination. Only selected layers are requested."
       : "This older package has combined geometry tiles. Switches hide geometry; convert the package with split-layers for selective downloads.";
@@ -290,6 +299,8 @@ async function open(source: ByteSource) {
       `OSM EXTRACT · Z${m.minZoom}–${m.maxZoom}`;
     el("feature-label").textContent =
       m.featureCountKind === "tile-records" ? "Tile records" : "Features";
+    if (source instanceof HttpSource)
+      el<HTMLAnchorElement>("download").href = source.url;
     el<HTMLAnchorElement>("download").download =
       `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
     el("feature-count").textContent = number(m.features);
@@ -640,7 +651,14 @@ el<HTMLInputElement>("file-input").onchange = async (event) => {
     await open(new FileSource(file));
   }
 };
-void open(new HttpSource("/maps/demo.atlas"));
+const hostedMap = new URLSearchParams(location.search).get("map");
+void open(
+  new HttpSource(
+    hostedMap && /^[a-f0-9-]{36}$/.test(hostedMap)
+      ? `/maps/${hostedMap}.atlas`
+      : "/maps/demo.atlas",
+  ),
+);
 
 function shellCommand(worker: ServiceWorker, command: string) {
   return new Promise<void>((resolve, reject) => {

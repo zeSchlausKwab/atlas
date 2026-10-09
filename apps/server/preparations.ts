@@ -181,6 +181,14 @@ export class Preparations {
       });
       return job;
     } catch (e) {
+      this.worker?.kill();
+      this.worker = undefined;
+      const job = this.jobs.get(id);
+      if (job) {
+        job.state = "failed";
+        job.error = String(e);
+        await this.persist(job).catch(console.error);
+      }
       this.active = undefined;
       throw e;
     }

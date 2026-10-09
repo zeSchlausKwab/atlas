@@ -1,3 +1,4 @@
+import { requirementAvailable } from "../../../packages/operations/src/registry";
 import { installedPlugins } from "../../../packages/operations/src/installed";
 import { runPlugin } from "./plugin-runner";
 import type { CatalogEntry } from "../../../packages/operations/src/registry";
@@ -68,9 +69,15 @@ export class OperationSession {
     readonly onExecution: (e: Execution) => void,
   ) {
     this.engine = new AtlasEngine(reader);
+    this.selectedProfile =
+      this.engine.capabilities.operations.route.parameters.profiles[0] ??
+      "walking";
     if (reader.source instanceof HttpSource)
       this.remote = new RemoteOperations(
-        new URL("/api", new URL(reader.source.url, location.href)).href,
+        new URL(reader.source.url, location.href).href.replace(
+          /\.atlas(?:\?.*)?$/,
+          "/api",
+        ),
         reader.index.manifest.snapshot,
       );
   }
@@ -302,10 +309,8 @@ export class OperationSession {
         ...p.descriptor,
         implementation: p.implementation,
         enabled: true,
-        available: p.descriptor.requirements.every(
-          (r) =>
-            !r.capability ||
-            this.reader.index.manifest.capabilities.includes(r.capability),
+        available: p.descriptor.requirements.every((r) =>
+          requirementAvailable(this.reader.index.manifest, r),
         ),
       })),
     ];

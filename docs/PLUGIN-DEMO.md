@@ -1,6 +1,6 @@
 # Operation plugins — first working slice
 
-Implemented 2026-10-09. This is a trusted TypeScript plugin proof over one package. The wider [extension architecture](EXTENSIONS.md) remains the direction, with the boundaries below.
+Implemented 2026-10-09. This is a trusted TypeScript plugin proof. [Host preparation](HOST-PREPARATION.md) also serves prepared excerpts through per-package HTTP endpoints; ContextVM currently exposes the configured source. The wider [extension architecture](EXTENSIONS.md) remains the direction, with the boundaries below.
 
 ## Try it
 
@@ -120,8 +120,8 @@ Code artifacts have content-addressed URLs; changed code has a new digest and ca
 
 The test suite covers rank-after-scan (>500 candidates), deduplication, holes/multipolygons, explicit oxbow selection, unknown classifications, input/output schemas, cancellation before reads, offline misses, exact bundled/native equivalence, arbitrary plugin registration, host policy persistence/origin checks and real ContextVM discovery/invocation/revocation through a local relay. Existing operation tests still cover route, all transport modes, reachability, search, reverse geocoding and offline export.
 
-The final Bun suite passes **87 tests**, and TypeScript checking and the web build pass.
+The plugin slice’s Bun suite passed **87 tests**, and TypeScript checking and the web build pass.
 
 Visible browser checks cover device/server equality, finishable polygons, selected GeoJSON/export, warm offline execution, host disable/re-enable and mobile layout. One Vienna-plus lake-only run read about **0.58 MB** of source data on the device; the equivalent server result was **3.2 KB**. The 10-result central Vienna lake/oxbow run read **0.81 MB** locally and returned **123.5 KB** from the server, including selectable polygon geometry; an offline rerun read **0 additional bytes**. These are operation transfers, not the entire map or planet estimates.
 
-Deferred: multiple package installation/provisioning, Nostr offer announcements, Hashtree delivery, federation, recipe planning, build/index plugins, Wasm plugin ABI, host isolation/quotas, result caching, and a `.atlas` derived-layer writer. The current derived layer is portable **GeoJSON with provenance**.
+Deferred: remote package installation, multi-map ContextVM dispatch, Nostr offer announcements, Hashtree delivery, federation, recipe planning, build/index plugins, Wasm plugin ABI, host isolation/quotas, result caching, and a `.atlas` derived-layer writer. The current derived layer is portable **GeoJSON with provenance**.

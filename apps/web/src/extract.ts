@@ -19,6 +19,11 @@ export class ExtractControls {
     readonly map: AtlasMap,
     readonly operations: OperationSession,
   ) {
+    const select = el<HTMLSelectElement>("kind");
+    const kinds = operations.reader.index.manifest.featureKinds;
+    for (const option of select.options)
+      option.disabled = !!kinds && !kinds.includes(option.value as FeatureKind);
+    if (select.selectedOptions[0]?.disabled) select.value = kinds?.[0] ?? "";
     const on = (id: string, fn: () => void) =>
       el(id).addEventListener("click", fn, { signal: this.abort.signal });
     on("load", () => void this.load());

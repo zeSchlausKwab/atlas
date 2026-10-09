@@ -27,7 +27,7 @@ export class ReachabilityControls {
         ? [16.3605, 48.2145]
         : [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
     const select = el<HTMLSelectElement>("transport-profile");
-    select.value = "walking";
+    select.value = operations.profile;
     for (const option of select.options)
       option.disabled =
         !operations.engine.capabilities.operations.route.parameters.profiles.includes(

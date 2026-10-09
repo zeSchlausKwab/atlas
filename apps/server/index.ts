@@ -1,3 +1,5 @@
+import { Preparations } from "./preparations";
+import { HostedLibrary } from "./library";
 import { buildPlugins, loadPlugins } from "../../scripts/plugins";
 import { OperationHost } from "../../packages/operations/src/host";
 import { hostPolicy } from "./policy";
@@ -62,7 +64,36 @@ const policy = await hostPolicy(
 );
 cvm = await startContextVM(host);
 const api = createApiHandler(engine, host);
+const preparations = await Preparations.open(
+  resolve(root, "data/hosted"),
+  mapPath,
+  engine.reader.index.manifest,
+);
+const library = new HostedLibrary(preparations, (reader) => {
+  const child = new AtlasEngine(reader, async () =>
+    init({
+      module_or_path: await Bun.file(
+        resolve(root, "packages/routing/pkg/atlas_routing_wasm_bg.wasm"),
+      ).arrayBuffer(),
+    }),
+  );
+  for (const p of plugins) child.registry.register(p.plugin, p.implementation);
+  return child;
+});
+
 const routes = new Map([
+  [
+    "/maplibre.css",
+    ["node_modules/maplibre-gl/dist/maplibre-gl.css", "text/css"],
+  ],
+  [
+    "/maplibre/maplibre-gl-worker.mjs",
+    ["node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs", "text/javascript"],
+  ],
+  [
+    "/maplibre/maplibre-gl-shared.mjs",
+    ["node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs", "text/javascript"],
+  ],
   ["/host", ["apps/web/host.html", "text/html; charset=utf-8"]],
   ["/host.js", ["dist/host.js", "text/javascript; charset=utf-8"]],
   [
@@ -104,9 +135,33 @@ const server = Bun.serve({
   maxRequestBodySize: 16384,
   async fetch(request, bunServer) {
     const path = new URL(request.url).pathname;
+    if (path.startsWith("/admin/preparations"))
+      return preparations.handle(
+        request,
+        bunServer.requestIP(request)?.address,
+      );
+    if (path === "/catalog" && request.method === "GET")
+      return Response.json(
+        {
+          maps: [
+            {
+              id: "demo",
+              url: "/maps/demo.atlas",
+              api: "/api",
+              bytes: snapshot.size,
+              manifest: engine.reader.index.manifest,
+            },
+            ...preparations.catalog(),
+          ],
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    const hosted = await library.handle(request);
+    if (hosted) return hosted;
     if (path === "/admin/operations")
       return policy(request, bunServer.requestIP(request)?.address);
-    if (path.startsWith("/api/")) return api(request);
+    if (path.startsWith("/api/") || path.startsWith("/maps/demo/api/"))
+      return api(request);
     if (path === "/maps/demo.atlas") {
       try {
         await snapshot.assertUnchanged();
@@ -139,6 +194,8 @@ console.log(
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, async () => {
+    await preparations.close();
+    await library.close();
     await cvm?.close();
     await server.stop(true);
     engine.destroy();
