@@ -19,6 +19,7 @@ pub struct Cell {
     pub address: (u32, u32),
     pub graph: Graph,
     pub ids: Vec<u32>,
+    pub(super) incoming: Vec<Vec<Arc>>,
     pub(super) by_id: HashMap<i64, usize>,
     pub(super) turns_by_node: HashMap<i64, Vec<Turn>>,
 }
@@ -44,7 +45,19 @@ impl Cell {
         for t in &graph.turns {
             turns_by_node.entry(t.via).or_default().push(*t);
         }
+        let mut incoming = vec![Vec::new(); graph.nodes.len()];
+        for (from, arcs) in graph.adjacency.iter().enumerate() {
+            for arc in arcs {
+                incoming[arc.to].push(Arc {
+                    to: from,
+                    segment: arc.segment,
+                    meters: arc.meters,
+                    seconds: arc.seconds,
+                });
+            }
+        }
         Ok(Self {
+            incoming,
             turns_by_node,
             address,
             graph,
@@ -100,7 +113,7 @@ impl Cell {
     }
     pub(super) fn memory(&self) -> usize {
         self.graph.nodes.len() * 128
-            + self.graph.segments.len() * 192
+            + self.graph.segments.len() * 256
             + self.graph.turns.len() * 96
             + 256
     }

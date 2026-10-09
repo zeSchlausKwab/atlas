@@ -37,7 +37,9 @@ No traffic, turn delays, terrain/slope effort, country-specific defaults, live c
 
 ## Search and reachability contract
 
-The kernel snaps within 150 m of the requested point using original segment identity for stable ties. Partial endpoint connections preserve direction and travel costs. A\* minimizes estimated seconds, with spherical distance divided by a profile speed bound as its admissible heuristic. Search state includes the incoming way and previous node to enforce turns. Distances and times exclude the snap offsets; those offsets are not known traversable paths.
+The kernel snaps within 150 m of the requested point using original segment identity for stable ties. Partial endpoint connections preserve direction and travel costs. Bidirectional A* minimizes estimated seconds. It searches from both snapped endpoints, traversing incoming directed arcs on the reverse side. Balanced spherical-distance potentials make the sum of the two queue minima a lower bound; finding a first meeting is not enough to finish. A meeting must satisfy the turn rule between its incoming and outgoing edges.
+
+Only nodes with turn restrictions retain arrival/departure way and neighbor identity. Ordinary nodes merge equivalent histories into one state per frontier. Each record still retains its traversed way for reconstruction. Endpoint partial costs, one-way directions and asymmetric travel times are preserved; no heading cutoff, fixed corridor or weighted approximation is used. Distances and times exclude the snap offsets; those offsets are not known traversable paths.
 
 Isochrones use bounded Dijkstra expansion with the largest band as their time budget. Reachable directed edge portions are clipped at each time limit. A local metric raster, at least 25 m resolution and at most approximately 505 × 505 cells, produces network envelopes. Holes and disconnected components are retained. This is not a convex hull or radius. Nearby roads are buffered for visibility, so enclosed land/water is **not** guaranteed traversable. The output carries `approximate: true` and `resolutionMeters`; the area field measures the envelope, not accessible land area.
 
@@ -61,6 +63,57 @@ Polygon-exported `.atlas` children still carry a clipped **walking-only RTE1** g
 
 ## Resource limits
 
-The current kernel estimates a 32 MiB cell-cache budget, with 250,000 search records/reachable directed pieces and 1,000,000 queue entries. These limits do not bound total WASM RSS. The reader separately limits decoded routing payloads to 16 MiB. IndexedDB holds up to 128 MiB of compressed eligible blocks across snapshots, with hash verification and LRU eviction. Changing profiles clears the resident kernel graph; other modes remain available in persistent byte storage.
+The default kernel estimates a 96 MiB decoded-cell cache budget, allocated on demand. `RoutingBudget.cellBytes` remains configurable from 1–256 MiB. Two simultaneous search fronts need a larger active cell set; the former 32 MiB default caused repeated eviction/decoding in dense cities. Single-map searches default to 250,000 records/reachable directed pieces and 1,000,000 queue entries; compositions default to 2 million records. Route limits count both frontiers together. These limits do not bound total WASM RSS. The reader separately limits decoded routing payloads to 16 MiB. IndexedDB holds up to 128 MiB of compressed eligible blocks across snapshots, with hash verification and LRU eviction. Changing profiles clears the resident kernel graph; other modes remain available in persistent byte storage.
 
-Long/dense searches may exceed the budget; shorten the route/time. There is no routing hierarchy or cross-package continuation. Extent boundaries and conservative access exclusions can truncate a reachable area. The server pins a read-only file descriptor and serializes operation requests. Routing has its own WASM facade. Cell codec/partitioning, decoded-cell residency and endpoint snapping are separate from search expansion; routes and isochrones still share the same cost/turn semantics. See [stack review](STACK-REVIEW.md) for completed measures and the remaining scaling work.
+Long/dense searches may exceed the budget; shorten the route/time. There is no routing hierarchy yet. Shared-snapshot compositions support cross-package continuation; see [composition](COMPOSITION.md). Extent boundaries and conservative access exclusions can truncate a reachable area. The server pins a read-only file descriptor and serializes operation requests. Routing has its own WASM facade. Cell codec/partitioning, decoded-cell residency and endpoint snapping are separate from search expansion; routes and isochrones still share the same cost/turn semantics. See [stack review](STACK-REVIEW.md) for completed measures and the remaining scaling work.
+
+
+## Regional search measurements — 2026-10-09
+
+The original single-front A* had a deliberately conservative time heuristic (the
+speed ceiling must cover every edge), so driving explored a broad area. Searching
+from both ends reduces that area; merging unrestricted-node states removes
+redundant work. No archive migration or lossy corridor restriction was needed.
+
+Same four Danube archives, graph `8524975bef1503ef4ebcfdd02db8a9c4eed4158dfabc69436d83aba05128708b`,
+Vienna `[16.3696, 48.2027]` → Bratislava `[17.1128, 48.1452]`, two-million-state
+limit. New readers and kernel for each profile; file-backed Bun harness, no
+display rendering, same snapshot and endpoints. MB below is decimal compressed
+routing payload, excluding directories. Times are one local run, not an SLA or
+a cold-disk benchmark. `bun run verify:composition` repeats the current route
+checks and writes metrics to ignored `data/danube-verification.json`.
+
+| Mode | Explored states: before → after | Unique cells: before → after | Payload MB: before → after | Local elapsed: before → after |
+| --- | ---: | ---: | ---: | ---: |
+| Driving | 1,362,134 → 470,897 | 2,871 → 1,366 | 26.18 → 17.15 | 51.0 s → 4.57 s |
+| Cycling | 939,461 → 474,938 | 919 → 703 | 17.67 → 17.33 | 7.60 s → 2.53 s |
+| Walking | 701,817 → 379,805 | 385 → 256 | 12.50 → 15.04 | 126.8 s → 2.22 s |
+
+Distances and modeled travel costs are unchanged (floating-point summation order
+can differ). Walking reads fewer but denser cells around its second frontier, so
+its bytes increase; a smaller search footprint does not guarantee fewer bytes.
+
+The cache change is material: compact bidirectional walking at 64 MiB made
+30,039 cell-provider calls for 256 unique cells; at 96 MiB it made 629 calls.
+Driving at 32 MiB made 21,824 calls, versus 1,388 at 96 MiB. Most excess calls
+reloaded already-read payloads into the decoded kernel cache. Raising the
+bounded residency ceiling avoids this thrashing; it is not a graph prefetch.
+
+The visible normal-workspace browser check took 19.9 s for fresh driving,
+versus about 119.5 s in the preceding workspace check, with 17.15 MB of routing
+downloads and 183.3 MiB estimated engine memory. Cache-only replay used all
+1,366 cells with zero `.atlas` requests and no route API request. Browser wall
+time includes worker RPC, HTTP and concurrent map drawing. The Bun numbers do
+not include those costs.
+
+Regression coverage includes a regional grid (3,667 → 632 expansions; 231 → 158
+cells), 360 deterministic comparisons against forward search with directional
+costs and turn rules, cross-cell detours, one-way partial endpoints, bounded
+eviction, shared-graph seams, and missing-data continuation. A cached repeat
+requires no network. A new or reversed trip may legitimately need unexplored
+cells; it pauses and resumes rather than declaring no route.
+
+This remains a raw regional graph search. Partition overlays/shortcut edges or
+landmark lower bounds are the next step for much narrower long-distance queries;
+bidirectional search alone cannot eliminate every branch while preserving an
+exact fastest-route result under the stored profile.

@@ -157,9 +157,28 @@ test("paged WASM search pauses without false no-route and resumes to the referen
     throw new Error("Missing route");
   expect(result.meters).toBeCloseTo(baseline.meters, 6);
   reader.offline = true;
+  const replay = await router.route(points[0]!, points[5]!);
+  expect(replay.status).toBe("found");
+  expect(replay.graphBytes).toBe(0);
+  // A different query can need unexplored owner cells to prove optimality,
+  // even on this symmetric graph. The old outward search happened to fetch
+  // them all. Preserve the missing-data/resume contract instead of requiring
+  // a routing algorithm to overfetch enough for every future reverse trip.
   const reverse = await router.route(points[5]!, points[0]!);
-  expect(reverse.status).toBe("found");
+  expect(["found", "missing-data"]).toContain(reverse.status);
   expect(reverse.graphBytes).toBe(0);
+  if (reverse.status === "missing-data") {
+    expect(reverse.cells!.visited).toBeGreaterThan(0);
+    reader.offline = false;
+    const resumed = await router.route(points[5]!, points[0]!);
+    expect(resumed.status).toBe("found");
+    if (resumed.status !== "found") throw new Error("Missing reverse route");
+    expect(resumed.meters).toBeCloseTo(baseline.meters, 6);
+    reader.offline = true;
+  }
+  const reverseReplay = await router.route(points[5]!, points[0]!);
+  expect(reverseReplay.status).toBe("found");
+  expect(reverseReplay.graphBytes).toBe(0);
   router.destroy();
   reference.destroy();
 });

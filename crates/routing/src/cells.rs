@@ -3,6 +3,8 @@ use super::*;
 use std::collections::HashMap;
 mod snap;
 use snap::{snap, snap_cells, Endpoint, Key};
+mod bidirectional;
+use bidirectional::Bidirectional;
 mod cache;
 use cache::CellCache;
 mod codec;
@@ -36,6 +38,7 @@ struct Record {
     g: f64,
     meters: f64,
     previous: Option<Key>,
+    way: i64,
 }
 struct Search {
     start: Endpoint,
@@ -89,6 +92,9 @@ pub struct PagedRouter {
     budget_exceeded: bool,
     input: Option<([f64; 2], [f64; 2])>,
     search: Option<Search>,
+    route: Option<Bidirectional>,
+    #[cfg(test)]
+    forward_only: bool,
     profile: u32,
     bands: Vec<f64>,
 }
@@ -101,6 +107,9 @@ impl PagedRouter {
             budget_exceeded: false,
             input: None,
             search: None,
+            route: None,
+            #[cfg(test)]
+            forward_only: false,
             profile: 0,
             bands: Vec::new(),
         }
@@ -113,6 +122,7 @@ impl PagedRouter {
             self.cells.clear();
             self.input = None;
             self.search = None;
+            self.route = None;
             self.profile = profile;
         }
         Ok(())
@@ -125,6 +135,7 @@ impl PagedRouter {
         self.budget_exceeded = false;
         self.input = Some((a, b));
         self.search = None;
+        self.route = None;
         self.cells.clear_empty();
         self.bands.clear();
         Ok(())
@@ -152,7 +163,8 @@ impl PagedRouter {
         v
     }
     pub fn memory(&self) -> usize {
-        self.cells.memory()
+        self.route.as_ref().map_or(0, Bidirectional::memory)
+            + self.cells.memory()
             + self
                 .search
                 .as_ref()
@@ -163,7 +175,7 @@ impl PagedRouter {
         self.cells.len()
     }
     pub fn load(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let pinned: HashSet<_> = if self.search.is_none() {
+        let pinned: HashSet<_> = if self.search.is_none() && self.route.is_none() {
             self.input
                 .map(|(a, b)| snap_cells(a).into_iter().chain(snap_cells(b)).collect())
                 .unwrap_or_default()
@@ -183,10 +195,13 @@ impl PagedRouter {
         let (a, b) = self.input.ok_or("Begin a search first")?;
         if self.budget_exceeded {
             return Ok(Step::BudgetExceeded {
-                visited: self.search.as_ref().map_or(0, |s| s.visited),
+                visited: self.route.as_ref().map_or_else(
+                    || self.search.as_ref().map_or(0, |s| s.visited),
+                    |s| s.visited,
+                ),
             });
         }
-        if self.search.is_none() {
+        if self.search.is_none() && self.route.is_none() {
             let required: HashSet<_> = snap_cells(a).into_iter().chain(snap_cells(b)).collect();
             self.touched
                 .extend(required.iter().filter(|c| self.cells.contains(c)));
@@ -223,6 +238,19 @@ impl PagedRouter {
             } else {
                 None
             };
+            #[cfg(test)]
+            let bidirectional = !self.forward_only;
+            #[cfg(not(test))]
+            let bidirectional = true;
+            if bidirectional && end.is_some() {
+                self.route = Some(Bidirectional::new(start, end.unwrap(), self.max_speed()));
+                return self.route.as_mut().unwrap().step(
+                    &mut self.cells,
+                    &mut self.touched,
+                    limit,
+                    self.search_limit,
+                );
+            }
             let mut s = Search {
                 start,
                 end,
@@ -272,11 +300,15 @@ impl PagedRouter {
                             g,
                             meters,
                             previous: None,
+                            way: key.way,
                         },
                     );
                 }
             }
             self.search = Some(s);
+        }
+        if let Some(route) = &mut self.route {
+            return route.step(&mut self.cells, &mut self.touched, limit, self.search_limit);
         }
         let speed = self.max_speed();
         for _ in 0..limit.clamp(1, 4096) {
@@ -375,6 +407,7 @@ impl PagedRouter {
                             g,
                             meters: meters + arc.meters,
                             previous: Some(entry.key),
+                            way: key.way,
                         },
                     );
                 }
@@ -415,7 +448,7 @@ impl PagedRouter {
                 let r = &s.records[&key];
                 points.push(r.p);
                 if let Some(prev) = r.previous {
-                    ways.push(format!("way/{}", key.way));
+                    ways.push(format!("way/{}", r.way));
                     key = prev;
                 } else {
                     break;
@@ -529,6 +562,198 @@ mod tests {
             _ => panic!("status mismatch"),
         }
     }
+    // A regional street grid with roads slower than the profile's speed ceiling.
+    // The route is eastward; downloading most of the surrounding region is wasteful.
+    #[test]
+    fn regional_route_limits_search_fanout() {
+        let width = 61;
+        let nodes: Vec<_> = (0..width * width)
+            .map(|i| Node {
+                id: i as i64 + 1,
+                position: [
+                    16. + (i % width) as f64 * 0.01,
+                    48. + (i / width) as f64 * 0.0067,
+                ],
+            })
+            .collect();
+        let mut segments = Vec::new();
+        for i in 0..width * width {
+            for j in [
+                if i % width + 1 < width {
+                    Some(i + 1)
+                } else {
+                    None
+                },
+                if i / width + 1 < width {
+                    Some(i + width)
+                } else {
+                    None
+                },
+            ]
+            .into_iter()
+            .flatten()
+            {
+                segments.push(Segment {
+                    a: i as u32,
+                    b: j as u32,
+                    way: segments.len() as i64 + 1,
+                    directions: 3,
+                });
+            }
+        }
+        let costs = segments
+            .iter()
+            .map(|e| {
+                let seconds = distance(nodes[e.a as usize].position, nodes[e.b as usize].position)
+                    / (50. / 3.6);
+                [seconds, seconds]
+            })
+            .collect();
+        let g = Graph::new(nodes, segments)
+            .unwrap()
+            .with_costs(2, costs, vec![])
+            .unwrap();
+        let a = g.nodes[30 * width + 15].position;
+        let b = g.nodes[30 * width + 45].position;
+        let data = payloads(&g);
+        let mut r = PagedRouter::new(16 * 1024 * 1024, 100_000);
+        r.set_profile(2).unwrap();
+        r.begin(a, b).unwrap();
+        let result = loop {
+            match r.step(4096).unwrap() {
+                Step::NeedBlocks { keys, .. } => supply(&mut r, keys, &data),
+                Step::Running { .. } => {}
+                Step::Complete { result } => break result,
+                _ => panic!("unexpected limit"),
+            }
+        };
+        let Route::Found {
+            seconds, visited, ..
+        } = result
+        else {
+            panic!("route")
+        };
+        let expected = (15..45)
+            .map(|x| {
+                distance(
+                    g.nodes[30 * width + x].position,
+                    g.nodes[30 * width + x + 1].position,
+                ) / (50. / 3.6)
+            })
+            .sum::<f64>();
+        assert!((seconds - expected).abs() < 0.01, "{seconds} != {expected}");
+        eprintln!(
+            "regional grid: {visited} visited, {} cells, {seconds:.3} seconds",
+            r.used_keys().len()
+        );
+        assert!(visited < 1_000, "eastward route explored {visited} states");
+        assert!(
+            r.used_keys().len() < 180,
+            "route downloaded too much of the surrounding grid"
+        );
+    }
+    #[test]
+    fn bidirectional_matches_forward_search_with_directed_costs_and_turns() {
+        // Deterministic differential coverage: partial snaps, both directions,
+        // no/only/U-turn rules, shared way IDs, disconnected and same-edge trips.
+        let mut seed = 918_273_u64;
+        let mut random = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 32) as usize
+        };
+        for profile in 0..3 {
+            let nodes: Vec<_> = (0..64)
+                .map(|i| Node {
+                    id: i + 1,
+                    position: [16. + (i % 8) as f64 * 0.003, 48. + (i / 8) as f64 * 0.002],
+                })
+                .collect();
+            let mut segments = Vec::new();
+            for i in 0..64 {
+                for j in [
+                    if i % 8 < 7 { Some(i + 1) } else { None },
+                    if i < 56 { Some(i + 8) } else { None },
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    segments.push(Segment {
+                        a: i,
+                        b: j,
+                        way: (random() % 12 + 1) as i64,
+                        directions: (random() % 3 + 1) as u8,
+                    });
+                }
+            }
+            let speed = [4.8 / 3.6, 25. / 3.6, 200. / 3.6][profile as usize];
+            let costs = segments
+                .iter()
+                .map(|e| {
+                    let base = distance(nodes[e.a as usize].position, nodes[e.b as usize].position)
+                        / speed;
+                    [
+                        base * (1. + (random() % 50) as f64 / 10.),
+                        base * (1. + (random() % 50) as f64 / 10.),
+                    ]
+                })
+                .collect();
+            let turns = (0..60)
+                .map(|_| Turn {
+                    via: (random() % 64 + 1) as i64,
+                    from: (random() % 12 + 1) as i64,
+                    to: (random() % 12 + 1) as i64,
+                    kind: (random() % 4) as u8,
+                })
+                .collect();
+            let g = Graph::new(nodes, segments)
+                .unwrap()
+                .with_costs(profile, costs, turns)
+                .unwrap();
+            let data = payloads(&g);
+            let mut forward = PagedRouter::new(1_000_000, 10000);
+            forward.forward_only = true;
+            let mut bidi = PagedRouter::new(1_000_000, 10000);
+            forward.set_profile(profile).unwrap();
+            bidi.set_profile(profile).unwrap();
+            for _ in 0..120 {
+                let points: Vec<_> = (0..2)
+                    .map(|_| {
+                        let e = &g.segments[random() % g.segments.len()];
+                        let t = (random() % 5) as f64 / 4.;
+                        let a = g.nodes[e.a as usize].position;
+                        let b = g.nodes[e.b as usize].position;
+                        [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
+                    })
+                    .collect();
+                forward.begin(points[0], points[1]).unwrap();
+                bidi.begin(points[0], points[1]).unwrap();
+                let expected = solve(&mut forward, &data);
+                let actual = solve(&mut bidi, &data);
+                match (&expected, &actual) {
+                    (
+                        Route::Found { seconds: a, .. },
+                        Route::Found {
+                            seconds: b,
+                            coordinates,
+                            meters,
+                            ..
+                        },
+                    ) => {
+                        assert!((a - b).abs() < 1e-6, "{profile}: {points:?}, {a} != {b}");
+                        let length: f64 =
+                            coordinates.windows(2).map(|p| distance(p[0], p[1])).sum();
+                        assert!(
+                            (length - meters).abs() < 0.01,
+                            "reconstruction distance mismatch"
+                        );
+                    }
+                    (Route::NoRoute { .. }, Route::NoRoute { .. }) => {}
+                    _ => panic!("status mismatch: {expected:?} vs {actual:?}"),
+                }
+            }
+        }
+    }
+
     #[test]
     fn resumes_across_cells_and_finds_detour_outside_endpoint_corridor() {
         let g = graph(

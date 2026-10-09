@@ -37,7 +37,7 @@ impl CellWalkingRouter {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            inner: atlas_routing::cells::PagedRouter::new(32 * 1024 * 1024, 250_000),
+            inner: atlas_routing::cells::PagedRouter::new(96 * 1024 * 1024, 250_000),
         }
     }
     /// Explicit bounded opt-in for longer client journeys. The default constructor

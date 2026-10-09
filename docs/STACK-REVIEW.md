@@ -72,6 +72,17 @@ Visual content was not reduced. This is a small local before/after result, **not
 
 These are proposed boundaries, not an instruction to rewrite everything at once. The transport tests and current browser behavior are the compatibility checkpoints.
 
+## Routing follow-up — 2026-10-09
+
+Regional routes now use exact bidirectional A* with turn-aware joins and compact
+states at unrestricted nodes. The decoded-cell cache defaults to a configurable
+96 MiB to prevent the two fronts from repeatedly evicting one another. These
+changes apply to the shared client/server kernel without rebuilding archives.
+Vienna–Bratislava driving visits 65% fewer states and uses 52% fewer cells;
+see [routing measurements](ROUTING.md#regional-search-measurements--2026-10-09)
+for all modes, bytes, cache effects and local timings. Isochrones retain bounded
+outward expansion. Precomputed hierarchy remains the larger scaling step.
+
 ## Original scaling priorities
 
 1. **File-backed server and a complete cache budget.** The server currently materializes the entire archive in a Blob; range delivery should use a pinned read-only file descriptor and positional reads. Preserve snapshot consistency across path replacement. Bound decoded display bytes, directory descriptors, labels and prepared meshes independently. GPU tiles currently disappear as soon as they leave the retained view, causing repeat work when panning back.

@@ -60,10 +60,14 @@ try {
   const results = [];
   for (const mode of ["driving", "cycling", "walking"] as const) {
     const provider = new RoutingComposition(sources);
-    let last = 0;
+    let last = 0,
+      cellReadCalls = 0;
     const router = new PagedRouter(
       provider.snapshot,
-      (key) => provider.read(key),
+      (key) => {
+        cellReadCalls++;
+        return provider.read(key);
+      },
       (p) => {
         if (Date.now() - last > 5000) {
           console.log(
@@ -81,6 +85,7 @@ try {
       { searchStates: 2_000_000 },
     );
     try {
+      const started = performance.now();
       const result = await router.route(
         [16.3696, 48.2027],
         [17.1128, 48.1452],
@@ -95,6 +100,10 @@ try {
       );
       const summary = {
         ...result,
+        elapsedMs: performance.now() - started,
+        cellReadCalls,
+        routingCells: result.cells?.loadedCells,
+        memoryBytes: result.cells?.memoryBytes,
         coordinates: undefined,
         wayIds: undefined,
         cells: undefined,

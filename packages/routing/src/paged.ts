@@ -127,7 +127,7 @@ export class PagedRouter {
       init({ module_or_path: "/wasm/atlas_routing_wasm_bg.wasm" }),
     readonly budget: RoutingBudget = {},
   ) {
-    const bytes = budget.cellBytes ?? 32 * 1024 * 1024,
+    const bytes = budget.cellBytes ?? 96 * 1024 * 1024,
       states = budget.searchStates ?? 250_000;
     if (
       !Number.isInteger(bytes) ||
@@ -209,7 +209,7 @@ export class PagedRouter {
       await this.initialize();
       if (this.dead) throw new Error("Router disposed");
       this.kernel = CellWalkingRouter.with_limits(
-        this.budget.cellBytes ?? 32 * 1024 * 1024,
+        this.budget.cellBytes ?? 96 * 1024 * 1024,
         this.budget.searchStates ?? 250_000,
       );
     }
