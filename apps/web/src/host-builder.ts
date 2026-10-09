@@ -268,8 +268,8 @@ async function request(path: string, body: unknown) {
 const composition = new Set<string>();
 function updateComposition() {
   el<HTMLAnchorElement>("compose").href = composition.size
-    ? `/compose?maps=${[...composition].join(",")}`
-    : "/compose";
+    ? `/?maps=${[...composition].join(",")}`
+    : "/#tab=composer";
   el("compose").textContent = composition.size
     ? `Compose ${composition.size} selected maps ↗`
     : "Compose hosted maps ↗";

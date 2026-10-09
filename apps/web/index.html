@@ -24,7 +24,8 @@
         >
           Purge caches
         </button>
-        <a href="/compose">Compose ↗</a><a href="/host">Host console ↗</a
+        <button id="open-composer" class="cache-purge">Client composer</button
+        ><a href="/host">Host console ↗</a
         ><span class="prototype">PROTOTYPE 009</span
         ><a
           href="https://www.openstreetmap.org/copyright"
@@ -41,6 +42,16 @@
           <h1>Map workspace.</h1>
         </div>
         <div class="tool-tabs" role="tablist" aria-label="Map tools">
+          <button
+            id="tab-composer"
+            role="tab"
+            data-tab="composer"
+            aria-controls="panel-composer"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Composer
+          </button>
           <button
             id="tab-explore"
             role="tab"
@@ -107,6 +118,15 @@
             Tools
           </button>
         </div>
+        <div
+          id="composition-scope"
+          class="execution-control source-scope"
+          hidden
+        >
+          <label for="tool-source">Tool source</label
+          ><select id="tool-source"></select>
+          <p id="source-scope-hint"></p>
+        </div>
         <div class="execution-control">
           <label for="execution-mode">Run tools on</label
           ><select id="execution-mode">
@@ -119,944 +139,1037 @@
         </div>
         <div class="sidebar-content">
           <div
-            id="panel-tools"
-            data-panel="tools"
-            tabindex="0"
+            id="panel-composer"
             role="tabpanel"
-            aria-labelledby="tab-tools"
+            data-panel="composer"
+            aria-labelledby="tab-composer"
+            tabindex="0"
             hidden
           >
-            <section class="plugin-tools">
-              <p class="eyebrow">EXTENSIBLE OPERATIONS</p>
-              <h2>Tool workshop.</h2>
+            <section class="client-composer">
+              <p class="eyebrow">MANY SOURCES / ONE VIEW</p>
+              <h2>Client composer.</h2>
               <p class="section-copy">
-                Choose a tool, give it an area, and keep the result.
+                Choose maps and the data each one supplies. Routes can cross
+                compatible chunks; nothing is downloaded in full.
               </p>
-              <label for="tools-select">Available tools</label>
-              <div class="plugin-picker">
-                <select id="tools-select"></select
-                ><button id="tools-refresh" title="Refresh tool catalog">
-                  Refresh
-                </button>
+              <div id="composition-single" hidden>
+                <p class="quiet">
+                  You are viewing one map. Open the composer to combine the
+                  hosted maps.
+                </p>
+                <a class="secondary-button" href="/#tab=composer"
+                  >Compose hosted maps</a
+                >
               </div>
-              <p id="tools-description" class="section-copy"></p>
-              <p id="tools-needs" class="quiet"></p>
-              <div id="tools-fields"></div>
-              <div class="plugin-actions">
-                <button id="tools-run" class="primary-button">Run tool</button
-                ><button id="tools-compare">Compare device &amp; server</button
-                ><button id="tools-cancel">Cancel</button>
+              <div id="composition-controls">
+                <div class="composition-actions">
+                  <button id="composition-fit">Fit selected</button
+                  ><button id="composition-share">Copy view link</button>
+                </div>
+                <p id="composition-message" role="status" class="quiet">
+                  Reading the host catalog…
+                </p>
+                <div class="composition-rule">
+                  <p>
+                    <strong>Top source wins, per layer.</strong> Lower maps fill
+                    the remaining coverage. Use ↑ to raise a source’s priority.
+                    Data tab switches apply to all sources.
+                  </p>
+                  <label
+                    ><input id="composition-coverage" type="checkbox" checked />
+                    Show coverage outlines</label
+                  >
+                </div>
+                <div id="composition-sources"></div>
+                <form id="composition-catalog-form" class="composition-rule">
+                  <label for="composition-catalog"
+                    >Add another host’s catalog</label
+                  ><input
+                    id="composition-catalog"
+                    type="url"
+                    placeholder="https://host.example/catalog"
+                    required
+                  /><button type="submit">Discover maps</button>
+                </form>
+                <p class="quiet">
+                  Cross-map routing requires one shared compiled graph.
+                  Independent snapshots can share a display. Composition uses 2D
+                  geometry; open a source on its own for building extrusion.
+                </p>
               </div>
-              <p id="tools-status" role="status"></p>
-              <div id="tools-output"></div>
-              <div class="plugin-actions">
-                <button id="tools-show" disabled>Select on map</button
-                ><button id="tools-download" disabled>Download result</button>
-              </div>
-              <p id="tools-identity" class="plugin-identity"></p>
             </section>
           </div>
-          <div
-            id="panel-explore"
-            role="tabpanel"
-            data-panel="explore"
-            aria-labelledby="tab-explore"
-            tabindex="0"
-            hidden
-          >
-            <section class="search-section" aria-labelledby="search-label">
-              <p class="eyebrow">FIND YOUR PLACE</p>
-              <div class="search-heading">
-                <h2 id="search-label">Somewhere, here.</h2>
-                <button
-                  id="search-clear"
-                  class="text-button"
-                  aria-label="Clear search results"
-                >
-                  Clear
-                </button>
-              </div>
-              <form id="location-form">
-                <label for="location-query">Find a place or street</label>
-                <div class="search-input-row">
-                  <input
-                    id="location-query"
-                    type="search"
-                    placeholder="Wien, Stephansplatz…"
-                    maxlength="120"
-                    autocomplete="off"
-                    disabled
-                  /><button
-                    id="location-submit"
-                    type="submit"
-                    aria-label="Search locations"
-                    disabled
-                  >
-                    →
+          <div id="tool-panels">
+            <div
+              id="panel-tools"
+              data-panel="tools"
+              tabindex="0"
+              role="tabpanel"
+              aria-labelledby="tab-tools"
+              hidden
+            >
+              <section class="plugin-tools">
+                <p class="eyebrow">EXTENSIBLE OPERATIONS</p>
+                <h2>Tool workshop.</h2>
+                <p class="section-copy">
+                  Choose a tool, give it an area, and keep the result.
+                </p>
+                <label for="tools-select">Available tools</label>
+                <div class="plugin-picker">
+                  <select id="tools-select"></select
+                  ><button id="tools-refresh" title="Refresh tool catalog">
+                    Refresh
                   </button>
                 </div>
-              </form>
-              <ul
-                id="location-results"
-                class="location-results"
-                aria-label="Location results"
-                hidden
-              ></ul>
-              <details class="reverse-controls" open>
-                <summary>Coordinates → nearest street</summary>
-                <form id="reverse-form">
-                  <label for="reverse-coordinates">Latitude, longitude</label>
-                  <input
-                    id="reverse-coordinates"
-                    type="text"
-                    value="47.13929, 9.52280"
-                    placeholder="47.13929, 9.52280"
-                    autocomplete="off"
-                    disabled
-                  />
-                  <div class="reverse-actions">
-                    <button
-                      id="reverse-submit"
+                <p id="tools-description" class="section-copy"></p>
+                <p id="tools-needs" class="quiet"></p>
+                <div id="tools-fields"></div>
+                <div class="plugin-actions">
+                  <button id="tools-run" class="primary-button">Run tool</button
+                  ><button id="tools-compare">
+                    Compare device &amp; server</button
+                  ><button id="tools-cancel">Cancel</button>
+                </div>
+                <p id="tools-status" role="status"></p>
+                <div id="tools-output"></div>
+                <div class="plugin-actions">
+                  <button id="tools-show" disabled>Select on map</button
+                  ><button id="tools-download" disabled>Download result</button>
+                </div>
+                <p id="tools-identity" class="plugin-identity"></p>
+              </section>
+            </div>
+            <div
+              id="panel-explore"
+              role="tabpanel"
+              data-panel="explore"
+              aria-labelledby="tab-explore"
+              tabindex="0"
+              hidden
+            >
+              <section class="search-section" aria-labelledby="search-label">
+                <p class="eyebrow">FIND YOUR PLACE</p>
+                <div class="search-heading">
+                  <h2 id="search-label">Somewhere, here.</h2>
+                  <button
+                    id="search-clear"
+                    class="text-button"
+                    aria-label="Clear search results"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <form id="location-form">
+                  <label for="location-query">Find a place or street</label>
+                  <div class="search-input-row">
+                    <input
+                      id="location-query"
+                      type="search"
+                      placeholder="Wien, Stephansplatz…"
+                      maxlength="120"
+                      autocomplete="off"
+                      disabled
+                    /><button
+                      id="location-submit"
                       type="submit"
-                      class="text-button"
+                      aria-label="Search locations"
                       disabled
                     >
-                      Find nearest street</button
-                    ><button
-                      id="reverse-pick"
-                      type="button"
-                      class="text-button"
-                      aria-pressed="false"
-                      disabled
-                    >
-                      Pick on map ⌖
+                      →
                     </button>
                   </div>
                 </form>
-              </details>
-              <p id="search-status" role="status" aria-live="polite">
-                Search inside this map’s extract.
-              </p>
-              <div id="search-detail" hidden></div>
-              <div id="search-route-actions" class="reverse-actions" hidden>
-                <button id="search-route-start" class="text-button">
-                  Route from here</button
-                ><button id="search-route-end" class="text-button">
-                  Route to here
-                </button>
-              </div>
-              <p class="search-scope">
-                Nearest street, not a house-number address. Covers retained OSM
-                streets within 1 km.
-              </p>
-            </section>
-            <section class="query-section" aria-labelledby="query-label">
-              <p class="eyebrow">BEYOND THE VIEWPORT</p>
-              <h2 id="query-label">Ask the map.</h2>
-              <p>
-                The answer lives in the data,<br />even when it’s out of view.
-              </p>
-              <button id="highest-peak" class="primary-button" disabled>
-                Find the highest peak <span>↗</span>
-              </button>
-              <div id="query-result" role="status" hidden></div>
-            </section>
-          </div>
-          <div
-            id="panel-route"
-            role="tabpanel"
-            data-panel="route"
-            aria-labelledby="tab-route"
-            tabindex="0"
-            hidden
-          >
-            <section class="routing-section" aria-labelledby="routing-label">
-              <p class="eyebrow">A PATH THROUGH THE DATA</p>
-              <h2 id="routing-label">Go somewhere.</h2>
-              <p class="routing-intro">
-                Three ways to travel. The same engine on your device and server.
-              </p>
-              <label for="transport-profile">Travel mode</label>
-              <select id="transport-profile">
-                <option value="walking">Walking</option>
-                <option value="cycling">Cycling</option>
-                <option value="driving">Driving</option>
-              </select>
-              <p class="search-scope">
-                Applies to routes and reachable areas below. Only this mode’s
-                network is loaded.
-              </p>
-              <button id="route-example" class="primary-button" disabled>
-                Try Vaduz → Schaan <span>↗</span>
-              </button>
-              <div class="route-endpoints">
-                <button
-                  id="route-start"
-                  class="endpoint"
-                  disabled
-                  aria-label="Choose start on map"
-                  aria-pressed="false"
-                >
-                  <b>A</b
-                  ><span id="route-start-label">Choose start on map</span>
-                </button>
-                <button
-                  id="route-end"
-                  class="endpoint"
-                  disabled
-                  aria-label="Choose destination on map"
-                  aria-pressed="false"
-                >
-                  <b>B</b
-                  ><span id="route-end-label">Choose destination on map</span>
-                </button>
-              </div>
-              <p id="route-hint" class="route-hint">
-                Pick A and B on the map, or try the example.
-              </p>
-              <div class="route-actions">
-                <button id="route-calculate" class="text-button" disabled>
-                  Find route
-                </button>
-                <button id="route-reverse" class="text-button" disabled>
-                  Reverse
-                </button>
-                <button id="route-clear" class="text-button" disabled>
-                  Clear
-                </button>
-              </div>
-              <div
-                id="route-result"
-                role="status"
-                aria-live="polite"
-                hidden
-              ></div>
-              <div id="route-cell-panel" hidden>
-                <label class="check-row"
-                  ><input type="checkbox" id="route-cell-overlay" checked />
-                  Show routing coverage</label
-                >
-                <p class="search-scope">
-                  This search: green reused · blue downloaded · amber needed ·
-                  red missing.
-                </p>
-                <p
-                  id="route-cell-metrics"
-                  role="status"
-                  class="search-scope"
-                ></p>
-                <button id="route-resume" class="secondary-button" hidden>
-                  Fetch missing cells &amp; resume
-                </button>
-                <button id="route-beyond" class="text-button">
-                  Try Stephansplatz → Schönbrunn
-                </button>
-              </div>
-              <button id="route-compare" class="secondary-button" disabled>
-                Compare device & server
-              </button>
-              <p class="search-scope">
-                Runs the same request on this device and the server.
-                Cell-enabled packages fetch only the routing regions explored by
-                the search.
-              </p>
-              <p id="route-proof" role="status" hidden></p>
-              <details class="route-scope">
-                <summary>Travel profiles & coverage</summary>
-                <p>
-                  Estimated travel times, mode-specific access, barriers,
-                  one-way rules and common via-node turn restrictions. No
-                  traffic, elevation costs or public transport schedules.
-                  Unsupported conditional and complex turn restrictions
-                  conservatively exclude incoming ways. Coverage ends at the
-                  extract boundary. Experimental, not navigation guidance.
-                </p>
-              </details>
-            </section>
-            <section
-              class="reachability-section"
-              aria-labelledby="reachability-title"
-            >
-              <p class="eyebrow">TIME BECOMES SPACE</p>
-              <h2 id="reachability-title">How far can I go?</h2>
-              <p class="tool-intro">
-                Reachable streets and paths, shaped by your travel mode.
-              </p>
-              <button
-                id="iso-origin"
-                class="secondary-button"
-                aria-pressed="false"
-              >
-                Choose isochrone origin on map
-              </button>
-              <p id="iso-origin-label" class="search-scope">
-                Stephansplatz · Vienna
-              </p>
-              <label for="iso-duration">Travel time</label>
-              <select id="iso-duration">
-                <option value="300">5 minutes · 1 / 3 / 5</option>
-                <option value="600">10 minutes · 2 / 5 / 10</option>
-                <option value="900" selected>15 minutes · 5 / 10 / 15</option>
-                <option value="1800">30 minutes · 10 / 20 / 30</option>
-              </select>
-              <button id="iso-calculate" class="primary-button">
-                Show reachable area ↗
-              </button>
-              <div id="iso-legend" class="iso-legend" hidden></div>
-              <p id="iso-result" role="status" class="search-scope">
-                Choose an origin or use the city center.
-              </p>
-              <button id="iso-resume" class="secondary-button" hidden>
-                Fetch missing cells &amp; resume area
-              </button>
-              <div class="route-actions">
-                <button id="iso-export" class="text-button" disabled>
-                  Export GeoJSON</button
-                ><button id="iso-clear" class="text-button">Clear area</button>
-              </div>
-              <button id="iso-compare" class="secondary-button">
-                Compare area on device &amp; server
-              </button>
-              <p id="iso-proof" role="status" class="search-scope"></p>
-              <p class="search-scope">
-                Colored envelopes approximate the reachable network; interiors
-                aren’t guaranteed traversable. River crossings follow actual
-                connections. Times exclude the offset from your origin to the
-                network.
-              </p>
-            </section>
-          </div>
-          <div
-            id="panel-extract"
-            role="tabpanel"
-            data-panel="extract"
-            aria-labelledby="tab-extract"
-            tabindex="0"
-            hidden
-          >
-            <section class="extract-section" aria-labelledby="extract-title">
-              <p class="eyebrow">FROM MAP TO MATERIAL</p>
-              <h2 id="extract-title">Make it yours.</h2>
-              <p class="tool-intro">
-                Bring mapped objects into a selectable GeoJSON layer.
-              </p>
-              <label for="extract-kind">What to extract</label
-              ><select id="extract-kind">
-                <option value="buildings">Buildings</option>
-                <option value="water">Lakes & water</option>
-                <option value="railways">Rail lines</option>
-                <option value="roads">Roads & paths</option>
-                <option value="land">Landscape areas</option>
-              </select>
-              <label for="extract-tag"
-                >OSM tag filter <span class="muted">optional</span></label
-              ><input
-                id="extract-tag"
-                placeholder="water=lake or railway=tram"
-                maxlength="140"
-              />
-              <div class="extract-limit">
-                <label for="extract-limit">Maximum objects</label
-                ><select id="extract-limit">
-                  <option>100</option>
-                  <option selected>200</option>
-                  <option>500</option>
-                </select>
-              </div>
-              <button id="extract-load" class="primary-button">
-                Extract current view <span>↗</span>
-              </button>
-              <p id="extract-status" role="status">
-                Zoom into an area, then extract. No feature data is loaded
-                beforehand.
-              </p>
-              <div class="extract-actions">
-                <button id="extract-select-all" class="text-button" disabled>
-                  Select all</button
-                ><button
-                  id="extract-clear-selection"
-                  class="text-button"
-                  disabled
-                >
-                  Deselect</button
-                ><button id="extract-clear" class="text-button" disabled>
-                  Remove layer
-                </button>
-              </div>
-              <p id="extract-selected" role="status">No objects selected.</p>
-              <ul id="extract-results" aria-label="Extracted objects"></ul>
-              <div id="extract-detail" hidden></div>
-              <div class="export-options">
-                <button id="extract-download" class="primary-button" disabled>
-                  Download selected GeoJSON ↓</button
-                ><button id="extract-lines" class="secondary-button" disabled>
-                  Download as polylines ↓
-                </button>
-              </div>
-              <p class="search-scope">
-                Click shapes on the map or objects in the list to select them.
-                Complete source shapes and OSM IDs are preserved; objects can
-                extend beyond the view. Polygon outlines become polylines when
-                exported that way.
-              </p>
-            </section>
-          </div>
-          <div
-            id="panel-offline"
-            role="tabpanel"
-            data-panel="offline"
-            aria-labelledby="tab-offline"
-            tabindex="0"
-            hidden
-          >
-            <section class="world-section" aria-labelledby="world-label">
-              <p class="eyebrow">TAKE A PIECE WITH YOU</p>
-              <h2 id="world-label">Draw your offline world.</h2>
-              <p>
-                Choose a boundary. Keep the map, the streets, and the paths
-                between them.
-              </p>
-              <button id="world-draw" class="primary-button">
-                Draw an area <span>◇</span>
-              </button>
-              <div class="reverse-actions">
-                <button id="world-finish" class="text-button" disabled>
-                  Finish area</button
-                ><button id="world-undo" class="text-button" disabled>
-                  Undo corner</button
-                ><button id="world-clear" class="text-button" disabled>
-                  Clear area
-                </button>
-              </div>
-              <label for="world-name">Name your world</label
-              ><input id="world-name" maxlength="80" value="My offline world" />
-              <div class="world-zooms">
-                <label
-                  >From zoom
-                  <select
-                    id="world-min"
-                    aria-label="Minimum offline zoom"
-                  ></select></label
-                ><label
-                  >To zoom
-                  <select
-                    id="world-max"
-                    aria-label="Maximum offline zoom"
-                  ></select
-                ></label>
-              </div>
-              <div class="world-options">
-                <label
-                  ><input id="world-routing" type="checkbox" /> Walking
-                  routes</label
-                ><label
-                  ><input id="world-search" type="checkbox" /> Search &
-                  streets</label
-                ><label
-                  ><input id="world-queries" type="checkbox" /> Peak
-                  queries</label
-                >
-              </div>
-              <p class="search-scope">
-                Uses your selected map layers, street names and POIs from Data.
-                Add routing or search when needed.
-              </p>
-              <button id="world-export" class="primary-button" disabled>
-                Build offline file <span>↓</span>
-              </button>
-              <p id="world-status" role="status" aria-live="polite">
-                Open a package to start drawing.
-              </p>
-              <div id="world-ready" class="reverse-actions" hidden>
-                <button id="world-download" class="text-button">
-                  Save offline file ↓</button
-                ><button id="world-open" class="text-button">
-                  Open this world ↗
-                </button>
-              </div>
-              <details class="route-scope">
-                <summary>What stays inside the boundary?</summary>
-                <p>
-                  Whole display tiles intersecting your shape are retained, so
-                  the map can show beyond its edges. Routing and street segments
-                  are cut at the boundary. Search keeps places with a
-                  representative point inside. A simple polygon is supported;
-                  holes are not yet supported.
-                </p>
-                <p>
-                  After this app is saved for offline use, reopen it at this
-                  address and choose your downloaded .atlas file. Browser export
-                  is limited to 256 MB per file.
-                </p>
-              </details>
-              <p id="shell-status" class="search-scope">
-                Preparing the app for offline use…
-              </p>
-            </section>
-          </div>
-          <div
-            id="panel-style"
-            role="tabpanel"
-            data-panel="style"
-            aria-labelledby="tab-style"
-            tabindex="0"
-            hidden
-          >
-            <section class="style-section" aria-labelledby="style-title">
-              <p class="eyebrow">THE SAME WORLD, YOUR WAY</p>
-              <h2 id="style-title">Change the atmosphere.</h2>
-              <p class="style-intro">
-                A different palette. A quieter street. Make this map your own.
-              </p>
-              <div class="style-presets" aria-label="Style presets">
-                <button data-preset="paper" aria-pressed="true">
-                  <span
-                    class="preset-swatch swatch-paper"
-                    aria-hidden="true"
-                  ></span
-                  >Paper
-                </button>
-                <button data-preset="midnight" aria-pressed="false">
-                  <span
-                    class="preset-swatch swatch-midnight"
-                    aria-hidden="true"
-                  ></span
-                  >Midnight
-                </button>
-                <button data-preset="blueprint" aria-pressed="false">
-                  <span
-                    class="preset-swatch swatch-blueprint"
-                    aria-hidden="true"
-                  ></span
-                  >Blueprint
-                </button>
-              </div>
-              <div class="palette-grid">
-                <label class="paint-chip" for="color-background"
-                  ><span>Canvas</span
-                  ><input
-                    id="color-background"
-                    type="color"
-                    data-color="background"
-                /></label>
-                <label class="paint-chip" for="color-land"
-                  ><span>Landscape</span
-                  ><input id="color-land" type="color" data-color="land"
-                /></label>
-                <label class="paint-chip" for="color-water"
-                  ><span>Water</span
-                  ><input id="color-water" type="color" data-color="water"
-                /></label>
-                <label class="paint-chip" for="color-buildings"
-                  ><span>Buildings</span
-                  ><input
-                    id="color-buildings"
-                    type="color"
-                    data-color="buildings"
-                /></label>
-                <label class="paint-chip" for="color-majorRoads"
-                  ><span>Major roads</span
-                  ><input
-                    id="color-majorRoads"
-                    type="color"
-                    data-color="majorRoads"
-                /></label>
-                <label class="paint-chip" for="color-roads"
-                  ><span>Local roads</span
-                  ><input id="color-roads" type="color" data-color="roads"
-                /></label>
-              </div>
-              <details class="more-paint">
-                <summary>More colors</summary>
-                <div class="palette-grid">
-                  <label class="paint-chip" for="color-paths"
-                    ><span>Footways &amp; paths</span
-                    ><input id="color-paths" type="color" data-color="paths"
-                  /></label>
-                  <label class="paint-chip" for="color-railways"
-                    ><span>Railways</span
-                    ><input
-                      id="color-railways"
-                      type="color"
-                      data-color="railways"
-                  /></label>
-                  <label class="paint-chip" for="color-peaks"
-                    ><span>Peaks</span
-                    ><input id="color-peaks" type="color" data-color="peaks"
-                  /></label>
-                  <label class="paint-chip" for="color-labelColor"
-                    ><span>Label text</span
-                    ><input
-                      id="color-labelColor"
-                      type="color"
-                      data-color="labelColor"
-                  /></label>
-                  <label class="paint-chip" for="color-labelHalo"
-                    ><span>Label halo</span
-                    ><input
-                      id="color-labelHalo"
-                      type="color"
-                      data-color="labelHalo"
-                  /></label>
-                </div>
-              </details>
-              <div class="style-dials">
-                <label class="style-dial" for="paint-roads"
-                  ><span>Road width</span
-                  ><output id="paint-roads-value" for="paint-roads"></output
-                  ><input
-                    id="paint-roads"
-                    type="range"
-                    min="0.25"
-                    max="4"
-                    step="0.05"
-                    data-paint="roads" /></label
-                ><label class="style-dial" for="paint-paths"
-                  ><span>Footway &amp; path width</span
-                  ><output id="paint-paths-value" for="paint-paths"></output
-                  ><input
-                    id="paint-paths"
-                    type="range"
-                    min="0.25"
-                    max="4"
-                    step="0.05"
-                    data-paint="paths" /></label
-                ><label class="style-dial" for="paint-railways"
-                  ><span>Rail width</span
-                  ><output
-                    id="paint-railways-value"
-                    for="paint-railways"
-                  ></output
-                  ><input
-                    id="paint-railways"
-                    type="range"
-                    min="0.25"
-                    max="4"
-                    step="0.05"
-                    data-paint="railways" /></label
-                ><label class="style-dial" for="paint-water"
-                  ><span>Waterway width</span
-                  ><output id="paint-water-value" for="paint-water"></output
-                  ><input
-                    id="paint-water"
-                    type="range"
-                    min="0.25"
-                    max="4"
-                    step="0.05"
-                    data-paint="water" /></label
-                ><label class="style-dial" for="paint-buildingEdges"
-                  ><span>Building edges</span
-                  ><output
-                    id="paint-buildingEdges-value"
-                    for="paint-buildingEdges"
-                  ></output
-                  ><input
-                    id="paint-buildingEdges"
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="0.1"
-                    data-paint="buildingEdges" /></label
-                ><label class="style-dial" for="paint-labels"
-                  ><span>Label size</span
-                  ><output id="paint-labels-value" for="paint-labels"></output
-                  ><input
-                    id="paint-labels"
-                    type="range"
-                    min="0.75"
-                    max="1.75"
-                    step="0.05"
-                    data-paint="labels"
-                /></label>
-              </div>
-              <p class="style-note">
-                Widths grow with zoom. Footways, trails, cycleways, tracks and
-                steps share the path style; pedestrian streets use Road width.
-                Paint changes use loaded tiles. Choose downloads in Data.
-              </p>
-              <div class="style-actions">
-                <button id="style-export" class="text-button">
-                  Export style JSON ↗</button
-                ><button id="style-import" class="text-button">
-                  Import style</button
-                ><input
-                  id="style-file"
-                  type="file"
-                  accept=".json,application/json"
+                <ul
+                  id="location-results"
+                  class="location-results"
+                  aria-label="Location results"
                   hidden
-                />
-              </div>
-              <p id="style-status" class="style-note" role="status"></p>
-            </section>
-            <section class="scene-section" aria-labelledby="scene-title">
-              <p class="eyebrow">THE THIRD DIMENSION / EXPERIMENT 01</p>
-              <h2 id="scene-title">Give the city depth.</h2>
-              <p class="style-intro">
-                Tilt the ground. Turn the city. Raise its footprints into light.
-              </p>
-              <div class="scene-actions">
-                <button id="scene-demo" class="primary-button">
-                  Inspect in 3D ↗</button
-                ><button id="scene-flat" class="text-button">Back to 2D</button>
-              </div>
-              <p class="scene-gestures">
-                <strong>Grab the view.</strong> Right-drag to tilt and rotate,
-                or hold ⌘ and drag. On a Mac trackpad, hold ⌘ and drag with two
-                fingers.
-              </p>
-              <p id="scene-orientation" class="style-note"></p>
-              <label class="scene-toggle"
-                ><input id="scene-extrude" type="checkbox" /> Extrude
-                buildings</label
-              >
-              <div class="style-dials">
-                <label class="style-dial" for="scene-heightScale"
-                  ><span>Height scale</span
-                  ><output
-                    id="scene-heightScale-value"
-                    for="scene-heightScale"
-                  ></output
-                  ><input
-                    id="scene-heightScale"
-                    type="range"
-                    min="0.25"
-                    max="3"
-                    step="0.05"
-                    data-scene="heightScale"
-                /></label>
-                <label class="style-dial" for="scene-fallbackHeight"
-                  ><span>Height when unknown</span
-                  ><output
-                    id="scene-fallbackHeight-value"
-                    for="scene-fallbackHeight"
-                  ></output
-                  ><input
-                    id="scene-fallbackHeight"
-                    type="range"
-                    min="1"
-                    max="100"
-                    step="1"
-                    data-scene="fallbackHeight"
-                /></label>
-                <label class="style-dial" for="scene-shading"
-                  ><span>Face shading</span
-                  ><output id="scene-shading-value" for="scene-shading"></output
-                  ><input
-                    id="scene-shading"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    data-scene="shading"
-                /></label>
-              </div>
-              <p id="height-coverage" class="scene-disclosure"></p>
-              <p class="scene-disclosure">
-                OSM heights take priority. Floor counts estimate 3 m per level;
-                missing values use your fallback. Height scale 1× keeps these
-                heights in meters. Buildings start at z13. Tilting reveals more
-                ground and may load more tiles.
-              </p>
-              <p class="style-note">
-                Orthographic 3D · depth-tested roofs and walls · labels stay
-                above the scene.
-              </p>
-            </section>
-          </div>
-          <div
-            id="panel-data"
-            role="tabpanel"
-            data-panel="data"
-            aria-labelledby="tab-data"
-            tabindex="0"
-            hidden
-          >
-            <section class="layers-section" aria-labelledby="layers-label">
-              <div class="section-heading">
-                <h2 id="layers-label">On the map</h2>
-                <span class="tiny-note">LIVE</span>
-              </div>
-              <label class="layer"
-                ><span class="swatch land"></span><span>Landscape</span
-                ><input
-                  type="checkbox"
-                  data-mask="1"
-                  checked
-                  aria-label="Landscape"
-              /></label>
-              <label class="layer"
-                ><span class="swatch water"></span><span>Water</span
-                ><input
-                  type="checkbox"
-                  data-mask="2"
-                  checked
-                  aria-label="Water"
-              /></label>
-              <label class="layer"
-                ><span class="swatch roads"></span><span>Roads & paths</span
-                ><input
-                  type="checkbox"
-                  data-mask="56"
-                  checked
-                  aria-label="Roads and paths"
-              /></label>
-              <label class="layer"
-                ><span class="swatch railways"></span><span>Rail lines</span
-                ><input
-                  type="checkbox"
-                  data-mask="64"
-                  checked
-                  aria-label="Rail lines"
-              /></label>
-              <label class="layer"
-                ><span class="swatch buildings"></span
-                ><span>Buildings <small class="muted">z13+</small></span
-                ><input
-                  type="checkbox"
-                  data-mask="4"
-                  checked
-                  aria-label="Buildings"
-              /></label>
-              <label class="layer"
-                ><span class="swatch" aria-hidden="true">Aa</span
-                ><span>City &amp; village names</span
-                ><input
-                  id="place-labels"
-                  type="checkbox"
-                  checked
-                  aria-label="City &amp; village names"
-              /></label>
-              <label class="layer"
-                ><span class="swatch">Aa</span><span>Street names</span
-                ><input
-                  id="street-labels"
-                  type="checkbox"
-                  checked
-                  aria-label="Street names"
-              /></label>
-              <label class="layer"
-                ><span class="swatch">●</span><span>Points of interest</span
-                ><input
-                  id="poi-labels"
-                  type="checkbox"
-                  checked
-                  aria-label="Points of interest"
-              /></label>
-              <label class="layer"
-                ><span class="swatch peaks">△</span><span>Mountain peaks</span
-                ><input
-                  type="checkbox"
-                  data-mask="128"
-                  checked
-                  aria-label="Mountain peaks"
-              /></label>
-              <p id="layer-transport" class="search-scope">
-                Choose any combination. Only selected layers are requested.
-              </p>
-              <p class="search-scope">
-                Choices are saved for the next load. Previously read bytes
-                remain in the session counter.
-              </p>
-            </section>
-            <section
-              class="capability-section"
-              aria-labelledby="capability-title"
+                ></ul>
+                <details class="reverse-controls" open>
+                  <summary>Coordinates → nearest street</summary>
+                  <form id="reverse-form">
+                    <label for="reverse-coordinates">Latitude, longitude</label>
+                    <input
+                      id="reverse-coordinates"
+                      type="text"
+                      value="47.13929, 9.52280"
+                      placeholder="47.13929, 9.52280"
+                      autocomplete="off"
+                      disabled
+                    />
+                    <div class="reverse-actions">
+                      <button
+                        id="reverse-submit"
+                        type="submit"
+                        class="text-button"
+                        disabled
+                      >
+                        Find nearest street</button
+                      ><button
+                        id="reverse-pick"
+                        type="button"
+                        class="text-button"
+                        aria-pressed="false"
+                        disabled
+                      >
+                        Pick on map ⌖
+                      </button>
+                    </div>
+                  </form>
+                </details>
+                <p id="search-status" role="status" aria-live="polite">
+                  Search inside this map’s extract.
+                </p>
+                <div id="search-detail" hidden></div>
+                <div id="search-route-actions" class="reverse-actions" hidden>
+                  <button id="search-route-start" class="text-button">
+                    Route from here</button
+                  ><button id="search-route-end" class="text-button">
+                    Route to here
+                  </button>
+                </div>
+                <p class="search-scope">
+                  Nearest street, not a house-number address. Covers retained
+                  OSM streets within 1 km.
+                </p>
+              </section>
+              <section class="query-section" aria-labelledby="query-label">
+                <p class="eyebrow">BEYOND THE VIEWPORT</p>
+                <h2 id="query-label">Ask the map.</h2>
+                <p>
+                  The answer lives in the data,<br />even when it’s out of view.
+                </p>
+                <button id="highest-peak" class="primary-button" disabled>
+                  Find the highest peak <span>↗</span>
+                </button>
+                <div id="query-result" role="status" hidden></div>
+              </section>
+            </div>
+            <div
+              id="panel-route"
+              role="tabpanel"
+              data-panel="route"
+              aria-labelledby="tab-route"
+              tabindex="0"
+              hidden
             >
-              <p class="eyebrow">LOAD WITH INTENT</p>
-              <h2 id="capability-title">Choose your tools.</h2>
-              <p class="tool-intro">
-                Enabled tools load data only when used. Turn one off to prevent
-                new requests.
-              </p>
-              <label class="capability"
-                ><span
-                  ><strong>Routing</strong><small>Walking graph</small></span
-                ><input
-                  type="checkbox"
-                  data-purpose="routing"
-                  aria-label="Enable routing"
-                  checked /></label
-              ><label class="capability"
-                ><span
-                  ><strong>Search & geocoding</strong
-                  ><small>Places and nearest streets</small></span
-                ><input
-                  type="checkbox"
-                  data-purpose="search"
-                  aria-label="Enable search & geocoding"
-                  checked /></label
-              ><label class="capability"
-                ><span
-                  ><strong>Queries</strong
-                  ><small>Highest recorded peak</small></span
-                ><input
-                  type="checkbox"
-                  data-purpose="queries"
-                  aria-label="Enable queries"
-                  checked /></label
-              ><label class="capability"
-                ><span
-                  ><strong>Feature extraction</strong
-                  ><small>Selectable source geometry</small></span
-                ><input
-                  type="checkbox"
-                  data-purpose="features"
-                  aria-label="Enable feature extraction"
-                  checked
-              /></label>
-              <p class="search-scope">
-                Turning a tool off keeps already downloaded bytes in memory. Map
-                geometry, street names and POIs load independently in packages
-                with separate layers.
-              </p>
-            </section>
-            <section class="dataset-section" aria-labelledby="dataset-label">
-              <div class="section-heading">
-                <h2 id="dataset-label">The dataset</h2>
-                <span class="pill">.atlas</span>
-              </div>
-              <div class="dataset-title">
-                <span class="dataset-icon" aria-hidden="true">↗</span>
-                <div>
-                  <h3 id="dataset-name">Opening map…</h3>
-                  <p id="dataset-subtitle">Opening geographic package…</p>
+              <section class="routing-section" aria-labelledby="routing-label">
+                <p class="eyebrow">A PATH THROUGH THE DATA</p>
+                <h2 id="routing-label">Go somewhere.</h2>
+                <p class="routing-intro">
+                  Three ways to travel. The same engine on your device and
+                  server.
+                </p>
+                <label for="transport-profile">Travel mode</label>
+                <select id="transport-profile">
+                  <option value="walking">Walking</option>
+                  <option value="cycling">Cycling</option>
+                  <option value="driving">Driving</option>
+                </select>
+                <p class="search-scope">
+                  Applies to routes and reachable areas below. Only this mode’s
+                  network is loaded.
+                </p>
+                <p id="route-composition-scope" class="search-scope" hidden></p>
+                <label for="route-budget">Client search limit</label
+                ><select id="route-budget">
+                  <option value="250000">250,000 states</option>
+                  <option value="1000000">1 million states</option>
+                  <option value="2000000">2 million states</option>
+                </select>
+                <ul
+                  id="route-sources"
+                  class="search-scope"
+                  aria-label="Routing source reads"
+                ></ul>
+                <button id="route-example" class="primary-button" disabled>
+                  Try Vaduz → Schaan <span>↗</span>
+                </button>
+                <div class="route-endpoints">
+                  <button
+                    id="route-start"
+                    class="endpoint"
+                    disabled
+                    aria-label="Choose start on map"
+                    aria-pressed="false"
+                  >
+                    <b>A</b
+                    ><span id="route-start-label">Choose start on map</span>
+                  </button>
+                  <button
+                    id="route-end"
+                    class="endpoint"
+                    disabled
+                    aria-label="Choose destination on map"
+                    aria-pressed="false"
+                  >
+                    <b>B</b
+                    ><span id="route-end-label">Choose destination on map</span>
+                  </button>
                 </div>
-              </div>
-              <dl class="dataset-facts">
-                <div>
-                  <dt id="feature-label">Features</dt>
-                  <dd id="feature-count">—</dd>
+                <p id="route-hint" class="route-hint">
+                  Pick A and B on the map, or try the example.
+                </p>
+                <div class="route-actions">
+                  <button id="route-calculate" class="text-button" disabled>
+                    Find route
+                  </button>
+                  <button id="route-reverse" class="text-button" disabled>
+                    Reverse
+                  </button>
+                  <button id="route-cancel" class="text-button" disabled>
+                    Cancel
+                  </button>
+                  <button id="route-clear" class="text-button" disabled>
+                    Clear
+                  </button>
                 </div>
-                <div>
-                  <dt>Map tile blocks</dt>
-                  <dd id="tile-count">—</dd>
+                <div
+                  id="route-result"
+                  role="status"
+                  aria-live="polite"
+                  hidden
+                ></div>
+                <div id="route-cell-panel" hidden>
+                  <label class="check-row"
+                    ><input type="checkbox" id="route-cell-overlay" checked />
+                    Show routing coverage</label
+                  >
+                  <p class="search-scope">
+                    This search: green reused · blue downloaded · amber needed ·
+                    red missing.
+                  </p>
+                  <p
+                    id="route-cell-metrics"
+                    role="status"
+                    class="search-scope"
+                  ></p>
+                  <button id="route-resume" class="secondary-button" hidden>
+                    Fetch missing cells &amp; resume
+                  </button>
+                  <button id="route-beyond" class="text-button">
+                    Try Stephansplatz → Schönbrunn
+                  </button>
                 </div>
-                <div>
-                  <dt>Package size</dt>
-                  <dd id="package-size">—</dd>
-                </div>
-                <div>
-                  <dt>Source</dt>
-                  <dd>OpenStreetMap</dd>
-                </div>
-              </dl>
-              <div class="file-actions">
-                <button id="open-file" class="text-button">
-                  Open a local file ↗</button
-                ><a
-                  id="download"
-                  href="/maps/demo.atlas"
-                  download="liechtenstein.atlas"
-                  >Download ↓</a
+                <button id="route-compare" class="secondary-button" disabled>
+                  Compare device & server
+                </button>
+                <p class="search-scope">
+                  Runs the same request on this device and the server.
+                  Cell-enabled packages fetch only the routing regions explored
+                  by the search.
+                </p>
+                <p id="route-proof" role="status" hidden></p>
+                <details class="route-scope">
+                  <summary>Travel profiles & coverage</summary>
+                  <p>
+                    Estimated travel times, mode-specific access, barriers,
+                    one-way rules and common via-node turn restrictions. No
+                    traffic, elevation costs or public transport schedules.
+                    Unsupported conditional and complex turn restrictions
+                    conservatively exclude incoming ways. Coverage ends at the
+                    extract boundary. Experimental, not navigation guidance.
+                  </p>
+                </details>
+              </section>
+              <section
+                class="reachability-section"
+                aria-labelledby="reachability-title"
+              >
+                <p class="eyebrow">TIME BECOMES SPACE</p>
+                <h2 id="reachability-title">How far can I go?</h2>
+                <p class="tool-intro">
+                  Reachable streets and paths, shaped by your travel mode.
+                </p>
+                <button
+                  id="iso-origin"
+                  class="secondary-button"
+                  aria-pressed="false"
                 >
-              </div>
-              <input id="file-input" type="file" accept=".atlas" hidden />
-            </section>
+                  Choose isochrone origin on map
+                </button>
+                <p id="iso-origin-label" class="search-scope">
+                  Stephansplatz · Vienna
+                </p>
+                <label for="iso-duration">Travel time</label>
+                <select id="iso-duration">
+                  <option value="300">5 minutes · 1 / 3 / 5</option>
+                  <option value="600">10 minutes · 2 / 5 / 10</option>
+                  <option value="900" selected>15 minutes · 5 / 10 / 15</option>
+                  <option value="1800">30 minutes · 10 / 20 / 30</option>
+                </select>
+                <button id="iso-calculate" class="primary-button">
+                  Show reachable area ↗
+                </button>
+                <div id="iso-legend" class="iso-legend" hidden></div>
+                <p id="iso-result" role="status" class="search-scope">
+                  Choose an origin or use the city center.
+                </p>
+                <button id="iso-resume" class="secondary-button" hidden>
+                  Fetch missing cells &amp; resume area
+                </button>
+                <div class="route-actions">
+                  <button id="iso-export" class="text-button" disabled>
+                    Export GeoJSON</button
+                  ><button id="iso-clear" class="text-button">
+                    Clear area
+                  </button>
+                </div>
+                <button id="iso-compare" class="secondary-button">
+                  Compare area on device &amp; server
+                </button>
+                <p id="iso-proof" role="status" class="search-scope"></p>
+                <p class="search-scope">
+                  Colored envelopes approximate the reachable network; interiors
+                  aren’t guaranteed traversable. River crossings follow actual
+                  connections. Times exclude the offset from your origin to the
+                  network.
+                </p>
+              </section>
+            </div>
+            <div
+              id="panel-extract"
+              role="tabpanel"
+              data-panel="extract"
+              aria-labelledby="tab-extract"
+              tabindex="0"
+              hidden
+            >
+              <section class="extract-section" aria-labelledby="extract-title">
+                <p class="eyebrow">FROM MAP TO MATERIAL</p>
+                <h2 id="extract-title">Make it yours.</h2>
+                <p class="tool-intro">
+                  Bring mapped objects into a selectable GeoJSON layer.
+                </p>
+                <label for="extract-kind">What to extract</label
+                ><select id="extract-kind">
+                  <option value="buildings">Buildings</option>
+                  <option value="water">Lakes & water</option>
+                  <option value="railways">Rail lines</option>
+                  <option value="roads">Roads & paths</option>
+                  <option value="land">Landscape areas</option>
+                </select>
+                <label for="extract-tag"
+                  >OSM tag filter <span class="muted">optional</span></label
+                ><input
+                  id="extract-tag"
+                  placeholder="water=lake or railway=tram"
+                  maxlength="140"
+                />
+                <div class="extract-limit">
+                  <label for="extract-limit">Maximum objects</label
+                  ><select id="extract-limit">
+                    <option>100</option>
+                    <option selected>200</option>
+                    <option>500</option>
+                  </select>
+                </div>
+                <button id="extract-load" class="primary-button">
+                  Extract current view <span>↗</span>
+                </button>
+                <p id="extract-status" role="status">
+                  Zoom into an area, then extract. No feature data is loaded
+                  beforehand.
+                </p>
+                <div class="extract-actions">
+                  <button id="extract-select-all" class="text-button" disabled>
+                    Select all</button
+                  ><button
+                    id="extract-clear-selection"
+                    class="text-button"
+                    disabled
+                  >
+                    Deselect</button
+                  ><button id="extract-clear" class="text-button" disabled>
+                    Remove layer
+                  </button>
+                </div>
+                <p id="extract-selected" role="status">No objects selected.</p>
+                <ul id="extract-results" aria-label="Extracted objects"></ul>
+                <div id="extract-detail" hidden></div>
+                <div class="export-options">
+                  <button id="extract-download" class="primary-button" disabled>
+                    Download selected GeoJSON ↓</button
+                  ><button id="extract-lines" class="secondary-button" disabled>
+                    Download as polylines ↓
+                  </button>
+                </div>
+                <p class="search-scope">
+                  Click shapes on the map or objects in the list to select them.
+                  Complete source shapes and OSM IDs are preserved; objects can
+                  extend beyond the view. Polygon outlines become polylines when
+                  exported that way.
+                </p>
+              </section>
+            </div>
+            <div
+              id="panel-offline"
+              role="tabpanel"
+              data-panel="offline"
+              aria-labelledby="tab-offline"
+              tabindex="0"
+              hidden
+            >
+              <section class="world-section" aria-labelledby="world-label">
+                <p class="eyebrow">TAKE A PIECE WITH YOU</p>
+                <h2 id="world-label">Draw your offline world.</h2>
+                <p>
+                  Choose a boundary. Keep the map, the streets, and the paths
+                  between them.
+                </p>
+                <button id="world-draw" class="primary-button">
+                  Draw an area <span>◇</span>
+                </button>
+                <div class="reverse-actions">
+                  <button id="world-finish" class="text-button" disabled>
+                    Finish area</button
+                  ><button id="world-undo" class="text-button" disabled>
+                    Undo corner</button
+                  ><button id="world-clear" class="text-button" disabled>
+                    Clear area
+                  </button>
+                </div>
+                <label for="world-name">Name your world</label
+                ><input
+                  id="world-name"
+                  maxlength="80"
+                  value="My offline world"
+                />
+                <div class="world-zooms">
+                  <label
+                    >From zoom
+                    <select
+                      id="world-min"
+                      aria-label="Minimum offline zoom"
+                    ></select></label
+                  ><label
+                    >To zoom
+                    <select
+                      id="world-max"
+                      aria-label="Maximum offline zoom"
+                    ></select
+                  ></label>
+                </div>
+                <div class="world-options">
+                  <label
+                    ><input id="world-routing" type="checkbox" /> Walking
+                    routes</label
+                  ><label
+                    ><input id="world-search" type="checkbox" /> Search &
+                    streets</label
+                  ><label
+                    ><input id="world-queries" type="checkbox" /> Peak
+                    queries</label
+                  >
+                </div>
+                <p class="search-scope">
+                  Uses your selected map layers, street names and POIs from
+                  Data. Add routing or search when needed.
+                </p>
+                <button id="world-export" class="primary-button" disabled>
+                  Build offline file <span>↓</span>
+                </button>
+                <p id="world-status" role="status" aria-live="polite">
+                  Open a package to start drawing.
+                </p>
+                <div id="world-ready" class="reverse-actions" hidden>
+                  <button id="world-download" class="text-button">
+                    Save offline file ↓</button
+                  ><button id="world-open" class="text-button">
+                    Open this world ↗
+                  </button>
+                </div>
+                <details class="route-scope">
+                  <summary>What stays inside the boundary?</summary>
+                  <p>
+                    Whole display tiles intersecting your shape are retained, so
+                    the map can show beyond its edges. Routing and street
+                    segments are cut at the boundary. Search keeps places with a
+                    representative point inside. A simple polygon is supported;
+                    holes are not yet supported.
+                  </p>
+                  <p>
+                    After this app is saved for offline use, reopen it at this
+                    address and choose your downloaded .atlas file. Browser
+                    export is limited to 256 MB per file.
+                  </p>
+                </details>
+                <p id="shell-status" class="search-scope">
+                  Preparing the app for offline use…
+                </p>
+              </section>
+            </div>
+            <div
+              id="panel-style"
+              role="tabpanel"
+              data-panel="style"
+              aria-labelledby="tab-style"
+              tabindex="0"
+              hidden
+            >
+              <section class="style-section" aria-labelledby="style-title">
+                <p class="eyebrow">THE SAME WORLD, YOUR WAY</p>
+                <h2 id="style-title">Change the atmosphere.</h2>
+                <p class="style-intro">
+                  A different palette. A quieter street. Make this map your own.
+                </p>
+                <div class="style-presets" aria-label="Style presets">
+                  <button data-preset="paper" aria-pressed="true">
+                    <span
+                      class="preset-swatch swatch-paper"
+                      aria-hidden="true"
+                    ></span
+                    >Paper
+                  </button>
+                  <button data-preset="midnight" aria-pressed="false">
+                    <span
+                      class="preset-swatch swatch-midnight"
+                      aria-hidden="true"
+                    ></span
+                    >Midnight
+                  </button>
+                  <button data-preset="blueprint" aria-pressed="false">
+                    <span
+                      class="preset-swatch swatch-blueprint"
+                      aria-hidden="true"
+                    ></span
+                    >Blueprint
+                  </button>
+                </div>
+                <div class="palette-grid">
+                  <label class="paint-chip" for="color-background"
+                    ><span>Canvas</span
+                    ><input
+                      id="color-background"
+                      type="color"
+                      data-color="background"
+                  /></label>
+                  <label class="paint-chip" for="color-land"
+                    ><span>Landscape</span
+                    ><input id="color-land" type="color" data-color="land"
+                  /></label>
+                  <label class="paint-chip" for="color-water"
+                    ><span>Water</span
+                    ><input id="color-water" type="color" data-color="water"
+                  /></label>
+                  <label class="paint-chip" for="color-buildings"
+                    ><span>Buildings</span
+                    ><input
+                      id="color-buildings"
+                      type="color"
+                      data-color="buildings"
+                  /></label>
+                  <label class="paint-chip" for="color-majorRoads"
+                    ><span>Major roads</span
+                    ><input
+                      id="color-majorRoads"
+                      type="color"
+                      data-color="majorRoads"
+                  /></label>
+                  <label class="paint-chip" for="color-roads"
+                    ><span>Local roads</span
+                    ><input id="color-roads" type="color" data-color="roads"
+                  /></label>
+                </div>
+                <details class="more-paint">
+                  <summary>More colors</summary>
+                  <div class="palette-grid">
+                    <label class="paint-chip" for="color-paths"
+                      ><span>Footways &amp; paths</span
+                      ><input id="color-paths" type="color" data-color="paths"
+                    /></label>
+                    <label class="paint-chip" for="color-railways"
+                      ><span>Railways</span
+                      ><input
+                        id="color-railways"
+                        type="color"
+                        data-color="railways"
+                    /></label>
+                    <label class="paint-chip" for="color-peaks"
+                      ><span>Peaks</span
+                      ><input id="color-peaks" type="color" data-color="peaks"
+                    /></label>
+                    <label class="paint-chip" for="color-labelColor"
+                      ><span>Label text</span
+                      ><input
+                        id="color-labelColor"
+                        type="color"
+                        data-color="labelColor"
+                    /></label>
+                    <label class="paint-chip" for="color-labelHalo"
+                      ><span>Label halo</span
+                      ><input
+                        id="color-labelHalo"
+                        type="color"
+                        data-color="labelHalo"
+                    /></label>
+                  </div>
+                </details>
+                <div class="style-dials">
+                  <label class="style-dial" for="paint-roads"
+                    ><span>Road width</span
+                    ><output id="paint-roads-value" for="paint-roads"></output
+                    ><input
+                      id="paint-roads"
+                      type="range"
+                      min="0.25"
+                      max="4"
+                      step="0.05"
+                      data-paint="roads" /></label
+                  ><label class="style-dial" for="paint-paths"
+                    ><span>Footway &amp; path width</span
+                    ><output id="paint-paths-value" for="paint-paths"></output
+                    ><input
+                      id="paint-paths"
+                      type="range"
+                      min="0.25"
+                      max="4"
+                      step="0.05"
+                      data-paint="paths" /></label
+                  ><label class="style-dial" for="paint-railways"
+                    ><span>Rail width</span
+                    ><output
+                      id="paint-railways-value"
+                      for="paint-railways"
+                    ></output
+                    ><input
+                      id="paint-railways"
+                      type="range"
+                      min="0.25"
+                      max="4"
+                      step="0.05"
+                      data-paint="railways" /></label
+                  ><label class="style-dial" for="paint-water"
+                    ><span>Waterway width</span
+                    ><output id="paint-water-value" for="paint-water"></output
+                    ><input
+                      id="paint-water"
+                      type="range"
+                      min="0.25"
+                      max="4"
+                      step="0.05"
+                      data-paint="water" /></label
+                  ><label class="style-dial" for="paint-buildingEdges"
+                    ><span>Building edges</span
+                    ><output
+                      id="paint-buildingEdges-value"
+                      for="paint-buildingEdges"
+                    ></output
+                    ><input
+                      id="paint-buildingEdges"
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      data-paint="buildingEdges" /></label
+                  ><label class="style-dial" for="paint-labels"
+                    ><span>Label size</span
+                    ><output id="paint-labels-value" for="paint-labels"></output
+                    ><input
+                      id="paint-labels"
+                      type="range"
+                      min="0.75"
+                      max="1.75"
+                      step="0.05"
+                      data-paint="labels"
+                  /></label>
+                </div>
+                <p class="style-note">
+                  Widths grow with zoom. Footways, trails, cycleways, tracks and
+                  steps share the path style; pedestrian streets use Road width.
+                  Paint changes use loaded tiles. Choose downloads in Data.
+                </p>
+                <div class="style-actions">
+                  <button id="style-export" class="text-button">
+                    Export style JSON ↗</button
+                  ><button id="style-import" class="text-button">
+                    Import style</button
+                  ><input
+                    id="style-file"
+                    type="file"
+                    accept=".json,application/json"
+                    hidden
+                  />
+                </div>
+                <p id="style-status" class="style-note" role="status"></p>
+              </section>
+              <section class="scene-section" aria-labelledby="scene-title">
+                <p class="eyebrow">THE THIRD DIMENSION / EXPERIMENT 01</p>
+                <h2 id="scene-title">Give the city depth.</h2>
+                <p class="style-intro">
+                  Tilt the ground. Turn the city. Raise its footprints into
+                  light.
+                </p>
+                <div class="scene-actions">
+                  <button id="scene-demo" class="primary-button">
+                    Inspect in 3D ↗</button
+                  ><button id="scene-flat" class="text-button">
+                    Back to 2D
+                  </button>
+                </div>
+                <p class="scene-gestures">
+                  <strong>Grab the view.</strong> Right-drag to tilt and rotate,
+                  or hold ⌘ and drag. On a Mac trackpad, hold ⌘ and drag with
+                  two fingers.
+                </p>
+                <p id="scene-orientation" class="style-note"></p>
+                <label class="scene-toggle"
+                  ><input id="scene-extrude" type="checkbox" /> Extrude
+                  buildings</label
+                >
+                <div class="style-dials">
+                  <label class="style-dial" for="scene-heightScale"
+                    ><span>Height scale</span
+                    ><output
+                      id="scene-heightScale-value"
+                      for="scene-heightScale"
+                    ></output
+                    ><input
+                      id="scene-heightScale"
+                      type="range"
+                      min="0.25"
+                      max="3"
+                      step="0.05"
+                      data-scene="heightScale"
+                  /></label>
+                  <label class="style-dial" for="scene-fallbackHeight"
+                    ><span>Height when unknown</span
+                    ><output
+                      id="scene-fallbackHeight-value"
+                      for="scene-fallbackHeight"
+                    ></output
+                    ><input
+                      id="scene-fallbackHeight"
+                      type="range"
+                      min="1"
+                      max="100"
+                      step="1"
+                      data-scene="fallbackHeight"
+                  /></label>
+                  <label class="style-dial" for="scene-shading"
+                    ><span>Face shading</span
+                    ><output
+                      id="scene-shading-value"
+                      for="scene-shading"
+                    ></output
+                    ><input
+                      id="scene-shading"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      data-scene="shading"
+                  /></label>
+                </div>
+                <p id="height-coverage" class="scene-disclosure"></p>
+                <p class="scene-disclosure">
+                  OSM heights take priority. Floor counts estimate 3 m per
+                  level; missing values use your fallback. Height scale 1× keeps
+                  these heights in meters. Buildings start at z13. Tilting
+                  reveals more ground and may load more tiles.
+                </p>
+                <p class="style-note">
+                  Orthographic 3D · depth-tested roofs and walls · labels stay
+                  above the scene.
+                </p>
+              </section>
+            </div>
+            <div
+              id="panel-data"
+              role="tabpanel"
+              data-panel="data"
+              aria-labelledby="tab-data"
+              tabindex="0"
+              hidden
+            >
+              <section class="layers-section" aria-labelledby="layers-label">
+                <div class="section-heading">
+                  <h2 id="layers-label">On the map</h2>
+                  <span class="tiny-note">LIVE</span>
+                </div>
+                <label class="layer"
+                  ><span class="swatch land"></span><span>Landscape</span
+                  ><input
+                    type="checkbox"
+                    data-mask="1"
+                    checked
+                    aria-label="Landscape"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch water"></span><span>Water</span
+                  ><input
+                    type="checkbox"
+                    data-mask="2"
+                    checked
+                    aria-label="Water"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch roads"></span><span>Roads & paths</span
+                  ><input
+                    type="checkbox"
+                    data-mask="56"
+                    checked
+                    aria-label="Roads and paths"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch railways"></span><span>Rail lines</span
+                  ><input
+                    type="checkbox"
+                    data-mask="64"
+                    checked
+                    aria-label="Rail lines"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch buildings"></span
+                  ><span>Buildings <small class="muted">z13+</small></span
+                  ><input
+                    type="checkbox"
+                    data-mask="4"
+                    checked
+                    aria-label="Buildings"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch" aria-hidden="true">Aa</span
+                  ><span>City &amp; village names</span
+                  ><input
+                    id="place-labels"
+                    type="checkbox"
+                    checked
+                    aria-label="City &amp; village names"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch">Aa</span><span>Street names</span
+                  ><input
+                    id="street-labels"
+                    type="checkbox"
+                    checked
+                    aria-label="Street names"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch">●</span><span>Points of interest</span
+                  ><input
+                    id="poi-labels"
+                    type="checkbox"
+                    checked
+                    aria-label="Points of interest"
+                /></label>
+                <label class="layer"
+                  ><span class="swatch peaks">△</span><span>Mountain peaks</span
+                  ><input
+                    type="checkbox"
+                    data-mask="128"
+                    checked
+                    aria-label="Mountain peaks"
+                /></label>
+                <p id="layer-transport" class="search-scope">
+                  Choose any combination. Only selected layers are requested.
+                </p>
+                <p class="search-scope">
+                  Choices are saved for the next load. Previously read bytes
+                  remain in the session counter.
+                </p>
+              </section>
+              <section
+                class="capability-section"
+                aria-labelledby="capability-title"
+              >
+                <p class="eyebrow">LOAD WITH INTENT</p>
+                <h2 id="capability-title">Choose your tools.</h2>
+                <p class="tool-intro">
+                  Enabled tools load data only when used. Turn one off to
+                  prevent new requests.
+                </p>
+                <label class="capability"
+                  ><span
+                    ><strong>Routing</strong><small>Walking graph</small></span
+                  ><input
+                    type="checkbox"
+                    data-purpose="routing"
+                    aria-label="Enable routing"
+                    checked /></label
+                ><label class="capability"
+                  ><span
+                    ><strong>Search & geocoding</strong
+                    ><small>Places and nearest streets</small></span
+                  ><input
+                    type="checkbox"
+                    data-purpose="search"
+                    aria-label="Enable search & geocoding"
+                    checked /></label
+                ><label class="capability"
+                  ><span
+                    ><strong>Queries</strong
+                    ><small>Highest recorded peak</small></span
+                  ><input
+                    type="checkbox"
+                    data-purpose="queries"
+                    aria-label="Enable queries"
+                    checked /></label
+                ><label class="capability"
+                  ><span
+                    ><strong>Feature extraction</strong
+                    ><small>Selectable source geometry</small></span
+                  ><input
+                    type="checkbox"
+                    data-purpose="features"
+                    aria-label="Enable feature extraction"
+                    checked
+                /></label>
+                <p class="search-scope">
+                  Turning a tool off keeps already downloaded bytes in memory.
+                  Map geometry, street names and POIs load independently in
+                  packages with separate layers.
+                </p>
+              </section>
+              <section class="dataset-section" aria-labelledby="dataset-label">
+                <div class="section-heading">
+                  <h2 id="dataset-label">The dataset</h2>
+                  <span class="pill">.atlas</span>
+                </div>
+                <div class="dataset-title">
+                  <span class="dataset-icon" aria-hidden="true">↗</span>
+                  <div>
+                    <h3 id="dataset-name">Opening map…</h3>
+                    <p id="dataset-subtitle">Opening geographic package…</p>
+                  </div>
+                </div>
+                <dl class="dataset-facts">
+                  <div>
+                    <dt id="feature-label">Features</dt>
+                    <dd id="feature-count">—</dd>
+                  </div>
+                  <div>
+                    <dt>Map tile blocks</dt>
+                    <dd id="tile-count">—</dd>
+                  </div>
+                  <div>
+                    <dt>Package size</dt>
+                    <dd id="package-size">—</dd>
+                  </div>
+                  <div>
+                    <dt>Source</dt>
+                    <dd>OpenStreetMap</dd>
+                  </div>
+                </dl>
+                <div class="file-actions">
+                  <button id="open-file" class="text-button">
+                    Open a local file ↗</button
+                  ><a
+                    id="download"
+                    href="/maps/demo.atlas"
+                    download="liechtenstein.atlas"
+                    >Download ↓</a
+                  >
+                </div>
+                <input id="file-input" type="file" accept=".atlas" hidden />
+              </section>
+            </div>
           </div>
         </div>
         <div class="sidebar-foot">
           <span class="status-dot"></span
-          ><span>One package · many possibilities</span><span>v0.2</span>
+          ><span>Selected data · many possibilities</span><span>v0.2</span>
         </div>
       </aside>
       <section class="map-area" aria-label="Interactive map">
@@ -1157,7 +1270,7 @@
         <div class="inspector-title">
           <span class="eyebrow">UNDER THE SURFACE</span>
           <h2>Follow the bytes.</h2>
-          <p>A living view of a single file.</p>
+          <p id="read-scope">Reads across the selected map sources.</p>
         </div>
         <div class="execution-ledger">
           <span class="tiny-note">LAST OPERATION</span>

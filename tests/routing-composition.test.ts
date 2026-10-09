@@ -1,3 +1,4 @@
+import { OperationSession } from "../apps/web/src/operations";
 import { beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { initSync } from "../packages/routing/pkg/atlas_routing_wasm";
@@ -331,4 +332,73 @@ test("unavailable copies fall back to another compatible host; a cold offline ca
     f.reader.dispose();
     copy.dispose();
   }
+});
+
+test("workspace composition keeps scoped queries separate from shared routing permissions", async () => {
+  const f = await fixture();
+  const focus = await open(
+    await encodePackage(
+      {
+        ...f.manifest,
+        name: "Query-only source",
+        transport: undefined,
+        capabilities: ["peak-query"],
+        peaks: 1,
+      },
+      [
+        {
+          key: "query/peaks",
+          bytes: new TextEncoder().encode(
+            JSON.stringify([
+              {
+                id: "peak",
+                name: "Scoped peak",
+                coordinates: [16, 48],
+                elevation: 1234,
+              },
+            ]),
+          ),
+        },
+      ],
+    ),
+  );
+  const session = new OperationSession(focus, () => {}, [
+    { id: "query", reader: focus },
+    { id: "network", reader: f.reader },
+  ]);
+  session.configure("device", ["routing", "queries"]);
+  expect(session.routingAvailable).toBe(true);
+  expect(session.transportProfiles).toEqual(["walking", "cycling", "driving"]);
+  expect(session.composition?.sources.map((s) => s.id)).toEqual(["network"]);
+  expect((await session.peak()).peak?.name).toBe("Scoped peak");
+  expect(f.reader.options.purposes).not.toContain("queries");
+  session.configure("device", ["queries"]);
+  expect(session.routingAvailable).toBe(false);
+  expect(f.reader.options.purposes).not.toContain("routing");
+  expect(() => session.route(points[0]!, points[4]!)).toThrow("disabled");
+  session.configure("device", ["routing"]);
+  expect(() => session.peak()).toThrow("disabled");
+  session.mode = "server";
+  expect(session.routingAvailable).toBe(false);
+  expect(() => session.route(points[0]!, points[4]!)).toThrow("This device");
+  expect(() => session.isochrone(points[0]!, [60])).toThrow("This device");
+  session.destroy();
+  focus.dispose();
+  f.reader.dispose();
+});
+test("workspace refuses a mixed graph before launching a worker or reading route payloads", async () => {
+  const a = await fixture(),
+    b = await fixture();
+  b.reader.index.manifest.transport!.graphSnapshot = "f".repeat(64);
+  const session = new OperationSession(a.reader, () => {}, [
+    { id: "a", reader: a.reader },
+    { id: "b", reader: b.reader },
+  ]);
+  const reads = a.reader.requests + b.reader.requests;
+  expect(session.routingAvailable).toBe(false);
+  expect(() => session.route(points[0]!, points[4]!)).toThrow("not compatible");
+  expect(a.reader.requests + b.reader.requests).toBe(reads);
+  session.destroy();
+  a.reader.dispose();
+  b.reader.dispose();
 });

@@ -6,7 +6,7 @@ import {
   type Position,
 } from "../../../packages/geocoding/src/index";
 import { AtlasReader } from "../../../packages/format/src/reader";
-import { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import { RouteControls } from "./routing";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -22,7 +22,7 @@ export class SearchControls {
   private reverse: boolean;
   constructor(
     readonly reader: AtlasReader,
-    readonly map: AtlasMap,
+    readonly map: WorkspaceMap,
     readonly routing: RouteControls,
     readonly operations: OperationSession,
   ) {

@@ -3,7 +3,7 @@ import type { RoutingProgress } from "../../../packages/routing/src/paged";
 import { OperationSession, executionText } from "./operations";
 import { type Position } from "../../../packages/routing/src/index";
 import { AtlasReader } from "../../../packages/format/src/reader";
-import { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 const element = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 const button = (id: string) => element<HTMLButtonElement>(`route-${id}`);
@@ -29,6 +29,17 @@ export class RouteControls {
   private progress(p: RoutingProgress) {
     this.cells = new Map(p.cells.map((c) => [c.key, c]));
     this.drawCells();
+    const composition = this.operations.composition;
+    element("route-sources").replaceChildren(
+      ...(composition?.sources ?? []).map((s) => {
+        const li = document.createElement("li");
+        const count = p.cells.filter(
+          (c) => composition!.served.get(c.key)?.source === s.id,
+        ).length;
+        li.textContent = `${s.reader.index.manifest.name}: ${count} cells`;
+        return li;
+      }),
+    );
     element("route-cell-metrics").textContent =
       `${p.loadedCells} cells used · ${p.reusedCells} reused · ${(p.fetchedBytes / 1e6).toFixed(2)} MB downloaded · ${(p.memoryBytes / 1048576).toFixed(1)} MiB estimated engine memory · ${p.computeMs.toFixed(0)} ms compute. ${this.reader.options.store?.available ? "Cached on this device (128 MiB limit)." : "Persistent storage unavailable; keep this tab open."}`;
   }
@@ -42,7 +53,7 @@ export class RouteControls {
 
   constructor(
     readonly reader: AtlasReader,
-    readonly map: AtlasMap,
+    readonly map: WorkspaceMap,
     readonly operations: OperationSession,
   ) {
     this.router = operations;
@@ -50,13 +61,30 @@ export class RouteControls {
       reader.index.manifest.capabilities.includes("walking-routing") ||
       !!reader.index.manifest.transport;
     const places = reader.index.manifest.places;
+    const composed = operations.composed;
+    const covered = (point: Position) =>
+      operations.composition?.sources.some((s) => {
+        const [w, south, e, n] = s.reader.index.manifest.bounds;
+        return (
+          point[0] >= w && point[0] <= e && point[1] >= south && point[1] <= n
+        );
+      });
+    const danube =
+      composed && covered([16.3696, 48.2027]) && covered([17.1128, 48.1452]);
     const vienna = reader.index.manifest.name === "Vienna Plus";
-    const a = vienna
-        ? { name: "Stephansplatz", coordinates: [16.3731, 48.2085] as Position }
-        : places.find((p) => p.name === "Vaduz"),
-      b = vienna
-        ? { name: "Praterstern", coordinates: [16.3918, 48.2194] as Position }
-        : places.find((p) => p.name === "Schaan");
+    const a = danube
+        ? { name: "Vienna", coordinates: [16.3696, 48.2027] as Position }
+        : vienna
+          ? {
+              name: "Stephansplatz",
+              coordinates: [16.3731, 48.2085] as Position,
+            }
+          : places.find((p) => p.name === "Vaduz"),
+      b = danube
+        ? { name: "Bratislava", coordinates: [17.1128, 48.1452] as Position }
+        : vienna
+          ? { name: "Praterstern", coordinates: [16.3918, 48.2194] as Position }
+          : places.find((p) => p.name === "Schaan");
     if (a && b) button("example").textContent = `Try ${a.name} → ${b.name} ↗`;
     const on = (id: string, action: () => void) =>
       button(id).addEventListener("click", action, {
@@ -75,7 +103,7 @@ export class RouteControls {
     on("clear", () => this.clear());
     on("example", () => {
       const start =
-        vienna && this.operations.profile === "driving"
+        !composed && vienna && this.operations.profile === "driving"
           ? { name: "Schottentor", coordinates: [16.3605, 48.2145] as Position }
           : a;
       if (!start || !b) return;
@@ -87,8 +115,33 @@ export class RouteControls {
     });
     button("example").hidden = !a || !b;
     this.clear();
+    element<HTMLSelectElement>("route-budget").value = String(
+      operations.routingBudget.searchStates ?? 250000,
+    );
+    element("route-budget").addEventListener(
+      "change",
+      () => {
+        operations.setRoutingBudget({
+          searchStates: Number(
+            element<HTMLSelectElement>("route-budget").value,
+          ),
+        });
+        this.profileChanged();
+      },
+      { signal: this.abort.signal },
+    );
+    on("cancel", () => {
+      operations.cancelRoute();
+      this.revision++;
+      this.busy = false;
+      this.update();
+      element("route-result").textContent = "Routing cancelled.";
+      element("route-result").dataset.state = "cancelled";
+    });
     element("route-cell-panel").hidden = !(
-      reader.index.manifest.routing?.cells || reader.index.manifest.transport
+      operations.composition ||
+      reader.index.manifest.routing?.cells ||
+      reader.index.manifest.transport
     );
     this.unsubscribeProgress = operations.subscribeProgress((p) => {
       if (!this.dead) this.progress(p);
@@ -136,7 +189,10 @@ export class RouteControls {
     this.refresh();
   }
   refresh() {
-    if (this.reader.index.manifest.name === "Vienna Plus")
+    if (
+      !this.operations.composed &&
+      this.reader.index.manifest.name === "Vienna Plus"
+    )
       button("example").textContent =
         `Try ${this.operations.profile === "driving" ? "Schottentor" : "Stephansplatz"} → Praterstern ↗`;
     element("route-proof").hidden = true;
@@ -144,15 +200,21 @@ export class RouteControls {
     this.revision++;
     this.busy = false;
     this.picking = null;
-    this.supported =
-      (this.reader.index.manifest.capabilities.includes("walking-routing") ||
-        !!this.reader.index.manifest.transport) &&
-      this.operations.enabled.has("routing");
+    this.supported = this.operations.routingAvailable;
+    const scope = element("route-composition-scope");
+    scope.hidden = !this.operations.composed;
+    scope.textContent =
+      this.operations.compositionError ??
+      (this.operations.mode === "server"
+        ? "Choose This device to route across the composition. Server operations use only Tool source."
+        : `${this.operations.composition?.sources.length ?? 0} transport maps · shared graph ${this.operations.composition?.snapshot.slice(0, 12)}… · cells fetched on demand.`);
     if (!this.supported) this.map.setRoute(null);
     this.update();
   }
   private update() {
+    button("cancel").disabled = !this.busy;
     button("compare").disabled =
+      this.operations.composed ||
       !this.supported ||
       this.busy ||
       !this.points[0] ||
@@ -301,7 +363,7 @@ export class RouteControls {
         button("resume").hidden = false;
       } else if (result.status === "budget-exceeded") {
         box.textContent =
-          "Search reached the prototype memory limit. Try a shorter route. This is not a no-route result.";
+          "Search reached the configured limit. Increase Client search limit or try a shorter route. This is not a no-route result.";
       } else {
         box.textContent = `No eligible ${this.operations.profile} segment within ${result.limitMeters} m of ${result.endpoint === "start" ? "A" : "B"}. Pick closer to a road or path in this extract.`;
       }
@@ -356,6 +418,7 @@ export class RouteControls {
     this.map.setRoutingCells([]);
     this.map.endPicking("route");
     for (const id of [
+      "cancel",
       "compare",
       "example",
       "start",

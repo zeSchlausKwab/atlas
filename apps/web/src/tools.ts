@@ -8,7 +8,7 @@ import {
   validatePolygon,
   type Polygon,
 } from "../../../packages/offline/src/geometry";
-import type { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import { OperationSession, executionText } from "./operations";
 import type { ExtractControls } from "./extract";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -24,7 +24,7 @@ export class ToolControls {
   private drawing = false;
   private revision = 0;
   constructor(
-    readonly map: AtlasMap,
+    readonly map: WorkspaceMap,
     readonly operations: OperationSession,
     readonly extractor: ExtractControls,
   ) {

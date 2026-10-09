@@ -4,7 +4,7 @@ import {
   FileSource,
   HttpSource,
 } from "../../../packages/format/src/reader";
-import { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import { plan, type Selection } from "../../../packages/offline/src/index";
 import {
   validatePolygon,
@@ -23,7 +23,7 @@ export class OfflineControls {
   private abort = new AbortController();
   constructor(
     readonly reader: AtlasReader,
-    readonly map: AtlasMap,
+    readonly map: WorkspaceMap,
     readonly open: (file: Blob) => Promise<void>,
     readonly operations: OperationSession,
     readonly mapData: () => Pick<

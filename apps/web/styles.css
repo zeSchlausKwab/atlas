@@ -2545,9 +2545,11 @@ button:disabled {
   margin-top: 18px;
   flex-wrap: wrap;
 }
+.client-composer button,
 .composition-page button,
 .composition-page select,
-.composition-page input[type="url"] {
+.composition-page input[type="url"],
+.client-composer input[type="url"] {
   font: inherit;
   font-size: 12px;
   color: var(--green);
@@ -2559,7 +2561,8 @@ button:disabled {
 .composition-page button:hover {
   border-color: var(--green);
 }
-.composition-page input[type="checkbox"] {
+.composition-page input[type="checkbox"],
+.client-composer input[type="checkbox"] {
   accent-color: var(--green);
   width: 15px;
   height: 15px;
@@ -2830,4 +2833,38 @@ button:disabled {
 .composition-routing button[type="submit"] {
   background: var(--green);
   color: var(--paper);
+}
+
+/* Composer shares the normal tool sidebar and map stage. */
+.client-composer {
+  padding: 28px;
+}
+.client-composer h2 {
+  margin: 12px 0 16px;
+}
+.client-composer .composition-card {
+  margin: 16px 0;
+}
+.client-composer .composition-rule {
+  padding: 18px 0;
+}
+.source-scope select {
+  max-width: 100%;
+  min-width: 0;
+}
+#route-sources {
+  padding-left: 18px;
+  font-size: 11px;
+}
+.client-composer input[type="url"] {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0;
+}
+.composition-card-heading label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#composition-single .secondary-button {
+  display: inline-block;
 }

@@ -3,7 +3,7 @@ import type {
   Reachable,
   TransportMode,
 } from "../../../packages/routing/src/index";
-import type { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import { OperationSession, executionText } from "./operations";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -17,22 +17,22 @@ export class ReachabilityControls {
   private revision = 0;
   private abort = new AbortController();
   constructor(
-    readonly map: AtlasMap,
+    readonly map: WorkspaceMap,
     readonly operations: OperationSession,
     readonly profileChanged: () => void,
   ) {
     const b = operations.reader.index.manifest.bounds;
     this.origin =
+      operations.composed ||
       operations.reader.index.manifest.name === "Vienna Plus"
         ? [16.3605, 48.2145]
         : [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
     const select = el<HTMLSelectElement>("transport-profile");
     select.value = operations.profile;
     for (const option of select.options)
-      option.disabled =
-        !operations.engine.capabilities.operations.route.parameters.profiles.includes(
-          option.value as TransportMode,
-        );
+      option.disabled = !operations.transportProfiles.includes(
+        option.value as TransportMode,
+      );
     select.addEventListener(
       "change",
       () => {
@@ -103,13 +103,16 @@ export class ReachabilityControls {
   refresh() {
     const supported =
       !!(
+        this.operations.composition ||
         this.operations.reader.index.manifest.transport ||
         this.operations.reader.index.manifest.routing?.cells
-      ) && this.operations.enabled.has("routing");
+      ) && this.operations.routingAvailable;
     for (const id of ["origin", "calculate", "compare"])
       btn(id).disabled = !supported || this.busy;
     btn("compare").disabled ||=
-      !this.operations.remote || this.operations.reader.offline;
+      this.operations.composed ||
+      !this.operations.remote ||
+      this.operations.reader.offline;
     btn("export").disabled = !this.result || this.busy;
     btn("resume").disabled = !supported || this.busy;
     el<HTMLSelectElement>("iso-duration").disabled = this.busy;

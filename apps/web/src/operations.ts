@@ -1,3 +1,5 @@
+import { RoutingComposition } from "../../../packages/routing/src/composition";
+import type { RoutingBudget } from "../../../packages/routing/src/paged";
 import { requirementAvailable } from "../../../packages/operations/src/registry";
 import { installedPlugins } from "../../../packages/operations/src/installed";
 import { runPlugin } from "./plugin-runner";
@@ -64,14 +66,64 @@ export class OperationSession {
     return this.controller.subscribe((e) => listener(e.progress));
   }
   private workerRouter?: WorkerRouter;
+  readonly composition?: RoutingComposition;
+  readonly compositionError?: string;
+  readonly composed: boolean;
+  routingBudget: RoutingBudget = {};
+  get transportProfiles(): TransportMode[] {
+    if (!this.composed)
+      return this.engine.capabilities.operations.route.parameters.profiles;
+    return this.composition
+      ? (["walking", "cycling", "driving"] as TransportMode[]).filter((mode) =>
+          this.composition!.sources.some(
+            (s) => !!s.reader.index.manifest.transport?.profiles[mode],
+          ),
+        )
+      : [];
+  }
+  get routingAvailable() {
+    return (
+      this.enabled.has("routing") &&
+      this.transportProfiles.includes(this.profile) &&
+      (!this.composed || this.mode === "device")
+    );
+  }
+  setRoutingBudget(budget: RoutingBudget) {
+    this.controller.cancel();
+    this.workerRouter?.cancel();
+    this.workerRouter = undefined;
+    this.routingBudget = budget;
+  }
+  private routingBytes() {
+    return this.composition
+      ? this.composition.sources.reduce(
+          (n, s) => n + s.reader.bytesByPurpose.routing,
+          0,
+        )
+      : this.reader.bytesByPurpose.routing;
+  }
   constructor(
     readonly reader: AtlasReader,
     readonly onExecution: (e: Execution) => void,
+    readonly sources?: { id: string; reader: AtlasReader }[],
   ) {
     this.engine = new AtlasEngine(reader);
-    this.selectedProfile =
-      this.engine.capabilities.operations.route.parameters.profiles[0] ??
-      "walking";
+    this.composed = sources !== undefined;
+    if (sources) {
+      try {
+        this.composition = new RoutingComposition(
+          sources.filter((s) => !!s.reader.index.manifest.transport),
+        );
+      } catch (e) {
+        this.compositionError = String(e);
+      }
+      this.routingBudget = { searchStates: 2_000_000 };
+    }
+    this.selectedProfile = this.composition?.sources.every(
+      (s) => !!s.reader.index.manifest.transport?.profiles.driving,
+    )
+      ? "driving"
+      : (this.transportProfiles[0] ?? "walking");
     if (reader.source instanceof HttpSource)
       this.remote = new RemoteOperations(
         new URL(reader.source.url, location.href).href.replace(
@@ -94,17 +146,34 @@ export class OperationSession {
     }
     this.mode = nextMode;
     this.enabled = new Set(enabled);
+    for (const source of this.sources ?? [])
+      source.reader.options.purposes = [
+        "map",
+        "labels",
+        ...(enabled.includes("routing") ? ["routing" as const] : []),
+      ];
     this.reader.options.purposes = [
       "map",
       "labels",
       ...enabled,
     ] as DataPurpose[];
   }
-  private check(op: Operation) {
+  private check(op: Operation, mode = this.mode) {
     const p = purposes[op];
     if (p && !this.enabled.has(p))
       throw new Error(`${p} is disabled in Data settings.`);
     if (this.dead) throw new Error("Package closed");
+    if (this.composed && (op === "route" || op === "isochrone")) {
+      if (!this.composition)
+        throw new Error(
+          this.compositionError ?? "No compatible transport maps selected.",
+        );
+      if (mode !== "device")
+        throw new Error(
+          "Cross-map routes and isochrones run on This device. Server tools are scoped to the selected source.",
+        );
+      return;
+    }
     if (!this.engine.capabilities.operations[op].available)
       throw new Error(`${op} is not available in this package.`);
   }
@@ -122,7 +191,7 @@ export class OperationSession {
     local: (input: OperationInputs[K]) => Promise<OperationResults[K]>,
     mode = this.mode,
   ) {
-    this.check(op);
+    this.check(op, mode);
     return this.controller.run(op, input, async (request, signal, progress) => {
       const transport = op === "route" || op === "isochrone";
       if (transport) {
@@ -150,9 +219,7 @@ export class OperationSession {
           return Object.assign(r.result, { execution: r.execution });
         }
         const start = performance.now(),
-          before = transport
-            ? this.reader.bytesByPurpose.routing
-            : this.reader.bytesRead;
+          before = transport ? this.routingBytes() : this.reader.bytesRead;
         const result = await local(request);
         signal.throwIfAborted();
         const execution: Execution = {
@@ -160,9 +227,7 @@ export class OperationSession {
           operation: op,
           computeMs: performance.now() - start,
           sourceBytes:
-            (transport
-              ? this.reader.bytesByPurpose.routing
-              : this.reader.bytesRead) - before,
+            (transport ? this.routingBytes() : this.reader.bytesRead) - before,
           responseBytes: 0,
         };
         this.record(execution);
@@ -176,12 +241,15 @@ export class OperationSession {
   }
   private localRoute(start: Position, end: Position, profile: TransportMode) {
     if (
+      !this.composition &&
       routingCapability(this.reader.index.manifest, profile)?.storage !==
-      "cells"
+        "cells"
     )
       return this.engine.route(start, end, profile);
-    this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
-      this.progress?.(p),
+    this.workerRouter ??= new WorkerRouter(
+      this.composition ?? this.reader,
+      (p) => this.progress?.(p),
+      this.routingBudget,
     );
     return this.workerRouter.route(start, end, profile);
   }
@@ -197,8 +265,10 @@ export class OperationSession {
     bands: number[],
     profile: TransportMode,
   ) {
-    this.workerRouter ??= new WorkerRouter(this.reader, (p) =>
-      this.progress?.(p),
+    this.workerRouter ??= new WorkerRouter(
+      this.composition ?? this.reader,
+      (p) => this.progress?.(p),
+      this.routingBudget,
     );
     return this.workerRouter.isochrone(start, bands, profile);
   }

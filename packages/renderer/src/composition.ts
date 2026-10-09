@@ -1,3 +1,16 @@
+import type { WorkspaceMap } from "./workspace-map";
+import { defaultOverlays, type OverlayFrame } from "./overlays";
+import { FeatureOverlay } from "./features";
+import type { AtlasMap, MapStats } from "./map";
+import type { MapFeature, Bounds } from "../../features/src/index";
+import type { Location } from "../../geocoding/src/model";
+import type {
+  Position,
+  WalkingResult,
+  Reachable,
+} from "../../routing/src/index";
+import { MAP_LAYERS, LAYER_MASKS, type Peak } from "../../format/src/index";
+import { FLAT_SCENE, parseScene, type MapScene } from "./style";
 import init, { Renderer } from "../pkg/atlas_renderer";
 import { TileScheduler } from "./tile-scheduler";
 import { MapInput } from "./input";
@@ -48,7 +61,7 @@ interface Session {
   placesFailed: boolean;
   dead: boolean;
 }
-export interface CompositionStats {
+export interface CompositionStats extends MapStats {
   zoom: number;
   tiles: number;
   missing: number;
@@ -59,18 +72,249 @@ export interface CompositionStats {
 }
 /** One WASM/WebGL renderer and camera. Sessions own immutable source identities;
  * the composition owns display precedence, never semantic graph compatibility. */
-export class CompositionMap {
-  onPick?: (point: [number, number]) => void;
-  onCancelPick?: () => void;
-  private route: [number, number][] = [];
-  private endpoints: Array<[number, number]> = [];
-  setRoute(coordinates: [number, number][] = []) {
-    this.route = coordinates;
+export class CompositionMap implements WorkspaceMap {
+  reader!: AtlasReader; // Explicitly selected source for scoped tools.
+  readonly overlays = defaultOverlays();
+  private debugOverlays = defaultOverlays();
+  private featureOverlay = new FeatureOverlay();
+  private scene: MapScene = { ...FLAT_SCENE };
+  private state: OverlayFrame["state"] = {
+    routingCells: [],
+    reachable: null,
+    selection: null,
+    grid: false,
+    cache: false,
+    route: null,
+    endpoints: [null, null],
+    location: null,
+    selected: null,
+  };
+  private storedKeys = new Map<string, ReadonlySet<string>>();
+  private picker: {
+    owner: string;
+    choose: (p: Position) => void;
+    cancel: () => void;
+    finish?: () => void;
+  } | null = null;
+  private globalLayers: readonly MapLayer[] = MAP_LAYERS;
+  private placeNames = true;
+  private streetNames = true;
+  private pois = true;
+  onFeatureSelect?: (id: string) => void;
+  onPoiSelect?: (poi: Location) => void;
+  onPickModeChange?: (hint: string | null) => void;
+  onSceneChange?: (scene: MapScene) => void;
+  setFeatures(features: MapFeature[], selected: Set<string>) {
+    this.featureOverlay.features = features;
+    this.featureOverlay.selected = new Set(selected);
     this.invalidate();
   }
-  setEndpoints(points: Array<[number, number]>) {
-    this.endpoints = points;
+  setReachable(value: Reachable | null) {
+    this.state.reachable = value;
     this.invalidate();
+  }
+  setRoutingCells(cells: Array<{ key: string; state: string }>) {
+    this.state.routingCells = cells;
+    this.invalidate();
+  }
+  setSelection(points: Position[], closed = true) {
+    this.state.selection = { points, closed };
+    this.invalidate();
+  }
+  setEndpoints(start: Position | null, end: Position | null) {
+    this.state.endpoints = [start, end];
+    this.state.route = null;
+    this.invalidate();
+  }
+  setRoute(route: Extract<WalkingResult, { status: "found" }> | null) {
+    this.state.route = route;
+    this.invalidate();
+  }
+  fitRoute() {
+    if (this.state.route)
+      this.fitPositions([
+        ...this.state.route.coordinates,
+        ...this.state.endpoints.filter((p): p is Position => !!p),
+      ]);
+  }
+  fitPositions(positions: Position[]) {
+    if (!positions.length) return;
+    let w = Infinity,
+      n = Infinity,
+      e = -Infinity,
+      s = -Infinity;
+    for (const point of positions) {
+      const [x, y] = project(...point);
+      w = Math.min(w, x);
+      n = Math.min(n, y);
+      e = Math.max(e, x);
+      s = Math.max(s, y);
+    }
+    this.center = [(w + e) / 2, (n + s) / 2];
+    this.zoom = Math.max(
+      0,
+      Math.min(
+        20,
+        fitZoom(
+          [w, n, e, s],
+          Math.max(160, this.canvas.clientWidth - 140),
+          Math.max(160, this.canvas.clientHeight - 220),
+          this.pitch,
+          this.bearing,
+        ),
+      ),
+    );
+    this.invalidate();
+  }
+  beginPicking(
+    owner: string,
+    choose: (p: Position) => void,
+    cancel: () => void,
+    hint: string,
+    finish?: () => void,
+  ) {
+    if (this.picker && this.picker.owner !== owner) {
+      const previous = this.picker;
+      this.picker = null;
+      previous.cancel();
+    }
+    this.picker = { owner, choose, cancel, finish };
+    this.canvas.classList.add("picking");
+    this.onPickModeChange?.(hint);
+  }
+  endPicking(owner: string) {
+    if (this.picker?.owner !== owner) return;
+    this.picker = null;
+    this.canvas.classList.remove("picking");
+    this.onPickModeChange?.(null);
+  }
+  focusLocation(
+    coordinates: Position,
+    name: string,
+    zoom = 17,
+    street?: Position[],
+    requested?: Position,
+  ) {
+    this.state.location = { coordinates, name, street, requested };
+    this.state.selected = null;
+    this.center = project(...coordinates);
+    this.zoom = Math.max(0, Math.min(20, zoom));
+    this.invalidate();
+  }
+  clearLocation() {
+    this.state.location = null;
+    this.invalidate();
+  }
+  focus(peak: Peak) {
+    this.state.location = null;
+    this.state.selected = peak;
+    this.center = project(...peak.coordinates);
+    this.zoom = Math.max(this.zoom, 13);
+    this.invalidate();
+  }
+  viewBounds(): Bounds {
+    const [w, n, e, s] = cameraBounds(this.camera),
+      sw = unproject(w, s),
+      ne = unproject(e, n);
+    return [
+      Math.max(-180, sw[0]),
+      Math.max(-85, sw[1]),
+      Math.min(180, ne[0]),
+      Math.min(85, ne[1]),
+    ];
+  }
+  setScene(scene: MapScene) {
+    // Stencil ownership is on the ground plane; 3D remains available in single-map mode.
+    this.scene = { ...parseScene(scene), extrude: false };
+    this.pitch = this.scene.pitch;
+    this.bearing = this.scene.bearing;
+    this.onSceneChange?.({ ...this.scene });
+    this.invalidate();
+  }
+  resetView() {
+    this.setScene({ ...this.scene, pitch: 0, bearing: 0 });
+  }
+  setLayers(layers: number | readonly MapLayer[]) {
+    this.globalLayers =
+      typeof layers === "number"
+        ? MAP_LAYERS.filter((l) => (LAYER_MASKS[l] & layers) !== 0)
+        : layers;
+    this.revision++;
+    this.invalidate();
+  }
+  setLabels(roads: boolean, pois: boolean, places = true) {
+    this.streetNames = roads;
+    this.pois = pois;
+    this.placeNames = places;
+    for (const s of this.sessions.values()) {
+      s.labels.roads = roads;
+      s.labels.pois = pois;
+    }
+    this.revision++;
+    this.invalidate();
+  }
+  setOffline(offline: boolean) {
+    for (const s of this.sessions.values()) {
+      s.source.reader.offline = offline;
+      s.scheduler.retry();
+      s.labels.retry();
+      s.placesFailed = false;
+    }
+    this.invalidate();
+  }
+  setGrid(enabled: boolean) {
+    this.state.grid = enabled;
+    this.invalidate();
+  }
+  setCacheView(enabled: boolean, _keys?: ReadonlySet<string>) {
+    this.state.cache = enabled;
+    this.invalidate();
+  }
+  async refreshCacheView(enabled: boolean) {
+    this.setCacheView(enabled);
+    if (!enabled) return;
+    await Promise.all(
+      [...this.sessions.values()].map(async (s) => {
+        const snapshot = s.source.manifest.snapshot;
+        const keys = await s.source.reader.options.store?.keys(snapshot);
+        if (!s.dead) this.storedKeys.set(snapshot, new Set(keys));
+      }),
+    );
+    this.invalidate();
+  }
+  get memory(): AtlasMap["memory"] {
+    type Stats = AtlasMap["memory"]["labels"];
+    const sum = (items: Stats[]): Stats =>
+      items.reduce(
+        (a, b) => ({
+          bytes: a.bytes + b.bytes,
+          budget: a.budget + b.budget,
+          entries: a.entries + b.entries,
+          evictions: a.evictions + b.evictions,
+          overage: a.overage + b.overage,
+        }),
+        { bytes: 0, budget: 0, entries: 0, evictions: 0, overage: 0 },
+      );
+    const sessions = [...this.sessions.values()],
+      readers = sessions.map((s) => s.source.reader.memory);
+    const decoded = Object.fromEntries(
+      Object.keys(this.reader.memory.decoded).map((k) => [
+        k,
+        sum(readers.map((r) => r.decoded[k as keyof typeof r.decoded])),
+      ]),
+    ) as AtlasMap["memory"]["reader"]["decoded"];
+    return {
+      reader: { decoded, directory: sum(readers.map((r) => r.directory)) },
+      meshes: {
+        ...sum(sessions.map((s) => s.scheduler.memory)),
+        uploads: sessions.reduce((n, s) => n + s.scheduler.memory.uploads, 0),
+        prepareMs: sessions.reduce(
+          (n, s) => n + s.scheduler.memory.prepareMs,
+          0,
+        ),
+      },
+      labels: sum(sessions.map((s) => s.labels.memory)),
+    };
   }
   private renderer!: Renderer;
   private sessions = new Map<string, Session>();
@@ -91,10 +335,24 @@ export class CompositionMap {
   bearing = 0;
   coverage = true;
   constructor(
-    private canvas: HTMLCanvasElement,
+    readonly canvas: HTMLCanvasElement,
     private onStats: (stats: CompositionStats) => void,
     private onError: (id: string, error: string) => void,
   ) {
+    this.overlays.remove("labels");
+    this.overlays.remove("tile-grid");
+    this.overlays.remove("cache-coverage");
+    for (const id of [
+      "labels",
+      "routing-cells",
+      "reachability",
+      "selection",
+      "route",
+      "location",
+      "peak",
+      "scale",
+    ])
+      this.debugOverlays.remove(id);
     this.overlay = document.createElement("canvas");
     this.overlay.className = "composition-overlay";
     canvas.after(this.overlay);
@@ -108,15 +366,51 @@ export class CompositionMap {
       orbit: (x, y) => {
         this.bearing = (this.bearing + x * 0.35) % 360;
         this.pitch = Math.max(0, Math.min(60, this.pitch - y * 0.25));
-        this.invalidate();
+        this.setScene({
+          ...this.scene,
+          pitch: this.pitch,
+          bearing: this.bearing,
+        });
       },
       zoom: (delta, x, y) => this.zoomBy(delta, x, y),
-      click: (x, y) =>
-        this.onPick?.(unproject(...screenToWorld([x, y], this.camera))),
-      command: (c) => {
-        if (c === "reset") this.reset();
-        if (c === "cancel") this.onCancelPick?.();
-        if (c === "choose") this.onPick?.(unproject(...this.center));
+      click: (x, y) => {
+        if (this.picker) {
+          this.picker.choose(unproject(...screenToWorld([x, y], this.camera)));
+          return;
+        }
+        const feature = this.featureOverlay.pick(
+          this.overlay.getContext("2d")!,
+          x,
+          y,
+        );
+        if (feature) {
+          this.onFeatureSelect?.(feature);
+          return;
+        }
+        if (!this.pois) return;
+        const world = screenToWorld([x, y], this.camera);
+        for (const s of this.sessions.values()) {
+          const mask = s.tiles.parts.get("labels");
+          if (!mask || !contains(mask, world)) continue;
+          const poi = s.labels.pick(x, y);
+          if (poi) {
+            this.onPoiSelect?.(poi);
+            break;
+          }
+        }
+      },
+      command: (command) => {
+        if (command === "reset") {
+          this.resetView();
+          return;
+        }
+        const picker = this.picker;
+        if (!picker) return;
+        if (command === "cancel") {
+          this.endPicking(picker.owner);
+          picker.cancel();
+        } else if (command === "finish" && picker.finish) picker.finish();
+        else picker.choose(unproject(...this.center));
       },
     });
     this.observer = new ResizeObserver(() => this.invalidate());
@@ -150,9 +444,7 @@ export class CompositionMap {
     this.invalidate();
   }
   reset() {
-    this.pitch = 0;
-    this.bearing = 0;
-    this.invalidate();
+    this.resetView();
   }
   zoomBy(delta: number, x = 0, y = 0) {
     const before = 2 ** this.zoom;
@@ -227,6 +519,8 @@ export class CompositionMap {
         (e) => this.onError(source.id, e),
         2 * 1024 * 1024,
       );
+      session.labels.roads = this.streetNames;
+      session.labels.pois = this.pois;
       session.scheduler = new TileScheduler(
         tiles,
         {
@@ -261,7 +555,14 @@ export class CompositionMap {
       s.clips.clear();
     }
     let id = 0;
-    for (const part of planComposition(this.sources, Math.floor(this.zoom))) {
+    for (const part of planComposition(
+      this.sources.map((s) => ({
+        ...s,
+        layers: s.layers.filter((l) => this.globalLayers.includes(l)),
+        labels: s.labels && (this.placeNames || this.streetNames || this.pois),
+      })),
+      Math.floor(this.zoom),
+    )) {
       const s = this.sessions.get(part.source)!;
       s.tiles.parts.set(part.channel, part.coverage);
       if (part.channel !== "labels") {
@@ -299,12 +600,17 @@ export class CompositionMap {
       stats: CompositionStats = {
         zoom: this.zoom,
         tiles: 0,
+        wanted: 0,
+        fallbackTiles: 0,
+        drawMs: 0,
+        labels: { roads: 0, pois: 0, loading: 0, missing: 0, places: 0 },
         missing: 0,
         loading: 0,
         sources: 0,
         triangles: 0,
         bytes: 0,
       };
+    const frames: OverlayFrame[] = [];
     for (const s of this.sessions.values()) {
       const b = coverageBounds(coverageOf(s.source.manifest));
       const w = Math.max(view[0], b[0]),
@@ -338,6 +644,28 @@ export class CompositionMap {
           visible.push(s.prefix + k);
         }
       }
+      frames.push({
+        ctx,
+        camera,
+        style: this.style,
+        view: result.view,
+        resident: (k) => s.scheduler.has(k),
+        cached: (k) =>
+          !!this.storedKeys.get(s.source.manifest.snapshot)?.has(k) ||
+          s.source.reader.cache.has(k) ||
+          s.scheduler.has(k),
+        labels: s.labels,
+        features: this.featureOverlay,
+        places: [],
+        placesLoading: false,
+        placesMissing: false,
+        state: this.state,
+        labelStats: { roads: 0, pois: 0, loading: 0, missing: 0 },
+      });
+      stats.wanted += result.wanted;
+      stats.fallbackTiles += result.presented.filter(
+        (b) => b.z !== result.view.zoom,
+      ).length;
       stats.tiles += result.tiles;
       stats.missing += result.missing;
       stats.loading += result.loading;
@@ -347,6 +675,7 @@ export class CompositionMap {
     }
     this.renderer.set_visible(visible.join(","));
     // Ground-plane composition: coverage masks have one unambiguous boundary.
+    const drawStart = performance.now();
     stats.triangles = this.renderer.render(
       ...this.center,
       this.zoom,
@@ -359,6 +688,9 @@ export class CompositionMap {
       12,
       0,
     );
+    stats.drawMs = performance.now() - drawStart;
+    for (const f of frames) this.debugOverlays.draw(f);
+    this.featureOverlay.draw(ctx, camera);
     const occupied: [number, number, number, number][] = [],
       toScreen = worldProjector(camera);
     for (const source of this.sources) {
@@ -382,7 +714,12 @@ export class CompositionMap {
           ].every((p) =>
             contains(mask, screenToWorld(p as [number, number], camera)),
           );
-        if (!s.places && !s.placesLoading && !s.placesFailed) {
+        if (
+          this.placeNames &&
+          !s.places &&
+          !s.placesLoading &&
+          !s.placesFailed
+        ) {
           if (
             source.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY)
           ) {
@@ -406,7 +743,7 @@ export class CompositionMap {
         }
         ctx.font = '500 12px "Avenir Next", sans-serif';
         ctx.textAlign = "center";
-        for (const place of s.places ?? []) {
+        for (const place of this.placeNames ? (s.places ?? []) : []) {
           const [x, y] = toScreen(project(...place.coordinates)),
             half = ctx.measureText(place.name).width / 2 + 4;
           const box: [number, number, number, number] = [
@@ -436,6 +773,7 @@ export class CompositionMap {
           ctx.strokeText(place.name, x, y);
           ctx.fillText(place.name, x, y);
           occupied.push(box);
+          stats.labels.places!++;
         }
         const labels = s.labels.draw(
           ctx,
@@ -444,6 +782,10 @@ export class CompositionMap {
           occupied,
           accepts,
         );
+        stats.labels.roads += labels.roads;
+        stats.labels.pois += labels.pois;
+        stats.labels.loading += labels.loading;
+        stats.labels.missing += labels.missing;
         stats.loading += labels.loading + (s.placesLoading ? 1 : 0);
         stats.missing += labels.missing;
       }
@@ -466,40 +808,14 @@ export class CompositionMap {
         ctx.setLineDash([]);
       }
     }
-    if (this.route.length) {
-      ctx.beginPath();
-      this.route.forEach((p, i) => {
-        const [x, y] = toScreen(project(...p));
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      });
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "#fffaf0";
-      ctx.lineWidth = 9;
-      ctx.stroke();
-      ctx.strokeStyle = "#cc603d";
-      ctx.lineWidth = 5;
-      ctx.stroke();
-    }
-    this.endpoints.forEach((p, i) => {
-      const [x, y] = toScreen(project(...p));
-      ctx.beginPath();
-      ctx.arc(x, y, 13, 0, Math.PI * 2);
-      ctx.fillStyle = i ? "#cc603d" : "#345d48";
-      ctx.fill();
-      ctx.strokeStyle = "#fffaf0";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.font = "bold 12px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#fffaf0";
-      ctx.fillText(i ? "B" : "A", x, y);
-    });
+    if (frames[0]) this.overlays.draw(frames[0]);
     this.onStats(stats);
   }
   destroy() {
     if (this.dead) return;
+    if (this.picker) this.endPicking(this.picker.owner);
+    this.overlays.destroy();
+    this.debugOverlays.destroy();
     this.dead = true;
     cancelAnimationFrame(this.frame);
     this.input.destroy();

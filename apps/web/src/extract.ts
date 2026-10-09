@@ -1,4 +1,4 @@
-import { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import {
   type MapFeature,
   type FeatureKind,
@@ -16,7 +16,7 @@ export class ExtractControls {
   private busy = false;
   private abort = new AbortController();
   constructor(
-    readonly map: AtlasMap,
+    readonly map: WorkspaceMap,
     readonly operations: OperationSession,
   ) {
     const select = el<HTMLSelectElement>("kind");

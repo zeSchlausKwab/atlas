@@ -1,3 +1,9 @@
+import { createComposer, type ClientComposer } from "./client-composer";
+import {
+  CompositionMap,
+  type CompositionMapSource,
+} from "../../../packages/renderer/src/composition";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import { ToolControls } from "./tools";
 let tools: ToolControls | undefined;
 import { ReachabilityControls } from "./reachability";
@@ -82,7 +88,11 @@ try {
   }
 } catch {}
 let reader: AtlasReader;
-let map: AtlasMap | undefined;
+let map: WorkspaceMap | undefined;
+let composer: ClientComposer | undefined;
+let composerAbort: AbortController | undefined;
+let compositionSources: CompositionMapSource[] | undefined;
+let toolSignature = "";
 const appearance = new StyleControls(() => map);
 let sourceLabel = "server";
 let events: ReadEvent[] = [];
@@ -101,13 +111,16 @@ function telemetry(event?: ReadEvent) {
     events = events.slice(0, 6);
   }
   if (!reader) return;
-  const bytes = formatBytes(reader.bytesRead).split(" ");
+  const readers = compositionSources?.map((s) => s.reader) ?? [reader];
+  const sum = (f: (r: AtlasReader) => number) =>
+    readers.reduce((n, r) => n + f(r), 0);
+  const bytes = formatBytes(sum((r) => r.bytesRead)).split(" ");
   el("bytes-read").replaceChildren(
     document.createTextNode(`${bytes[0]} `),
     Object.assign(document.createElement("span"), { textContent: bytes[1] }),
   );
-  el("request-count").textContent = String(reader.requests);
-  el("cached-count").textContent = String(reader.cache.size);
+  el("request-count").textContent = String(sum((r) => r.requests));
+  el("cached-count").textContent = String(sum((r) => r.cache.size));
   for (const purpose of [
     "directory",
     "map",
@@ -120,19 +133,24 @@ function telemetry(event?: ReadEvent) {
     "features",
   ] as const) {
     el(`bytes-${purpose}`).textContent = formatBytes(
-      reader.bytesByPurpose[purpose] +
-        (purpose === "streetNames" ? reader.bytesByPurpose.labels : 0),
+      sum(
+        (r) =>
+          r.bytesByPurpose[purpose] +
+          (purpose === "streetNames" ? r.bytesByPurpose.labels : 0),
+      ),
     );
   }
   for (const layer of [...MAP_LAYERS, "combined"] as const)
     el(`bytes-layer-${layer}`).textContent = formatBytes(
-      reader.bytesByLayer[layer],
+      sum((r) => r.bytesByLayer[layer]),
     );
   if (reader.index) {
-    const percent = (reader.bytesRead / reader.index.header.fileLength) * 100;
+    const percent = sum((r) => r.index.header.fileLength)
+      ? (sum((r) => r.bytesRead) / sum((r) => r.index.header.fileLength)) * 100
+      : 0;
     el("transfer-meter").style.width = `${Math.min(percent, 100)}%`;
     el("transfer-percent").textContent =
-      `${percent.toFixed(1)}% of the package read`;
+      `${percent.toFixed(1)}% of ${compositionSources ? "selected packages" : "the package"} read`;
   }
   if (!event || event.cached) return;
   const list = el("read-log");
@@ -155,6 +173,7 @@ function telemetry(event?: ReadEvent) {
 }
 let memoryUpdated = 0;
 function stats(s: MapStats) {
+  if (!reader?.index) return;
   if (map && performance.now() - memoryUpdated > 250) {
     memoryUpdated = performance.now();
     const m = map.memory;
@@ -215,11 +234,20 @@ function stats(s: MapStats) {
   el("transport-detail").textContent = reader.offline
     ? `${s.missing} missing visible tiles · network reads disabled.`
     : `${s.tiles} visible tiles · ${formatBytes(reader.bytesRead)} this session.`;
+  if (compositionSources)
+    el("transport-detail").textContent =
+      `${compositionSources.length} selected maps · ${s.tiles} visible tiles · ${formatBytes(compositionSources.reduce((n, s) => n + s.reader.bytesRead, 0))} read${reader.offline ? " · cache only" : ""}.`;
+  composer?.updateStatus();
   telemetry();
 }
 let session = 0;
 let reopening:
-  | { source: ByteSource; center?: [number, number]; zoom?: number }
+  | {
+      source: ByteSource;
+      composition?: boolean;
+      center?: [number, number];
+      zoom?: number;
+    }
   | undefined;
 let cacheTimer: ReturnType<typeof setTimeout> | undefined;
 function closeSession() {
@@ -227,6 +255,16 @@ function closeSession() {
   clearTimeout(cacheTimer);
   cacheTimer = undefined;
   reader?.dispose();
+  closeTools();
+  composerAbort?.abort();
+  composerAbort = undefined;
+  composer?.destroy();
+  composer = undefined;
+  compositionSources = undefined;
+  map?.destroy();
+  map = undefined;
+}
+function closeTools() {
   tools?.destroy();
   tools = undefined;
   extractor?.destroy();
@@ -241,12 +279,16 @@ function closeSession() {
   routing = undefined;
   operations?.destroy();
   operations = undefined;
-  map?.destroy();
-  map = undefined;
+  toolSignature = "";
 }
 async function open(source: ByteSource) {
   closeSession();
   const opening = session;
+  el("composition-scope").hidden = true;
+  el("composition-single").hidden = false;
+  el("composition-controls").hidden = true;
+  el("tool-panels").inert = false;
+  el("download").hidden = sourceLabel !== "server";
   el("cache-paused").hidden = true;
   el("map").style.visibility = "";
   document
@@ -281,38 +323,6 @@ async function open(source: ByteSource) {
     el<HTMLInputElement>("offline").checked = reader.offline;
     if (reader.offline)
       el("connection-label").textContent = "Using cached blocks";
-    const m = reader.index.manifest;
-    for (const checkbox of document.querySelectorAll<HTMLInputElement>(
-      "[data-mask]",
-    )) {
-      checkbox.disabled =
-        !!m.tileLayers &&
-        !m.tileLayers.some(
-          (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
-        );
-    }
-    el("layer-transport").textContent = m.tileLayers
-      ? "Choose any combination. Only selected layers are requested."
-      : "This older package has combined geometry tiles. Switches hide geometry; convert the package with split-layers for selective downloads.";
-    el("dataset-name").textContent = m.name;
-    el("dataset-subtitle").textContent =
-      `OSM EXTRACT · Z${m.minZoom}–${m.maxZoom}`;
-    el("feature-label").textContent =
-      m.featureCountKind === "tile-records" ? "Tile records" : "Features";
-    if (source instanceof HttpSource)
-      el<HTMLAnchorElement>("download").href = source.url;
-    el<HTMLAnchorElement>("download").download =
-      `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
-    el("feature-count").textContent = number(m.features);
-    el("tile-count").textContent = number(reader.index.tileCount);
-    el("package-size").textContent = formatBytes(
-      reader.index.header.fileLength,
-    );
-    el("snapshot-id").textContent = `${m.snapshot.slice(0, 24)}…`;
-    const heading = document.querySelector(".map-heading>span:last-child")!;
-    heading.textContent = m.name;
-    document.querySelector(".map-heading .eyebrow")!.textContent =
-      `${((m.bounds[1] + m.bounds[3]) / 2).toFixed(1)}° N / ${((m.bounds[0] + m.bounds[2]) / 2).toFixed(1)}° E`;
     const nextMap = await AtlasMap.create(
       el<HTMLCanvasElement>("map"),
       reader,
@@ -336,77 +346,7 @@ async function open(source: ByteSource) {
       return;
     }
     map = nextMap;
-    map.onSceneChange = (scene) => appearance.receiveScene(scene);
-    const heights = m.buildingHeights;
-    el("height-coverage").textContent = heights
-      ? `${number(heights.tagged)} tagged heights · ${number(heights.estimated)} estimated from floors · ${number(heights.missing)} use fallback.${m.featureCountKind === "tile-records" ? " Counts are tile records." : ""}`
-      : "This package has no height attributes. Buildings use the fallback height.";
-    el("scene-badge").textContent = heights
-      ? "3D · OSM heights + estimates"
-      : "3D · fallback heights";
-    el<HTMLInputElement>("place-labels").disabled =
-      !m.places.length &&
-      !reader.index.blocks.some((b) => b.key === "labels/places");
-    map.onPickModeChange = (hint) => {
-      el("pick-banner").hidden = hint === null;
-      el("pick-banner").textContent = hint ?? "";
-    };
-    operations = new OperationSession(reader, (e) => {
-      el("execution-status").textContent =
-        `${e.operation} · ${executionText(e)}`;
-      el("api-transfer").textContent =
-        `${operations?.apiRequests ?? 0} API responses · ${formatBytes(operations?.apiBytes ?? 0)}`;
-      telemetry();
-    });
-    el("execution-status").textContent = "No computation requested.";
-    el("api-transfer").textContent = "0 API responses · 0 KB";
-    el<HTMLSelectElement>("execution-mode").querySelector<HTMLOptionElement>(
-      'option[value="server"]',
-    )!.disabled = !operations.remote;
-    if (!operations.remote)
-      el<HTMLSelectElement>("execution-mode").value = "device";
-    routing = new RouteControls(reader, map, operations);
-    reachability = new ReachabilityControls(map, operations, () =>
-      routing?.profileChanged(),
-    );
-    search = new SearchControls(reader, map, routing, operations);
-    extractor = new ExtractControls(map, operations);
-    tools = new ToolControls(map, operations, extractor);
-    map.onPoiSelect = (poi) => search?.select(poi);
-    for (const id of ["street-labels", "poi-labels"])
-      el<HTMLInputElement>(id).disabled =
-        !m.capabilities.includes("map-labels");
-    setLabels();
-    world = new OfflineControls(
-      reader,
-      map,
-      async (file) => {
-        sourceLabel = "file";
-        el("download").hidden = true;
-        await open(new FileSource(file));
-      },
-      operations,
-      () => ({
-        layers: selectedLayers(),
-        placeNames: el<HTMLInputElement>("place-labels").checked,
-        streetNames: el<HTMLInputElement>("street-labels").checked,
-        pois: el<HTMLInputElement>("poi-labels").checked,
-      }),
-    );
-    configureOperations();
-    if (m.selection) map.setSelection(m.selection.polygon);
-    if (m.name === "Vienna Plus") {
-      map.center = project(16.373, 48.208);
-      map.zoom = 11;
-      map.invalidate();
-    }
-    map.setGrid(el<HTMLInputElement>("tile-grid").checked);
-    refreshCacheView();
-    setLayers();
-    el<HTMLButtonElement>("highest-peak").disabled =
-      !operations.enabled.has("queries") ||
-      !m.capabilities.includes("peak-query");
-    telemetry();
+    bindTools();
   } catch (e) {
     if (session !== opening) return;
     error(e instanceof Error ? e.message : String(e));
@@ -414,6 +354,226 @@ async function open(source: ByteSource) {
   } finally {
     if (session === opening)
       el<HTMLButtonElement>("open-file").disabled = false;
+  }
+}
+function bindTools() {
+  if (!map || !reader?.index) return;
+  closeTools();
+  const m = reader.index.manifest;
+  el("read-scope").textContent = "Reads from this map package.";
+  el("route-sources").replaceChildren();
+  for (const checkbox of document.querySelectorAll<HTMLInputElement>(
+    "[data-mask]",
+  )) {
+    checkbox.disabled =
+      !compositionSources &&
+      !!m.tileLayers &&
+      !m.tileLayers.some(
+        (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
+      );
+  }
+  el("layer-transport").textContent = m.tileLayers
+    ? "Choose any combination. Only selected layers are requested."
+    : "This older package has combined geometry tiles. Switches hide geometry; convert the package with split-layers for selective downloads.";
+  el("dataset-name").textContent = m.name;
+  el("dataset-subtitle").textContent =
+    `OSM EXTRACT · Z${m.minZoom}–${m.maxZoom}`;
+  el("feature-label").textContent =
+    m.featureCountKind === "tile-records" ? "Tile records" : "Features";
+  if (reader.source instanceof HttpSource)
+    el<HTMLAnchorElement>("download").href = reader.source.url;
+  el<HTMLAnchorElement>("download").download =
+    `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
+  el("feature-count").textContent = number(m.features);
+  el("tile-count").textContent = number(reader.index.tileCount);
+  el("package-size").textContent = formatBytes(reader.index.header.fileLength);
+  el("snapshot-id").textContent = `${m.snapshot.slice(0, 24)}…`;
+  const heading = document.querySelector(".map-heading>span:last-child")!;
+  heading.textContent = m.name;
+  document.querySelector(".map-heading .eyebrow")!.textContent =
+    `${((m.bounds[1] + m.bounds[3]) / 2).toFixed(1)}° N / ${((m.bounds[0] + m.bounds[2]) / 2).toFixed(1)}° E`;
+  map.onSceneChange = (scene) => appearance.receiveScene(scene);
+  const heights = m.buildingHeights;
+  el("height-coverage").textContent = heights
+    ? `${number(heights.tagged)} tagged heights · ${number(heights.estimated)} estimated from floors · ${number(heights.missing)} use fallback.${m.featureCountKind === "tile-records" ? " Counts are tile records." : ""}`
+    : "This package has no height attributes. Buildings use the fallback height.";
+  el("scene-badge").textContent = heights
+    ? "3D · OSM heights + estimates"
+    : "3D · fallback heights";
+  el<HTMLInputElement>("place-labels").disabled =
+    !compositionSources &&
+    !m.places.length &&
+    !reader.index.blocks.some((b) => b.key === "labels/places");
+  map.onPickModeChange = (hint) => {
+    el("pick-banner").hidden = hint === null;
+    el("pick-banner").textContent = hint ?? "";
+  };
+  operations = new OperationSession(
+    reader,
+    (e) => {
+      el("execution-status").textContent =
+        `${e.operation} · ${executionText(e)}`;
+      el("api-transfer").textContent =
+        `${operations?.apiRequests ?? 0} API responses · ${formatBytes(operations?.apiBytes ?? 0)}`;
+      telemetry();
+    },
+    compositionSources?.map((s) => ({ id: s.id, reader: s.reader })),
+  );
+  el("execution-status").textContent = "No computation requested.";
+  el("api-transfer").textContent = "0 API responses · 0 KB";
+  el<HTMLSelectElement>("execution-mode").querySelector<HTMLOptionElement>(
+    'option[value="server"]',
+  )!.disabled = !operations.remote;
+  if (!operations.remote)
+    el<HTMLSelectElement>("execution-mode").value = "device";
+  routing = new RouteControls(reader, map, operations);
+  reachability = new ReachabilityControls(map, operations, () =>
+    routing?.profileChanged(),
+  );
+  search = new SearchControls(reader, map, routing, operations);
+  extractor = new ExtractControls(map, operations);
+  tools = new ToolControls(map, operations, extractor);
+  map.onPoiSelect = (poi) => search?.select(poi);
+  for (const id of ["street-labels", "poi-labels"])
+    el<HTMLInputElement>(id).disabled =
+      !compositionSources && !m.capabilities.includes("map-labels");
+  setLabels();
+  world = new OfflineControls(
+    reader,
+    map,
+    async (file) => {
+      sourceLabel = "file";
+      el("download").hidden = true;
+      await open(new FileSource(file));
+    },
+    operations,
+    () => ({
+      layers: selectedLayers(),
+      placeNames: el<HTMLInputElement>("place-labels").checked,
+      streetNames: el<HTMLInputElement>("street-labels").checked,
+      pois: el<HTMLInputElement>("poi-labels").checked,
+    }),
+  );
+  configureOperations();
+  if (m.selection && !compositionSources) map.setSelection(m.selection.polygon);
+  if (!compositionSources && m.name === "Vienna Plus") {
+    map.center = project(16.373, 48.208);
+    map.zoom = 11;
+    map.invalidate();
+  }
+  map.setGrid(el<HTMLInputElement>("tile-grid").checked);
+  refreshCacheView();
+  setLayers();
+  el<HTMLButtonElement>("highest-peak").disabled =
+    !operations.enabled.has("queries") ||
+    !m.capabilities.includes("peak-query");
+  telemetry();
+  if (compositionSources) {
+    document.querySelector(".map-heading>span:last-child")!.textContent =
+      `${compositionSources.length} maps · one view`;
+    document.querySelector(".map-heading .eyebrow")!.textContent =
+      "CLIENT COMPOSITION";
+    el("dataset-name").textContent = `Tool source: ${m.name}`;
+    el("read-scope").textContent = "Reads across the selected map sources.";
+    el("layer-transport").textContent =
+      "Global filters: apply to every source. Client composer can further restrict each map.";
+    el("height-coverage").textContent =
+      "Composition uses 2D geometry. Open a source on its own in Client composer for building extrusion.";
+    el("download").hidden = true;
+  }
+  for (const id of [
+    "scene-demo",
+    "scene-extrude",
+    "scene-heightScale",
+    "scene-fallbackHeight",
+    "scene-shading",
+  ]) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (input) input.disabled = !!compositionSources;
+  }
+  toolSignature = `${m.snapshot}|${compositionSources?.map((s) => s.id).join("|") ?? "single"}`;
+}
+async function openComposition() {
+  closeSession();
+  const opening = session;
+  const abort = (composerAbort = new AbortController());
+  events = [];
+  compositionSources = [];
+  el("cache-paused").hidden = true;
+  el("map").style.visibility = "";
+  document
+    .querySelectorAll<HTMLElement>(".sidebar, .inspector")
+    .forEach((e) => (e.inert = false));
+  el("composition-scope").hidden = false;
+  el("composition-single").hidden = true;
+  el("composition-controls").hidden = false;
+  el("error").hidden = true;
+  el("query-result").hidden = true;
+  el("connection-label").textContent = "Reading selected sources";
+  el("tool-panels").inert = true;
+  el<HTMLInputElement>("offline").checked = false;
+  el("render-status").textContent = "Opening map composition…";
+  try {
+    const next = await CompositionMap.create(
+      el<HTMLCanvasElement>("map"),
+      stats,
+      (_id, message) => {
+        if (
+          !(
+            el<HTMLInputElement>("offline").checked &&
+            message.includes("Not cached:")
+          )
+        )
+          error(message);
+      },
+    );
+    if (session !== opening) {
+      next.destroy();
+      return;
+    }
+    map = next;
+    next.onSceneChange = (scene) => appearance.receiveScene(scene);
+    next.setStyle(appearance.style);
+    next.setScene(appearance.scene);
+    setLayers();
+    setLabels();
+    next.setGrid(el<HTMLInputElement>("tile-grid").checked);
+    const control = await createComposer(next, {
+      store: blockStore,
+      signal: abort.signal,
+      telemetry,
+      offline: () => el<HTMLInputElement>("offline").checked,
+      changed: (sources, focus) => {
+        if (opening !== session) return;
+        compositionSources = sources;
+        if (!focus) {
+          closeTools();
+          document.querySelector(".map-heading>span:last-child")!.textContent =
+            "No maps selected";
+          el("route-sources").replaceChildren();
+          telemetry();
+          return;
+        }
+        reader = focus;
+        next.reader = focus;
+        const signature = `${focus.index.manifest.snapshot}|${sources.map((s) => s.id).join("|")}`;
+        if (signature !== toolSignature) bindTools();
+        next.setOffline(el<HTMLInputElement>("offline").checked);
+        void refreshCacheView();
+        telemetry();
+      },
+    });
+    if (session !== opening) {
+      control.destroy();
+      return;
+    }
+    composer = control;
+    if (!compositionSources?.length) {
+      el("render-status").textContent = "Choose a source in Client composer";
+      el("ready-state").textContent = "NO SOURCES";
+    }
+  } catch (e) {
+    if (session === opening) error(String(e));
   }
 }
 async function refreshCacheView() {
@@ -424,6 +584,10 @@ async function refreshCacheView() {
   map?.setCacheView(enabled);
   if (!enabled || !map) return;
   const active = map;
+  if (active instanceof CompositionMap) {
+    await active.refreshCacheView(enabled);
+    return;
+  }
   const keys =
     (await blockStore?.keys(active.reader.index.manifest.snapshot)) ?? [];
   if (map === active)
@@ -447,7 +611,13 @@ el("purge-caches").onclick = async () => {
   button.disabled = true;
   button.textContent = "Purging…";
   if (reader && !reopening)
-    reopening = { source: reader.source, center: map?.center, zoom: map?.zoom };
+    reopening = {
+      source: reader.source,
+      composition: !!compositionSources,
+      center: map?.center,
+      zoom: map?.zoom,
+    };
+  composer?.save();
   closeSession();
   // Other tabs must also release readers before the shared persistent cache clears.
   cacheChannel?.postMessage("close");
@@ -505,11 +675,13 @@ el("reopen-map").onclick = async () => {
   const saved = reopening;
   if (!saved) return;
   reopening = undefined;
-  await open(
-    saved.source instanceof HttpSource
-      ? new HttpSource(saved.source.url)
-      : saved.source,
-  );
+  if (saved.composition) await openComposition();
+  else
+    await open(
+      saved.source instanceof HttpSource
+        ? new HttpSource(saved.source.url)
+        : saved.source,
+    );
   if (map && saved.center && saved.zoom !== undefined) {
     map.center = saved.center;
     map.zoom = saved.zoom;
@@ -526,9 +698,11 @@ if (cacheChannel)
     if (reader && !reopening)
       reopening = {
         source: reader.source,
+        composition: !!compositionSources,
         center: map?.center,
         zoom: map?.zoom,
       };
+    composer?.save();
     closeSession();
     showCachePause("Cache purge requested in another Atlas tab.");
     // Drain this tab's queued writes too, even if the other tab cleared first.
@@ -555,6 +729,9 @@ function configureOperations() {
     operations.mode === "server"
       ? "Receive results; the source data stays on the server."
       : "Compute here; keep the downloaded data for offline use.";
+  if (compositionSources && operations.mode === "server")
+    el("execution-hint").textContent =
+      "Server tools use Tool source. Choose This device for cross-map routing and isochrones.";
   routing?.refresh();
   reachability?.refresh();
   search?.refresh();
@@ -652,13 +829,16 @@ el<HTMLInputElement>("file-input").onchange = async (event) => {
   }
 };
 const hostedMap = new URLSearchParams(location.search).get("map");
-void open(
-  new HttpSource(
-    hostedMap && /^[a-f0-9-]{36}$/.test(hostedMap)
-      ? `/maps/${hostedMap}.atlas`
-      : "/maps/demo.atlas",
-  ),
-);
+if (hostedMap)
+  void open(
+    new HttpSource(
+      /^[a-f0-9-]{36}$/.test(hostedMap)
+        ? `/maps/${hostedMap}.atlas`
+        : "/maps/demo.atlas",
+    ),
+  );
+else void openComposition();
+window.addEventListener("pagehide", closeSession);
 
 function shellCommand(worker: ServiceWorker, command: string) {
   return new Promise<void>((resolve, reject) => {

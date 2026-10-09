@@ -29,5 +29,23 @@ export function setupTabs() {
       activateTab(tabs[n]!.dataset.tab!, true);
     };
   });
-  activateTab("explore");
+  window.addEventListener("hashchange", (event) => {
+    const oldHash = new URLSearchParams(new URL(event.oldURL).hash.slice(1));
+    const newHash = new URLSearchParams(new URL(event.newURL).hash.slice(1));
+    // replaceState saves editor changes without firing this event. Browser navigation
+    // to another recipe must recreate its readers and tools.
+    if (oldHash.get("view") !== newHash.get("view")) {
+      location.reload();
+      return;
+    }
+    const name = newHash.get("tab");
+    if (tabs.some((t) => t.dataset.tab === name)) activateTab(name!);
+  });
+  const initial = new URLSearchParams(location.hash.slice(1)).get("tab");
+  activateTab(
+    tabs.some((t) => t.dataset.tab === initial) ? initial! : "explore",
+  );
+  document
+    .getElementById("open-composer")
+    ?.addEventListener("click", () => activateTab("composer"));
 }

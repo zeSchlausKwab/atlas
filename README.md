@@ -84,7 +84,7 @@ The following local-data experiments assume **Run tools on → This device**:
 
 ## Compose hosted maps
 
-Open **http://127.0.0.1:3100/compose**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Walking, cycling and driving routes run on the client across excerpts of one shared compiled graph. Search, extraction and isochrones remain per-map through **Open tools**. See [composition design and limitations](docs/COMPOSITION.md).
+Open **http://127.0.0.1:3100/** → **Client composer**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Walking, cycling and driving routes run on the client across excerpts of one shared compiled graph. Use the normal **Route** tab for composed routes and isochrones. **Tool source** scopes search, extraction, queries and offline export to one selected map. Legacy `/compose` links redirect into this workspace. See [composition design and limitations](docs/COMPOSITION.md).
 
 The larger four-region demo uses cached, pinned Austria/Slovakia/Hungary PBFs, builds one shared transport graph, and then generates the full-capability map files sequentially:
 

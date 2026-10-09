@@ -1,4 +1,4 @@
-import type { AtlasMap } from "../../../packages/renderer/src/map";
+import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import {
   PAPER,
   FLAT_SCENE,
@@ -16,7 +16,7 @@ const el = <T extends HTMLElement = HTMLElement>(id: string) =>
 export class StyleControls {
   style: MapStyle = parseStyle(PAPER);
   scene: MapScene = { ...FLAT_SCENE };
-  constructor(private readonly map: () => AtlasMap | undefined) {
+  constructor(private readonly map: () => WorkspaceMap | undefined) {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
       if (saved) {
