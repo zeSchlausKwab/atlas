@@ -82,6 +82,10 @@ The following local-data experiments assume **Run tools on → This device**:
 - Download the package, then use **Open a local file**. Data reads now use `Blob.slice`; the map package no longer comes from the server. After the app reports it is saved for offline use, its service worker also serves the HTML/JS/WASM without a network connection. You must explicitly reopen your saved map file.
 - Inspect byte counts, actual range reads, and a pinned snapshot in the right panel. The panel is hidden on narrow screens.
 
+## Compose hosted maps
+
+Open **http://127.0.0.1:3100/compose**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Routing and search remain per-map through **Open tools**. See [composition design and limitations](docs/COMPOSITION.md).
+
 ## Runtime budgets and operation discovery
 
 The server pins a read-only file descriptor and streams byte ranges. It hashes the archive in 1 MiB chunks at startup to retain a strong ETag, so startup still reads the entire file but never allocates an archive-sized Blob. Publish regenerated archives by atomic rename, then restart the server to switch snapshots. Replacing the path while running preserves the old descriptor; modification in place is rejected.

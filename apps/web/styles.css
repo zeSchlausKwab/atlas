@@ -2522,3 +2522,283 @@ button:disabled {
 #prepare-storage-free {
   font-weight: 600;
 }
+
+/* The composition keeps data choices beside one shared viewport. */
+.composition-workspace {
+  display: grid;
+  grid-template-columns: 390px minmax(0, 1fr);
+  height: calc(100dvh - 78px);
+}
+.composition-sidebar {
+  overflow: auto;
+  border-right: 1px solid var(--line);
+}
+.composition-sidebar .intro {
+  padding: 28px 24px 20px;
+}
+.composition-sidebar h1 {
+  font-size: 35px;
+}
+.composition-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.composition-page button,
+.composition-page select,
+.composition-page input[type="url"] {
+  font: inherit;
+  font-size: 12px;
+  color: var(--green);
+  border: 1px solid var(--line);
+  background: #fbfaf4;
+  padding: 9px 12px;
+  border-radius: 4px;
+}
+.composition-page button:hover {
+  border-color: var(--green);
+}
+.composition-page input[type="checkbox"] {
+  accent-color: var(--green);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.composition-page .quiet {
+  font-size: 12px;
+  line-height: 1.65;
+}
+.composition-rule {
+  padding: 18px 24px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.composition-rule p {
+  margin: 0 0 12px;
+}
+.composition-rule label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 8px 0;
+}
+.composition-rule select {
+  margin-left: auto;
+}
+#composition-catalog {
+  width: 100%;
+  margin: 3px 0 10px;
+}
+.composition-card {
+  border-top: 1px solid var(--line);
+  padding: 20px 24px;
+  border-left: 4px solid var(--source-color);
+}
+.composition-card[data-enabled="false"] {
+  border-left-color: var(--line);
+}
+.composition-card-heading {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.composition-card-heading label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  flex: 1;
+  cursor: pointer;
+}
+.composition-card-heading input {
+  margin-top: 4px;
+}
+.composition-card-heading button {
+  padding: 4px 9px;
+}
+.composition-card p {
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.composition-card .composition-layers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 0;
+  padding: 0;
+  margin: 15px 0;
+  gap: 8px;
+}
+.composition-layers legend {
+  font: 9px var(--mono);
+  color: var(--muted);
+  letter-spacing: 1px;
+  padding: 0 0 10px;
+}
+.composition-layers label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.composition-card .host-actions {
+  font-size: 12px;
+  gap: 13px;
+  margin: 14px 0 0;
+  align-items: center;
+}
+.composition-card .host-actions button {
+  padding: 5px 9px;
+}
+.composition-card details {
+  font-size: 11px;
+  line-height: 1.7;
+}
+.composition-card summary {
+  cursor: pointer;
+  color: var(--green);
+}
+.composition-card .source-status {
+  font: 10px var(--mono);
+  color: var(--muted);
+}
+.composition-card[data-error="true"] .source-status {
+  color: #a43d29;
+}
+.composition-stage {
+  position: relative;
+  overflow: hidden;
+  background: #e8e6d6;
+  min-width: 0;
+}
+#composition-map,
+.composition-overlay {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  inset: 0;
+}
+#composition-map {
+  touch-action: none;
+  cursor: grab;
+}
+.composition-overlay {
+  pointer-events: none;
+}
+.composition-navigation {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.composition-navigation button {
+  background: #fbfaf4ed;
+  font-size: 17px;
+}
+.composition-navigation button:last-child {
+  font-size: 12px;
+  margin-top: 6px;
+}
+.composition-telemetry {
+  position: absolute;
+  bottom: 38px;
+  left: 24px;
+  max-width: calc(100% - 48px);
+  background: #fbfaf4ed;
+  border: 1px solid var(--line);
+  padding: 16px 20px;
+  border-radius: 5px;
+  pointer-events: none;
+}
+.composition-telemetry .eyebrow {
+  margin-bottom: 9px;
+}
+.composition-telemetry strong {
+  font-size: 14px;
+}
+.composition-telemetry p:not(.eyebrow),
+.composition-telemetry span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.composition-attribution {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  max-width: 100%;
+  padding: 5px 12px;
+  background: #fbfaf4db;
+  font-size: 10px;
+  color: var(--ink);
+}
+.host-composition-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 15px 0 24px;
+  flex-wrap: wrap;
+}
+.host-composition-bar a {
+  border: 1px solid var(--green);
+  padding: 10px 15px;
+  border-radius: 4px;
+  color: var(--green);
+}
+.host-compose-select {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--green);
+}
+.host-compose-select input {
+  accent-color: var(--green);
+}
+@media (max-width: 800px) {
+  .composition-workspace {
+    height: auto;
+    display: flex;
+    flex-direction: column-reverse;
+  }
+  .composition-stage {
+    height: 58dvh;
+    min-height: 330px;
+  }
+  .composition-sidebar {
+    overflow: visible;
+  }
+  .composition-page .masthead {
+    padding: 0 16px;
+    gap: 15px;
+  }
+  .composition-page .masthead-note {
+    display: none;
+  }
+  .composition-page .masthead-right {
+    display: flex;
+    gap: 14px;
+  }
+  .composition-page .masthead-right a {
+    display: inline-block;
+  }
+  .composition-page .masthead-right a:first-child {
+    display: none;
+  }
+  .composition-navigation {
+    top: 12px;
+    right: 12px;
+  }
+  .composition-telemetry {
+    left: 12px;
+    bottom: 28px;
+    padding: 10px 12px;
+  }
+  .composition-telemetry span {
+    display: none;
+  }
+}

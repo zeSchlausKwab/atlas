@@ -8,6 +8,8 @@ export interface TileBackend {
   show(keys: string[]): void;
 }
 export interface TileRequest {
+  /** Invalidates source-coverage filtering without dropping resident meshes. */
+  revision?: number;
   range: [number, number, number, number, number];
   layers: MapLayer[];
   bounds: [number, number, number, number];
@@ -29,7 +31,7 @@ export class TileScheduler {
   uploads = 0;
   prepareMs = 0;
   constructor(
-    private reader: AtlasReader,
+    private reader: Pick<AtlasReader, "tiles" | "tilesCached" | "block">,
     private backend: TileBackend,
     private invalidate: () => void,
     private error: (message: string) => void,
@@ -57,7 +59,7 @@ export class TileScheduler {
   }
   update(request: TileRequest) {
     const { range, layers, bounds } = request;
-    const key = `${range.join("/")}/${layers.join(",")}`;
+    const key = `${request.revision ?? 0}/${range.join("/")}/${layers.join(",")}`;
     this.current = key;
     const known =
       this.catalog?.key === key

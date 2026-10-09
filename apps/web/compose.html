@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Atlas — map composition</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="composition-page">
+    <header class="masthead">
+      <a class="brand" href="/">◭ atlas.</a
+      ><span class="masthead-note">MANY SOURCES / ONE VIEW</span>
+      <nav class="masthead-right">
+        <a href="/catalog" target="_blank" rel="noopener">Public catalog ↗</a
+        ><a href="/host#library">Host console ↗</a>
+      </nav>
+    </header>
+    <main class="composition-workspace">
+      <aside class="composition-sidebar" aria-label="Composition sources">
+        <div class="intro">
+          <p class="eyebrow">ATLAS / COMPOSITION LAB</p>
+          <h1>A world in pieces.</h1>
+          <p class="description">
+            Choose the maps and layers you need. They share a camera, while each
+            file keeps its own identity.
+          </p>
+          <div class="composition-actions">
+            <button id="composition-fit">Fit selected</button
+            ><button id="composition-share">Copy view link</button>
+          </div>
+          <p id="composition-message" role="status" class="quiet">
+            Reading the host catalog…
+          </p>
+        </div>
+        <div class="composition-rule">
+          <p>
+            <strong>Top source wins, per layer.</strong> Lower maps fill the
+            remaining coverage. Move a source up to give it priority.
+          </p>
+          <label
+            ><input id="composition-coverage" type="checkbox" checked /> Show
+            coverage outlines</label
+          ><label
+            >Appearance
+            <select id="composition-style">
+              <option value="paper">Paper</option>
+              <option value="midnight">Midnight</option>
+              <option value="blueprint">Blueprint</option>
+            </select></label
+          >
+        </div>
+        <div id="composition-sources"></div>
+        <form id="composition-catalog-form" class="composition-rule">
+          <label for="composition-catalog">Add another host’s catalog</label
+          ><input
+            id="composition-catalog"
+            type="url"
+            placeholder="https://host.example/catalog"
+            required
+          /><button type="submit">Discover maps</button>
+          <p class="quiet">
+            Public HTTP catalogs for this slice. No relay announcements are
+            published.
+          </p>
+        </form>
+        <div class="composition-rule quiet">
+          <p>
+            This view loads geometry and optional labels. Search, routing and
+            extraction stay with each source’s <strong>Open tools</strong> link.
+          </p>
+          <p>
+            Separate snapshots can share a display; this does not join their
+            routing graphs. Blank areas have no selected coverage. Geometry is
+            composed in 2D.
+          </p>
+        </div>
+      </aside>
+      <section class="composition-stage" aria-label="Composed map view">
+        <canvas
+          id="composition-map"
+          tabindex="0"
+          aria-label="Composed map"
+        ></canvas>
+        <div class="composition-navigation">
+          <button id="composition-zoom-in" aria-label="Zoom in">+</button
+          ><button id="composition-zoom-out" aria-label="Zoom out">−</button
+          ><button id="composition-reset">↑ Top-down</button>
+        </div>
+        <div class="composition-telemetry">
+          <p class="eyebrow">VIEWPORT / SELECTIVE READS</p>
+          <strong id="composition-status" role="status"
+            >Starting renderer…</strong
+          >
+          <p id="composition-detail"></p>
+          <span>Drag to pan · scroll to zoom · ⌘ drag to rotate / tilt</span>
+        </div>
+        <div id="composition-attribution" class="composition-attribution"></div>
+      </section>
+    </main>
+    <script type="module" src="/compose.js"></script>
+  </body>
+</html>

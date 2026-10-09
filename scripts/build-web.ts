@@ -13,6 +13,7 @@ const result = await Bun.build({
     "apps/web/src/routing-worker.ts",
     "apps/web/src/plugin-worker.ts",
     "apps/web/src/host.ts",
+    "apps/web/src/compose.ts",
   ],
   outdir: "dist",
   target: "browser",

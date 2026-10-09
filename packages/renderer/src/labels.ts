@@ -203,6 +203,7 @@ export class MapLabels {
     camera: Camera,
     style: MapStyle["labels"],
     occupied: Box[],
+    accepts: (box: Box) => boolean = () => true,
   ): LabelStats {
     this.hits = [];
     const { zoom, width, height } = camera;
@@ -327,6 +328,7 @@ export class MapLabels {
         if (!placement) continue;
         const { x, y, angle, box } = placement;
         if (
+          !accepts(box) ||
           occupied.some((b) => overlaps(b, box)) ||
           named
             .get(road.name)
@@ -364,6 +366,7 @@ export class MapLabels {
           y + 9 * style.scale,
         ];
         if (
+          !accepts(box) ||
           box[0] < 6 ||
           box[1] < 6 ||
           box[2] > width - 6 ||

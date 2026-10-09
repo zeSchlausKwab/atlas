@@ -34,6 +34,7 @@ const built = await Bun.build({
     resolve(root, "apps/web/src/main.ts"),
     resolve(root, "apps/web/src/plugin-worker.ts"),
     resolve(root, "apps/web/src/host.ts"),
+    resolve(root, "apps/web/src/compose.ts"),
     resolve(root, "apps/web/src/offline-worker.ts"),
     resolve(root, "apps/web/src/routing-worker.ts"),
   ],
@@ -94,6 +95,8 @@ const routes = new Map([
     "/maplibre/maplibre-gl-shared.mjs",
     ["node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs", "text/javascript"],
   ],
+  ["/compose", ["apps/web/compose.html", "text/html; charset=utf-8"]],
+  ["/compose.js", ["dist/compose.js", "text/javascript; charset=utf-8"]],
   ["/host", ["apps/web/host.html", "text/html; charset=utf-8"]],
   ["/host.js", ["dist/host.js", "text/javascript; charset=utf-8"]],
   [
@@ -154,7 +157,12 @@ const server = Bun.serve({
             ...preparations.catalog(),
           ],
         },
-        { headers: { "Cache-Control": "no-store" } },
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
       );
     const hosted = await library.handle(request);
     if (hosted) return hosted;

@@ -265,6 +265,18 @@ async function request(path: string, body: unknown) {
   if (!r.ok) throw new Error(data.error ?? "Request failed");
   return data;
 }
+const composition = new Set<string>();
+function updateComposition() {
+  el<HTMLAnchorElement>("compose").href = composition.size
+    ? `/compose?maps=${[...composition].join(",")}`
+    : "/compose";
+  el("compose").textContent = composition.size
+    ? `Compose ${composition.size} selected maps ↗`
+    : "Compose hosted maps ↗";
+  el("compose-count").textContent = composition.size
+    ? "These sources will share one map view."
+    : "Choose maps below, or open the full library.";
+}
 let lastJobs = "";
 function jobs(values: PreparationJob[]) {
   const identity = JSON.stringify(values);
@@ -321,7 +333,18 @@ function jobs(values: PreparationJob[]) {
         text("summary", "Package manifest"),
         text("pre", JSON.stringify(m, null, 2)),
       );
-      card.append(links, details);
+      const select = document.createElement("label"),
+        check = document.createElement("input");
+      select.className = "host-compose-select";
+      check.type = "checkbox";
+      check.checked = composition.has(job.id);
+      check.onchange = () => {
+        if (check.checked) composition.add(job.id);
+        else composition.delete(job.id);
+        updateComposition();
+      };
+      select.append(check, text("span", `Compose ${job.name}`));
+      card.append(links, details, select);
       library.append(card);
     } else {
       card.append(text("p", job.error ?? job.progress.message));

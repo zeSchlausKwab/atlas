@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -377,6 +378,58 @@ fn building_edges(features: &[Feature]) -> Vec<f32> {
     }
     out
 }
+fn clip_vertices(
+    coordinates: &[f64],
+    rings: &[u32],
+    polygons: &[u32],
+) -> Result<([f64; 2], Vec<f32>), String> {
+    if coordinates.len() > 200_000
+        || coordinates.len() % 2 != 0
+        || coordinates.iter().any(|n| !n.is_finite())
+        || rings.iter().any(|n| *n < 3)
+        || polygons.contains(&0)
+        || rings.iter().map(|n| *n as usize).sum::<usize>() * 2 != coordinates.len()
+        || polygons.iter().map(|n| *n as usize).sum::<usize>() != rings.len()
+    {
+        return Err("Invalid coverage polygon".into());
+    }
+    let origin = [
+        *coordinates.first().unwrap_or(&0.),
+        *coordinates.get(1).unwrap_or(&0.),
+    ];
+    let mut output = Vec::new();
+    let (mut ring_offset, mut point_offset) = (0, 0);
+    for count in polygons {
+        let sizes = &rings[ring_offset..ring_offset + *count as usize];
+        let points = sizes.iter().map(|n| *n as usize).sum::<usize>();
+        let data = &coordinates[point_offset * 2..(point_offset + points) * 2];
+        let mut holes = Vec::new();
+        let mut offset = sizes[0] as usize;
+        for size in &sizes[1..] {
+            holes.push(offset);
+            offset += *size as usize;
+        }
+        let local: Vec<f64> = data
+            .iter()
+            .enumerate()
+            .map(|(i, n)| n - origin[i % 2])
+            .collect();
+        for index in earcutr::earcut(&local, &holes, 2).map_err(|e| e.to_string())? {
+            output.extend_from_slice(&[
+                local[index * 2] as f32,
+                local[index * 2 + 1] as f32,
+                0.,
+                0.,
+                0.,
+                0.,
+                0.,
+            ]);
+        }
+        ring_offset += *count as usize;
+        point_offset += points;
+    }
+    Ok((origin, output))
+}
 struct Layer {
     buffer: Option<WebGlBuffer>,
     count: i32,
@@ -387,6 +440,12 @@ struct Tile {
     x: u32,
     y: u32,
     layers: Vec<Layer>,
+    clip: u32,
+}
+struct Clip {
+    origin: [f64; 2],
+    buffer: WebGlBuffer,
+    count: i32,
 }
 #[wasm_bindgen]
 pub struct Renderer {
@@ -407,13 +466,17 @@ pub struct Renderer {
     tiles: BTreeMap<String, Tile>,
     visible: Vec<String>,
     mask: u32,
+    clips: BTreeMap<u32, Clip>,
+    active_clip: Cell<u32>,
 }
 #[wasm_bindgen]
 impl Renderer {
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: HtmlCanvasElement) -> Result<Renderer, JsValue> {
+        let options = js_sys::Object::new();
+        js_sys::Reflect::set(&options, &"stencil".into(), &JsValue::TRUE)?;
         let gl: Gl = canvas
-            .get_context("webgl2")?
+            .get_context_with_context_options("webgl2", &options)?
             .ok_or_else(|| JsValue::from_str("WebGL2 is required"))?
             .dyn_into()?;
         let vs = compile(
@@ -501,6 +564,8 @@ impl Renderer {
             tiles: BTreeMap::new(),
             visible: Vec::new(),
             mask: 255,
+            clips: BTreeMap::new(),
+            active_clip: Cell::new(u32::MAX),
         })
     }
     pub fn add_tile(&mut self, z: u32, x: u32, y: u32, bytes: &[u8]) -> Result<u32, JsValue> {
@@ -554,7 +619,16 @@ impl Renderer {
                 self.gl.delete_buffer(layer.buffer.as_ref());
             }
         }
-        self.tiles.insert(key.to_owned(), Tile { z, x, y, layers });
+        self.tiles.insert(
+            key.to_owned(),
+            Tile {
+                z,
+                x,
+                y,
+                layers,
+                clip: 0,
+            },
+        );
         Ok(features.len() as u32)
     }
     /// Exact vertex-buffer bytes retained on the GPU (driver overhead excluded).
@@ -577,6 +651,51 @@ impl Renderer {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect();
+    }
+    /// A composition owns coverage per source/layer. Coordinates are normalized
+    /// Mercator; subtract the origin in f64 before uploading to preserve detail.
+    pub fn set_clip(
+        &mut self,
+        id: u32,
+        coordinates: &[f64],
+        rings: &[u32],
+        polygons: &[u32],
+    ) -> Result<(), JsValue> {
+        if id == 0 {
+            return Err(JsValue::from_str("Clip zero is reserved"));
+        }
+        let (origin, vertices) =
+            clip_vertices(coordinates, rings, polygons).map_err(|e| JsValue::from_str(&e))?;
+        let buffer = self
+            .gl
+            .create_buffer()
+            .ok_or_else(|| JsValue::from_str("Cannot allocate clip"))?;
+        self.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&buffer));
+        let array = js_sys::Float32Array::from(vertices.as_slice());
+        self.gl
+            .buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &array, Gl::STATIC_DRAW);
+        if let Some(old) = self.clips.insert(
+            id,
+            Clip {
+                origin,
+                buffer,
+                count: (vertices.len() / 7) as i32,
+            },
+        ) {
+            self.gl.delete_buffer(Some(&old.buffer));
+        }
+        Ok(())
+    }
+    pub fn set_tile_clip(&mut self, key: &str, clip: u32) {
+        if let Some(tile) = self.tiles.get_mut(key) {
+            tile.clip = clip;
+        }
+    }
+    pub fn clear_clips(&mut self) {
+        for clip in self.clips.values() {
+            self.gl.delete_buffer(Some(&clip.buffer));
+        }
+        self.clips.clear();
     }
     pub fn set_layers(&mut self, mask: u32) {
         self.mask = mask;
@@ -635,6 +754,8 @@ impl Renderer {
         fallback_height: f64,
         shading: f64,
     ) -> u32 {
+        self.active_clip.set(u32::MAX);
+        self.gl.disable(Gl::STENCIL_TEST);
         self.gl.viewport(
             0,
             0,
@@ -810,6 +931,48 @@ impl Renderer {
     }
 }
 impl Renderer {
+    fn activate_clip(&self, id: u32, cx: f64, cy: f64, world: f64) {
+        if self.active_clip.get() == id {
+            return;
+        }
+        self.active_clip.set(id);
+        if id == 0 {
+            self.gl.disable(Gl::STENCIL_TEST);
+            return;
+        }
+        // Missing/empty coverage is intentionally invisible, never unbounded.
+        self.gl.enable(Gl::STENCIL_TEST);
+        self.gl.stencil_mask(255);
+        self.gl.clear_stencil(0);
+        self.gl.clear(Gl::STENCIL_BUFFER_BIT);
+        self.gl.stencil_func(Gl::ALWAYS, 1, 255);
+        self.gl.stencil_op(Gl::KEEP, Gl::KEEP, Gl::REPLACE);
+        let depth = self.gl.is_enabled(Gl::DEPTH_TEST);
+        self.gl.disable(Gl::DEPTH_TEST);
+        self.gl.color_mask(false, false, false, false);
+        if let Some(clip) = self.clips.get(&id) {
+            self.gl.uniform2f(
+                Some(&self.origin),
+                ((clip.origin[0] - cx) * world) as f32,
+                ((clip.origin[1] - cy) * world) as f32,
+            );
+            self.gl.uniform1f(Some(&self.scale), world as f32);
+            self.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&clip.buffer));
+            for (slot, size, offset) in [(0, 2, 0), (1, 2, 8), (2, 3, 16)] {
+                self.gl.enable_vertex_attrib_array(slot);
+                self.gl
+                    .vertex_attrib_pointer_with_i32(slot, size, Gl::FLOAT, false, 28, offset);
+            }
+            self.gl.draw_arrays(Gl::TRIANGLES, 0, clip.count);
+        }
+        self.gl.color_mask(true, true, true, true);
+        if depth {
+            self.gl.enable(Gl::DEPTH_TEST);
+        }
+        self.gl.stencil_mask(0);
+        self.gl.stencil_func(Gl::EQUAL, 1, 255);
+        self.gl.stencil_op(Gl::KEEP, Gl::KEEP, Gl::KEEP);
+    }
     fn draw_layer(
         &self,
         tile: &Tile,
@@ -827,6 +990,7 @@ impl Renderer {
         if count == 0 {
             return 0;
         }
+        self.activate_clip(tile.clip, cx, cy, world);
         let n = 2.0_f64.powi(tile.z as i32);
         self.gl.uniform2f(
             Some(&self.origin),
@@ -847,6 +1011,7 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         self.clear();
+        self.clear_clips();
         self.gl.delete_program(Some(&self.program));
     }
 }
@@ -872,6 +1037,26 @@ fn compile(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn composition_clip_preserves_holes_and_local_precision() {
+        let coordinates = [
+            0.5, 0.5, 0.51, 0.5, 0.51, 0.51, 0.5, 0.51, 0.502, 0.502, 0.508, 0.502, 0.508, 0.508,
+            0.502, 0.508, 0.7, 0.7, 0.702, 0.7, 0.702, 0.702, 0.7, 0.702,
+        ];
+        let (origin, vertices) = clip_vertices(&coordinates, &[4, 4, 4], &[2, 1]).unwrap();
+        assert_eq!(origin, [0.5, 0.5]);
+        let area: f32 = vertices
+            .chunks_exact(21)
+            .map(|t| ((t[7] - t[0]) * (t[15] - t[1]) - (t[14] - t[0]) * (t[8] - t[1])).abs() / 2.)
+            .sum();
+        assert!((area - (0.01 * 0.01 - 0.006 * 0.006 + 0.002 * 0.002)).abs() < 1e-9);
+        assert!(clip_vertices(&coordinates, &[4, 4, 4], &[1]).is_err());
+        assert!(clip_vertices(&[f64::NAN, 0.], &[1], &[1]).is_err());
+        let tiny = [0.5, 0.5, 0.500000001, 0.5, 0.5, 0.500000001];
+        let (_, vertices) = clip_vertices(&tiny, &[3], &[1]).unwrap();
+        assert_eq!(vertices.len(), 21);
+        assert!(vertices.iter().any(|n| *n > 0. && *n < 0.00000001));
+    }
     #[test]
     fn linear_feature_bends_are_filled_and_duplicate_points_are_safe() {
         for class in [1, 3, 4, 5, 6] {
