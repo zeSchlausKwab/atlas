@@ -13,6 +13,7 @@ export interface HostPreview {
   selection(points: Position[], closed: boolean): void;
   picking(enabled: boolean): void;
   fit(): void;
+  fitArea(bounds: Bounds): void;
   focus(position: Position): void;
   view(): Bounds;
   destroy(): void;
@@ -62,6 +63,7 @@ export async function createPreview(
             )
           : map.endPicking("host"),
       fit: () => map.fit(),
+      fitArea: () => map.fit(),
       focus: (p) => map.focusLocation(p, "Selected position", 15),
       view: () => map.viewBounds(),
       destroy: () => {
@@ -218,6 +220,15 @@ export async function createPreview(
       map.getCanvas().style.cursor = on ? "crosshair" : "";
     },
     fit,
+    fitArea: (b) => {
+      map.fitBounds(
+        [
+          [b[0], b[1]],
+          [b[2], b[3]],
+        ],
+        { padding: 25, duration: 0 },
+      );
+    },
     focus: (p) => map.jumpTo({ center: p, zoom: 15 }),
     view: () => {
       const b = map.getBounds();

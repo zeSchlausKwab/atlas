@@ -27,9 +27,51 @@
         </p>
       </div>
       <nav class="host-section-nav" aria-label="Host console sections">
-        <a href="#prepare">01 / Prepare</a><a href="#library">02 / Library</a
-        ><a href="#operations">03 / Operations</a>
+        <a href="#sources">01 / Sources</a><a href="#prepare">02 / Prepare</a
+        ><a href="#library">03 / Library</a
+        ><a href="#operations">04 / Operations</a>
       </nav>
+      <p id="host-access" class="host-source-note" role="status">
+        Checking administration access…
+      </p>
+      <section id="sources" class="host-source-note">
+        <div class="host-list-heading">
+          <h2>Source library</h2>
+          <span class="eyebrow">DOWNLOAD ONCE / PREPARE MANY MAPS</span>
+        </div>
+        <p>
+          Keep a verified OSM PBF on this server before compiling maps.
+          Downloads can be paused and resumed, and continue when you close this
+          page.
+        </p>
+        <div class="host-actions">
+          <label
+            >Source
+            <select id="source-kind" aria-label="PBF source">
+              <option value="planet">Whole planet · OpenStreetMap</option>
+              <option value="europe">Europe · Geofabrik</option>
+            </select></label
+          >
+          <button id="source-inspect" type="button">Check download</button>
+          <button id="source-start" type="button" disabled>
+            Download PBF to server
+          </button>
+          <button id="source-europe" type="button" disabled>
+            Configure full Europe · z0–16
+          </button>
+        </div>
+        <p id="source-plan" role="status">
+          Check the dated source, exact size and available disk space before
+          downloading.
+        </p>
+        <p id="source-space" class="quiet"></p>
+        <div id="source-jobs" class="host-library" aria-live="polite"></div>
+        <p class="quiet">
+          A cached PBF is source data, not a rendered map. Full Europe
+          compilation needs the next compiler stage; regional preparation below
+          is available now.
+        </p>
+      </section>
       <section id="prepare" class="host-builder">
         <div class="host-list-heading">
           <h2>Prepare a map</h2>
@@ -41,6 +83,7 @@
               >Data source<select id="prepare-data-source">
                 <option value="installed">Installed Atlas snapshot</option>
                 <option value="global">Worldwide OSM PBF · Geofabrik</option>
+                <option value="europe">Europe · full dataset recipe</option>
               </select></label
             >
             <div class="host-picker-top">
@@ -263,6 +306,13 @@
             >
               Prepare & host map ↗
             </button>
+            <p id="prepare-compiler-note" class="host-source-note" hidden>
+              Full Europe z0–16 with routing, search and extraction is the
+              target. Save this recipe now. Compilation is not yet available:
+              the regional importer must be replaced with a disk-backed,
+              partitioned compiler. Downloading the PBF alone does not remove
+              that memory limit.
+            </p>
             <p id="prepare-message" role="status">
               Select only the data your consumers need.
             </p>
@@ -313,7 +363,7 @@
         <p id="host-status" role="status">Loading tools…</p>
         <div id="host-tools"></div>
         <footer class="host-note">
-          Local administration · Changes persist on disk. These switches control
+          Host administration · Changes persist on disk. These switches control
           server computation; they do not remove downloadable data or disable a
           consumer’s locally installed tools. These switches and ContextVM apply
           to the source package; prepared maps expose their available operations

@@ -1,3 +1,4 @@
+import { adminAccess, ADMIN_DENIED, type AdminAccess } from "./admin-access";
 import { rename, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { OperationHost } from "../../packages/operations/src/host";
@@ -5,6 +6,7 @@ export async function hostPolicy(
   host: OperationHost,
   path: string,
   onChange = () => {},
+  access: AdminAccess = adminAccess(),
 ) {
   const registry = host.engine.registry;
   if (await Bun.file(path).exists()) {
@@ -20,12 +22,8 @@ export async function hostPolicy(
   let tail = Promise.resolve();
   return async (request: Request, remoteAddress: string | undefined) => {
     const url = new URL(request.url);
-    // Local administration only. Hostname check prevents DNS rebinding; Origin check prevents browser CSRF.
-    if (
-      !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress ?? "") ||
-      !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-    )
-      return new Response("Local administration only", { status: 403 });
+    if (!access(request, remoteAddress))
+      return new Response(ADMIN_DENIED, { status: 403 });
     if (request.method === "GET")
       return Response.json(host.catalog(), {
         headers: { "Cache-Control": "no-store" },

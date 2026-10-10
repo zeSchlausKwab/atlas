@@ -31,8 +31,8 @@ tunnel or client-app API proxy is involved. Enable the LAN-only firewall rule us
 [the prepared installer](DEPLOYMENT.md#lan-firewall-setup).
 
 `bun run deploy tunnel` remains an optional administration path, exposing the
-mini PC's port 3100 as `http://127.0.0.1:13100` on the Mac. The host console
-retains loopback-only administration checks. Public LAN access does not weaken them.
+mini PC's port 3100 as `http://127.0.0.1:13100` on the Mac. The host console defaults to loopback-only administration. This demo server now
+explicitly permits its trusted LAN origin/subnet; see the configuration below.
 
 The backend root and `/health` identify `atlas-server`. It serves `/host`, public
 `/catalog`, `/maps/...`, `/api/...` and local administration endpoints. Consumer
@@ -74,9 +74,10 @@ Responses expose strong ETags, Content-Range, snapshot identity and operation me
 including on errors. Clients can therefore validate bytes and distinguish a changed
 snapshot from a transport failure. CORS is a browser policy, not authentication.
 
-Administration is not exposed by public CORS. Cross-origin admin requests are denied,
-and the existing loopback address/hostname and same-origin JSON mutation checks remain.
-Use the server's host console via the SSH tunnel. Deployment does not change firewall,
+Administration is not exposed by public CORS. Cross-origin admin requests are denied.
+Loopback works by default; optional LAN access requires both an exact origin and
+an actual socket peer in a configured subnet. Same-origin JSON is required for mutations.
+Forwarded headers never grant administration access. Deployment does not change firewall,
 TLS or authentication configuration, or publish Nostr announcements.
 
 ## Build and deployment
@@ -135,3 +136,18 @@ These measurements are individual functional observations, not benchmarks. The
 client default, catalog, map URLs and tool source all use the LAN origin; the SSH
 tunnel is only an optional path to the still-local-only administration console.
 The client build, TypeScript validation and installer shell syntax check passed.
+
+
+## Trusted LAN host console
+
+The HM90S sets `ATLAS_ADMIN_ORIGINS=http://192.168.0.179:3100` and
+`ATLAS_ADMIN_SUBNETS=192.168.0.0/24` in its persistent `shared/server.env`.
+This explicitly trusts clients on that LAN; it is not user authentication or a
+public-hosting access scheme. The firewall also restricts port 3100 to Ethernet
+and that subnet. The host console now works directly at
+`http://192.168.0.179:3100/host`. Missing permission produces an access message
+instead of leaving sections in a loading state.
+
+Unset both variables to restore local-only administration. Configure authenticated
+HTTPS before exposing administration beyond a trusted LAN. Public map consumers
+remain independent of administration permissions.

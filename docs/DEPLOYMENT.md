@@ -28,8 +28,8 @@ remains hosted on localhost so browser hashing, persistent caches and service
 workers have a secure context; data and optional computations run on the HM90S.
 
 For administration only, keep `bun run deploy tunnel` running and open
-**http://127.0.0.1:13100/host**. Public LAN access does not change the existing
-loopback-only admin restrictions. HTTPS is needed if the client website itself
+**http://127.0.0.1:13100/host**. The demo also explicitly enables the trusted LAN
+host console at **http://192.168.0.179:3100/host** using the settings below. HTTPS is needed if the client website itself
 is later hosted on a non-loopback LAN address.
 
 Flags accept `--name value` or `--name=value`; run `bun run deploy --help`.
@@ -259,3 +259,28 @@ See [the client verification record](SERVER-CLIENT.md#direct-lan-verification--2
 The running server release is `20261010T073750336Z-f520fc89760e-9a59f406`; this
 firewall/client configuration change required no server application redeployment.
 The SSH tunnel remains optional for the loopback-only host administration console.
+
+
+## Host console and source workers
+
+Persistent server settings in `/home/nixuser/atlas/shared/server.env`:
+
+```ini
+ATLAS_ADMIN_ORIGINS=http://192.168.0.179:3100
+ATLAS_ADMIN_SUBNETS=192.168.0.0/24
+ATLAS_SOURCE_SYSTEMD=1
+```
+
+The first two settings jointly enable trusted LAN administration. They do not
+trust proxy headers and do not grant cross-origin browser access. Both are needed;
+unset both for local-only administration. This grants administration to clients
+on the configured subnet, not individually authenticated users.
+
+Source downloads use separate transient user units `atlas-source-<id>.service`,
+with a bundled worker under shared data, a 1 GiB memory limit and lower CPU
+priority. They survive a map-server deployment/restart. A machine restart retains
+the partial file; use Resume download in the host console. The completed file is
+published after checking the provider MD5 and recording SHA-256. Downloads retain
+60 GiB free space. Source files and job/recipe records live in `shared/data/sources/`.
+Partial files are reused only with exact byte-range and source identity checks.
+See [Europe preparation](EUROPE-PREPARATION.md) for current compiler readiness.

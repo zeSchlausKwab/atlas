@@ -23,8 +23,9 @@ Port 3100 must be enabled with the [LAN firewall setup](docs/DEPLOYMENT.md#lan-f
 Change **Client composer → Primary map server**, use a
 `?server=https://maps.example/` link, or set `ATLAS_SERVER_URL` when building/running
 the client. Its catalog, map ranges and server operations all use that address.
-Administration retains its local-only restriction: `bun run deploy tunnel` exposes
-the host console at **http://127.0.0.1:13100/host** when needed.
+The configured demo host console is **http://192.168.0.179:3100/host**.
+Administration defaults to local-only on other servers; the demo explicitly trusts
+its LAN origin/subnet. `bun run deploy tunnel` remains available for local access.
 
 For a fully local setup, prerequisites are Bun, Rust/Cargo, `wasm-pack`, and the
 `wasm32-unknown-unknown` target:

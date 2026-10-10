@@ -1,3 +1,4 @@
+import { startSources } from "./host-sources";
 import { openClient } from "./client-link";
 import { startBuilder } from "./host-builder";
 import type { CatalogEntry } from "../../../packages/operations/src/registry";
@@ -80,5 +81,36 @@ function render(catalog: any) {
 el("refresh").onclick = () => void load();
 (document.getElementById("open-client") as HTMLAnchorElement).href =
   openClient();
-void load();
-void startBuilder();
+async function start() {
+  try {
+    const response = await fetch("/host-config.json");
+    if (!response.ok)
+      throw new Error(`Host configuration: HTTP ${response.status}`);
+    const config = await response.json();
+    el("access").textContent = config.administration.allowed
+      ? `${config.administration.mode} · ${location.host}`
+      : config.administration.message;
+    if (!config.administration.allowed)
+      throw new Error(config.administration.message);
+    await Promise.all([load(), startBuilder(), startSources()]);
+  } catch (error) {
+    el("access").textContent = String(error);
+    for (const id of [
+      "host-package",
+      "host-cvm",
+      "host-status",
+      "prepare-source",
+      "prepare-storage-free",
+      "prepare-message",
+    ])
+      document.getElementById(id)!.textContent =
+        "Administration unavailable. See the access message above.";
+    for (const input of document.querySelectorAll<
+      HTMLInputElement | HTMLButtonElement | HTMLSelectElement
+    >(
+      "#prepare input, #prepare select, #prepare button, #sources button, #sources select, #host-refresh",
+    ))
+      input.disabled = true;
+  }
+}
+void start();

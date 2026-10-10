@@ -1,3 +1,5 @@
+import { SourceCache } from "./source-cache";
+import { adminAccess, ADMIN_DENIED } from "./admin-access";
 import { Preparations } from "./preparations";
 import { HostedLibrary } from "./library";
 import { buildPlugins, loadPlugins } from "../../scripts/plugins";
@@ -41,6 +43,10 @@ const engine = new AtlasEngine(
 for (const p of plugins) engine.registry.register(p.plugin, p.implementation);
 const host = new OperationHost(engine);
 let cvm: Awaited<ReturnType<typeof startContextVM>>;
+const access = adminAccess(
+  process.env.ATLAS_ADMIN_ORIGINS,
+  process.env.ATLAS_ADMIN_SUBNETS,
+);
 const policy = await hostPolicy(
   host,
   process.env.ATLAS_HOST_POLICY
@@ -49,6 +55,7 @@ const policy = await hostPolicy(
   () => {
     void cvm?.sendToolListChanged().catch(console.error);
   },
+  access,
 );
 cvm = await startContextVM(host);
 const api = createApiHandler(engine, host);
@@ -56,6 +63,12 @@ const preparations = await Preparations.open(
   resolve(dataDir, "hosted"),
   mapPath,
   engine.reader.index.manifest,
+  access,
+);
+const sourceCache = new SourceCache(
+  resolve(dataDir, "sources"),
+  access,
+  process.env.ATLAS_SOURCE_SYSTEMD === "1",
 );
 const library = new HostedLibrary(preparations, (reader) => {
   const child = new AtlasEngine(reader, async () =>
@@ -94,6 +107,11 @@ const server = Bun.serve({
             status: 503,
             headers: { "Retry-After": "5", "Cache-Control": "no-store" },
           },
+        );
+      if (path.startsWith("/admin/sources"))
+        return sourceCache.handle(
+          request,
+          bunServer.requestIP(request)?.address,
         );
       if (path.startsWith("/admin/preparations"))
         return preparations.handle(
@@ -156,7 +174,16 @@ const server = Bun.serve({
         });
       if (path === "/host-config.json" && request.method === "GET")
         return Response.json(
-          { clientUrl },
+          {
+            clientUrl,
+            administration: {
+              allowed: access(request, bunServer.requestIP(request)?.address),
+              message: ADMIN_DENIED,
+              mode: process.env.ATLAS_ADMIN_ORIGINS
+                ? "Local and trusted LAN administration"
+                : "Local administration",
+            },
+          },
           { headers: { "Cache-Control": "no-store" } },
         );
       if (path === "/favicon.ico") return new Response(null, { status: 204 });
@@ -173,6 +200,7 @@ console.log(
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, async () => {
+    await sourceCache.close();
     await preparations.close();
     await library.close();
     await cvm?.close();

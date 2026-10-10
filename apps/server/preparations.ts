@@ -1,3 +1,4 @@
+import { adminAccess, ADMIN_DENIED, type AdminAccess } from "./admin-access";
 import { preparationSpace } from "../../packages/provisioning/src/capacity";
 import { readStorage } from "./storage";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
@@ -40,9 +41,15 @@ export class Preparations {
     readonly directory: string,
     readonly sourcePath: string,
     readonly source: Manifest,
+    private readonly access: AdminAccess,
   ) {}
-  static async open(directory: string, sourcePath: string, source: Manifest) {
-    const manager = new Preparations(directory, sourcePath, source);
+  static async open(
+    directory: string,
+    sourcePath: string,
+    source: Manifest,
+    access: AdminAccess = adminAccess(),
+  ) {
+    const manager = new Preparations(directory, sourcePath, source, access);
     await mkdir(directory, { recursive: true });
     for (const name of await readdir(directory)) {
       if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue;
@@ -261,11 +268,8 @@ export class Preparations {
           status,
           headers: { "Cache-Control": "no-store" },
         });
-    if (
-      !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress ?? "") ||
-      !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-    )
-      return json({ error: "Local administration only" }, 403);
+    if (!this.access(request, remoteAddress))
+      return json({ error: ADMIN_DENIED }, 403);
     if (request.method === "GET" && url.pathname === "/admin/preparations")
       return json({
         storage: await readStorage(this.directory).catch(() => ({

@@ -53,6 +53,14 @@ function spaceNeeded() {
   );
 }
 function renderStorage() {
+  if (europe()) {
+    el("storage-estimate").textContent =
+      "Europe workspace estimate pending the partitioned compiler. Source downloads have a separate disk check and preserve 60 GiB free.";
+    if (storage)
+      el("storage-free").textContent =
+        `${storageSize(storage.availableBytes)} available of ${storageSize(storage.totalBytes)}`;
+    return;
+  }
   const available = storage?.availableBytes;
   el("storage-meter").hidden = available === undefined;
   if (available !== undefined) {
@@ -82,7 +90,8 @@ function renderStorage() {
 let checking = false,
   submitting = false,
   planKey = "";
-const global = () => el<HTMLSelectElement>("data-source").value === "global";
+const global = () => el<HTMLSelectElement>("data-source").value !== "installed";
+const europe = () => el<HTMLSelectElement>("data-source").value === "europe";
 const scope = () => (global() ? globalScope : installedScope);
 const sourceArea = () => ({
   polygon: points,
@@ -136,11 +145,15 @@ function update() {
     !closed ||
     submitting ||
     !valid ||
-    (global() && !sourcePlan) ||
-    (storage !== undefined && spaceNeeded() > storage.availableBytes);
-  el("submit").textContent = global()
-    ? "Download, prepare & host ↗"
-    : "Prepare & host map ↗";
+    (global() && !europe() && !sourcePlan) ||
+    (!europe() &&
+      storage !== undefined &&
+      spaceNeeded() > storage.availableBytes);
+  el("submit").textContent = europe()
+    ? "Save Europe build recipe ↗"
+    : global()
+      ? "Download, prepare & host ↗"
+      : "Prepare & host map ↗";
   el("area").textContent = closed
     ? `${points.length} corners · area ready`
     : mode === "rect"
@@ -149,6 +162,8 @@ function update() {
         ? `${points.length} corners · click to add, then Finish polygon.`
         : "Choose Rectangle or Polygon to draw an area.";
   renderStorage();
+  for (const k of ["rect", "polygon", "view", "clear", "undo", "finish"])
+    if (europe()) el<HTMLButtonElement>(k).disabled = true;
   for (const k of ["rect", "polygon"])
     el(k).setAttribute("aria-pressed", String(mode === k));
 }
@@ -502,9 +517,10 @@ function configureSource() {
       a.featureKinds.includes(k as FeatureKind),
       false,
     );
-  el("global-controls").hidden = !global();
+  el("global-controls").hidden = !global() || europe();
+  el("compiler-note").hidden = !europe();
   el<HTMLInputElement>("source-budget").disabled = !global();
-  el<HTMLInputElement>("source-budget").required = global();
+  el<HTMLInputElement>("source-budget").required = global() && !europe();
   el("jump-controls").hidden = !global();
   el("fit").textContent = global() ? "Fit world" : "Fit source";
   const local = el<HTMLSelectElement>(
@@ -516,6 +532,70 @@ function configureSource() {
   sourcePlan = undefined;
   el("source-plan").textContent = "Draw an area to find its source.";
   clear();
+  for (const k of ["rect", "polygon", "view", "clear"])
+    el<HTMLButtonElement>(k).disabled = europe();
+}
+async function configureEurope() {
+  configureSource();
+  el("message").textContent = "Loading Europe coverage…";
+  try {
+    const response = await fetch("/admin/sources/europe");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    if (!europe()) return;
+    const [w, south, e, n] = data.bounds;
+    points = [
+      [w, south],
+      [e, south],
+      [e, n],
+      [w, n],
+    ];
+    closed = true;
+    mode = null;
+    el<HTMLInputElement>("name").value = "Europe · all capabilities";
+    el<HTMLInputElement>("min").value = "0";
+    el<HTMLInputElement>("max").value = "16";
+    el<HTMLInputElement>("budget").value = "131072";
+    el<HTMLInputElement>("source-budget").value = "102400";
+    el<HTMLSelectElement>("preset").value = "all";
+    for (const input of fields.values()) input.checked = !input.disabled;
+    if (data.recipe?.selection) {
+      const s = data.recipe.selection as PackageSelection;
+      el<HTMLInputElement>("name").value = s.name;
+      el<HTMLInputElement>("min").value = String(s.minZoom);
+      el<HTMLInputElement>("max").value = String(s.maxZoom);
+      el<HTMLInputElement>("budget").value = String(s.maxBytes / 1048576);
+      el<HTMLSelectElement>("padding").value = String(s.paddingCells);
+      for (const [key, input] of fields)
+        input.checked = key.startsWith("layer-")
+          ? s.layers.includes(key.slice(6) as MapLayer)
+          : key.startsWith("profile-")
+            ? s.profiles.includes(key.slice(8) as TransportMode)
+            : key.startsWith("feature-")
+              ? s.featureKinds.includes(key.slice(8) as FeatureKind)
+              : ((
+                  {
+                    places: s.placeNames,
+                    streets: s.streetNames,
+                    pois: s.pois,
+                    search: s.search,
+                    reverse: s.reverse,
+                    "query-peaks": s.peaks,
+                  } as Record<string, boolean>
+                )[key] ?? false);
+    }
+    el("source").textContent = "Europe · full provider extent";
+    el("source-note").textContent =
+      "The preview rectangle shows the extent of Geofabrik’s Europe extract. Exact coverage follows the source dataset, not every point inside the rectangle.";
+    el("message").textContent = data.recipe
+      ? "Loaded the saved Europe recipe. Edit capabilities below and save again."
+      : "Full Europe recipe: all supported capabilities, z0–16. Save the recipe; cache the planet source above.";
+    await switchPreview();
+    preview?.fitArea(data.bounds);
+  } catch (error) {
+    el("message").textContent = String(error);
+  }
+  update();
 }
 export async function startBuilder() {
   updateComposition();
@@ -597,6 +677,22 @@ export async function startBuilder() {
   };
   el<HTMLFormElement>("form").onsubmit = async (event) => {
     event.preventDefault();
+    if (europe()) {
+      submitting = true;
+      update();
+      try {
+        const recipe = await request("/admin/sources/europe-recipe", {
+          selection: selection(),
+        });
+        el("message").textContent = recipe.message;
+      } catch (error) {
+        el("message").textContent = String(error);
+      } finally {
+        submitting = false;
+        update();
+      }
+      return;
+    }
     if (global() && (!sourcePlan || planKey !== sourceKey())) return;
     submitting = true;
     update();
@@ -621,8 +717,20 @@ export async function startBuilder() {
     }
   };
   el("data-source").onchange = async () => {
-    configureSource();
-    await switchPreview();
+    if (europe()) await configureEurope();
+    else {
+      configureSource();
+      await switchPreview();
+    }
+  };
+  const europeButton = document.getElementById(
+    "source-europe",
+  ) as HTMLButtonElement;
+  europeButton.disabled = false;
+  europeButton.onclick = async () => {
+    el<HTMLSelectElement>("data-source").value = "europe";
+    await configureEurope();
+    document.getElementById("prepare")!.scrollIntoView({ behavior: "smooth" });
   };
   el("form").addEventListener("input", update);
   el("form").addEventListener("change", update);
@@ -699,8 +807,12 @@ export async function startBuilder() {
           !closed ||
           submitting ||
           !validBudget(outputBytes()) ||
-          (global() && (!sourcePlan || !validBudget(sourceBytes()))) ||
-          (storage !== undefined && spaceNeeded() > storage.availableBytes);
+          (global() &&
+            !europe() &&
+            (!sourcePlan || !validBudget(sourceBytes()))) ||
+          (!europe() &&
+            storage !== undefined &&
+            spaceNeeded() > storage.availableBytes);
     }
     setTimeout(() => void poll(), 1500);
   };
