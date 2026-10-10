@@ -137,6 +137,17 @@ export function parseRegions(value: any): PbfRegion[] {
     const url = allowedPbfUrl(f.properties.urls.pbf),
       box = geometryBounds(f.geometry),
       size = area(f);
+    // The live catalog includes regions whose coverage has not been supplied yet
+    // (empty MultiPolygons). They cannot cover a selection, but must not prevent
+    // usable regions elsewhere in the same catalog from being discovered.
+    if (
+      size === 0 &&
+      box[0] === Infinity &&
+      box[1] === Infinity &&
+      box[2] === -Infinity &&
+      box[3] === -Infinity
+    )
+      return [];
     if (!box.every(Number.isFinite) || !Number.isFinite(size) || size <= 0)
       throw new Error("Invalid catalog geometry");
     return [

@@ -132,6 +132,25 @@ test("covering sources account for holes, full bounds, and routing padding", () 
     validateImportSize({ ...p, bounds: [-120, -60, 120, 60] }, recipe),
   ).toThrow("500,000");
 });
+test("empty provider coverage placeholders do not block valid source regions", () => {
+  const empty = [[], [[]], [[[]]]].map((coordinates, i) => ({
+    ...region(`empty-${i}`, []),
+    geometry: { type: "MultiPolygon", coordinates },
+  }));
+  const regions = parseRegions({
+    ...catalog,
+    features: [...empty, ...catalog.features],
+  });
+  expect(regions.map((r) => r.id)).toEqual(["parent", "child"]);
+  expect(coveringRegion(regions, [0.3, 0.3, 0.4, 0.4]).id).toBe("child");
+  // A nonempty but degenerate polygon is still invalid, not a placeholder.
+  expect(() =>
+    parseRegions({
+      ...catalog,
+      features: [region("invalid", [ring(0, 0, 0, 0)])],
+    }),
+  ).toThrow("Invalid catalog geometry");
+});
 test("source planning pins a dated redirect, caps downloads and rejects unsafe redirects", async () => {
   const seen: string[] = [];
   let bytes = 100;

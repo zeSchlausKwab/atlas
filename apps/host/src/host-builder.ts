@@ -584,6 +584,10 @@ async function configureEurope() {
                   } as Record<string, boolean>
                 )[key] ?? false);
     }
+    for (const key of ["budget", "source-budget"])
+      el<HTMLInputElement>(key).dispatchEvent(
+        new Event("input", { bubbles: true }),
+      );
     el("source").textContent = "Europe · full provider extent";
     el("source-note").textContent =
       "The preview rectangle shows the extent of Geofabrik’s Europe extract. Exact coverage follows the source dataset, not every point inside the rectangle.";
