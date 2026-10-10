@@ -56,3 +56,29 @@ assemble the resulting packages in the normal client composer, and measure
 cross-partition client/server routing. PBF storage, temporary compiler workspace
 and final Atlas capacity must be measured separately; no full-Europe build has
 been claimed or silently started by this UI slice.
+
+## Live verification — 2026-10-10
+
+Deployed host revision `aba19df` to `192.168.0.179:3100`. The trusted LAN host
+console loads the four prepared maps, storage, and eight published operations.
+The live provider catalog includes empty coverage placeholders for some regions;
+these are skipped so valid Europe and regional coverage can still be selected.
+
+Saved `Europe · all capabilities` through the LAN UI and verified it reloads:
+z0–16, six display layers, all labels, three transport modes, search, nearest
+street, peaks, and all five extraction categories. The saved output budget is
+128 GiB, not a size estimate. The recipe is on the server at
+`/home/nixuser/atlas/shared/data/sources/europe-recipe.json`.
+
+Planet download job `59ec685fcfa1e7dfc515c1e7c4854c49` started successfully and
+continued while Atlas was deployed/restarted. Pause through the UI retained
+9,416,265,728 bytes; Resume appended to those bytes and passed 9.6 GB. It was
+still downloading when verified, not yet checksum-complete. Progress and
+Pause/Resume are in the Source library. The independent user service is
+`atlas-source-59ec685fcfa1e7dfc515c1e7c4854c49.service`.
+
+Verification: TypeScript check, 13 focused source/admin/import tests (108
+assertions), host build, and deployment smoke checks passed. The full Bun suite
+had passed before the initial source-library deployment. Real browser checks
+covered LAN access, all-capability recipe save/reload, and planet pause/resume.
+The existing `lemond.service` remained active. No full-Europe map was compiled.
