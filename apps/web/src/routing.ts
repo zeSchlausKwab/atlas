@@ -63,15 +63,17 @@ export class RouteControls {
     const places = reader.index.manifest.places;
     const composed = operations.composed;
     const covered = (point: Position) =>
-      operations.composition?.sources.some((s) => {
+      (operations.composition?.sources ?? [{ reader }]).some((s) => {
         const [w, south, e, n] = s.reader.index.manifest.bounds;
         return (
           point[0] >= w && point[0] <= e && point[1] >= south && point[1] <= n
         );
       });
-    const danube =
-      composed && covered([16.3696, 48.2027]) && covered([17.1128, 48.1452]);
     const vienna = reader.index.manifest.name === "Vienna Plus";
+    const danube =
+      (composed || !vienna) &&
+      covered([16.3696, 48.2027]) &&
+      covered([17.1128, 48.1452]);
     const a = danube
         ? { name: "Vienna", coordinates: [16.3696, 48.2027] as Position }
         : vienna
