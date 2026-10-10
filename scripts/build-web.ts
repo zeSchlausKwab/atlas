@@ -77,7 +77,7 @@ export async function buildBrowserApp(kind: "client" | "host") {
       JSON.stringify(
         {
           serverUrl: serverAddress(
-            process.env.ATLAS_SERVER_URL ?? "http://127.0.0.1:13100/",
+            process.env.ATLAS_SERVER_URL ?? "http://192.168.0.179:3100/",
           ),
         },
         null,

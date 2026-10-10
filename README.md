@@ -10,23 +10,21 @@ The map server and consumer are independent apps. The server owns map files,
 preparation jobs, the public API and its host console. The consumer is a static
 HTML/JS/WASM build: its browser reads the remote server directly, with no API proxy.
 
-For the deployed mini PC, keep the SSH tunnel open in one terminal, then start the
-client in another:
-
-```sh
-bun run deploy tunnel
-```
+For the deployed mini PC, start the independent client:
 
 ```sh
 bun install
 bun run dev
 ```
 
-Open **http://127.0.0.1:5173/** for the client and
-**http://127.0.0.1:13100/host** for server administration. The client defaults to
-that tunneled server. Change **Client composer → Primary map server**, use a
+Open **http://127.0.0.1:5173/**. The client defaults to the direct LAN server
+**http://192.168.0.179:3100/**; map viewing and remote tools need no SSH tunnel.
+Port 3100 must be enabled with the [LAN firewall setup](docs/DEPLOYMENT.md#lan-firewall-setup).
+Change **Client composer → Primary map server**, use a
 `?server=https://maps.example/` link, or set `ATLAS_SERVER_URL` when building/running
 the client. Its catalog, map ranges and server operations all use that address.
+Administration retains its local-only restriction: `bun run deploy tunnel` exposes
+the host console at **http://127.0.0.1:13100/host** when needed.
 
 For a fully local setup, prerequisites are Bun, Rust/Cargo, `wasm-pack`, and the
 `wasm32-unknown-unknown` target:

@@ -21,14 +21,16 @@ bun run deploy rollback
 bun run deploy tunnel
 ```
 
-Keep the tunnel command running and open **http://127.0.0.1:13100/host**.
 Start the separate client with `bun run dev` and open **http://127.0.0.1:5173/**.
-The server root now returns service metadata, not the consumer app.
-Port 13100 avoids the Mac development server on 3100.
-SSH forwards to the remote server, so the data and tools actually run on the HM90S.
-Localhost also supports the browser secure-context APIs used for hashing, persistent
-caches and service workers. Plain `http://192.168.0.179:3100` is not an equivalent
-browser environment. Direct LAN use needs trusted HTTPS for the full client demo.
+It connects directly to **http://192.168.0.179:3100/** after the LAN firewall setup
+below. The server root returns service metadata, not the consumer app. The client
+remains hosted on localhost so browser hashing, persistent caches and service
+workers have a secure context; data and optional computations run on the HM90S.
+
+For administration only, keep `bun run deploy tunnel` running and open
+**http://127.0.0.1:13100/host**. Public LAN access does not change the existing
+loopback-only admin restrictions. HTTPS is needed if the client website itself
+is later hosted on a non-loopback LAN address.
 
 Flags accept `--name value` or `--name=value`; run `bun run deploy --help`.
 `--host`, `--root`, `--port`, `--local-port` customize the target.
@@ -124,6 +126,38 @@ previous release cannot be resumed in place. Removed source files are also remov
 from the unused candidate; shared map data is outside this synchronization root. A resumed attempt keeps its original
 ID but records the current source revision and file checksums in its new manifest.
 
+## LAN firewall setup
+
+`deploy/lan.nix` allows inbound IPv4 TCP 3100 only on Ethernet interface `eno1`
+from `192.168.0.0/24`. It leaves SSH, the model service and existing administrative
+restrictions unchanged. It does not enable Wi-Fi or open the port globally.
+
+The prepared server directory is `/home/nixuser/atlas-lan-setup/`, containing the
+module, `enable-lan.sh` and the inspected configuration's SHA-256. Apply it once:
+
+```sh
+ssh -t nixuser@192.168.0.179 'sudo bash /home/nixuser/atlas-lan-setup/enable-lan.sh'
+```
+
+Enter the server's sudo password in that terminal. Passwordless SSH alone does not
+permit firewall changes. The installer refuses a changed configuration or conflicting
+module, keeps a backup under `/etc/nixos/atlas-lan-backup.*`, adds `./atlas-lan.nix`
+to imports and runs `nixos-rebuild switch`. On failure it restores the old files
+and attempts to reactivate the previous system. The module persists across reboots.
+The merged NixOS firewall configuration was evaluated before application and retains
+the existing LAN-only port 8080 rule.
+
+For a fresh setup, copy `deploy/lan.nix` and `deploy/enable-lan.sh` into that directory
+and record the current `sha256sum /etc/nixos/configuration.nix` (hash only) as
+`configuration.sha256`, after inspecting the live configuration. The script supports
+the current server's single-line `imports` declaration and refuses other layouts.
+
+After activation, `curl http://192.168.0.179:3100/health` from the Mac should report
+`atlas-server`. The client's built `/client-config.json` defaults to that direct
+address. Existing `?server=...` overrides and saved composition links retain their
+explicit origins; use **Client composer → Primary map server → Connect to server**
+to replace an old tunneled composition.
+
 ## One-time NixOS integration
 
 The deploy command needs no sudo. It starts/enables a user unit immediately.
@@ -131,12 +165,15 @@ Without lingering, automatic startup depends on the user's login session; the
 machine currently auto-logs into GNOME, but this should not be the long-term dependency.
 
 `deploy/nixos.nix` is a small optional module that enables lingering for `nixuser`
-and allows port 3100 from `192.168.0.0/24` only. Install a fixed copy under `/etc/nixos`
+and imports `lan.nix` to allow port 3100 from `192.168.0.0/24` on `eno1` only.
+Choose this combined module instead of also importing `atlas-lan.nix`; do not
+install the same firewall rule twice. Install a fixed copy under `/etc/nixos`
 and add it to the existing imports, preserving the current model-server settings:
 
 ```sh
 ssh -t nixuser@192.168.0.179
 sudo cp /home/nixuser/atlas/current/deploy/nixos.nix /etc/nixos/atlas.nix
+sudo cp /home/nixuser/atlas/current/deploy/lan.nix /etc/nixos/lan.nix
 sudoedit /etc/nixos/configuration.nix
 # Add ./atlas.nix to imports, alongside hardware-configuration.nix and cleanup.nix.
 sudo nixos-rebuild test
@@ -154,7 +191,7 @@ Resource defaults are documented in [the demo roadmap](DEMO-ROADMAP.md).
 Sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
 [Bun locked installs](https://bun.com/docs/pm/cli/install).
 
-## Live validation record — 2026-10-10
+## Initial deployment validation — 2026-10-10
 
 Local verification passed: TypeScript, 117 Bun tests and 42 native Rust tests,
 plus both portable WASM builds and the frontend build. Deployment hardening also
@@ -168,7 +205,7 @@ of the second both passed. All five map files retained their inode, size and mti
 A deliberately invalid map was rejected by candidate startup before activation;
 the healthy release and previous-release pointer stayed unchanged.
 
-Current application release: `20261010T071011743Z-1f66b300a009-43b82f22`
+Application release at this initial check: `20261010T071011743Z-1f66b300a009-43b82f22`
 (source revision `1f66b300a009`). First/previous release:
 `20261010T064147309Z-a495dbcf1785-38a9b710` (source revision `e00a6f38c7b1`).
 The failed disposable-map candidate is retained for inspection at
@@ -203,9 +240,22 @@ entry was removed, normal discovery returned the Ethernet MAC, and deployment
 and subsequent checks completed reliably. No persistent Mac override remains.
 See the kernel's [ARP behavior documentation](https://kernel.org/doc/html/latest/networking/ip-sysctl.html).
 
-The optional NixOS module was evaluated against the earlier live configuration without
-applying it; it preserved the model-server firewall rule. Lingering is still off,
-and port 3100 remains closed to direct LAN access. The live demo is available via
-`bun run deploy tunnel` at `http://127.0.0.1:13100/host`.
-The separate client now runs at `http://127.0.0.1:5173/`. The one-time
-NixOS steps above remain optional and require interactive sudo.
+At this initial check, the optional NixOS module had only been evaluated and
+port 3100 was closed to the LAN. The later activation below supersedes that state.
+Lingering remains off; its optional setup is separate from the firewall change.
+
+### Direct LAN activation — 2026-10-10
+
+The user applied the prepared installer with interactive sudo. The live configuration
+now imports `/etc/nixos/atlas-lan.nix`, limiting TCP 3100 to `192.168.0.0/24` on
+`eno1`. Direct requests from the Mac returned a healthy `atlas-server` and a valid
+206 response for a 32-byte map range, with CORS and package identity headers.
+Atlas and the existing `lemond.service` both remained active.
+
+The independent client at `http://127.0.0.1:5173/` was rebuilt with the LAN default
+and its composition reconnected to `http://192.168.0.179:3100/`. All four regional
+maps rendered, and a server search completed over this direct connection.
+See [the client verification record](SERVER-CLIENT.md#direct-lan-verification--2026-10-10).
+The running server release is `20261010T073750336Z-f520fc89760e-9a59f406`; this
+firewall/client configuration change required no server application redeployment.
+The SSH tunnel remains optional for the loopback-only host administration console.

@@ -25,10 +25,14 @@ flowchart LR
   Server --> Files["Persistent .atlas library"]
 ```
 
-During LAN development, `bun run deploy tunnel` exposes the mini PC's port 3100
-as `http://127.0.0.1:13100` on the Mac. The browser requests that origin directly
-from its separately served client at port 5173. SSH transports those requests;
-there is no client-app API proxy or duplicate local map server.
+The client at `http://127.0.0.1:5173` defaults to the mini PC directly at
+`http://192.168.0.179:3100`. Public map delivery and operations use Ethernet; no SSH
+tunnel or client-app API proxy is involved. Enable the LAN-only firewall rule using
+[the prepared installer](DEPLOYMENT.md#lan-firewall-setup).
+
+`bun run deploy tunnel` remains an optional administration path, exposing the
+mini PC's port 3100 as `http://127.0.0.1:13100` on the Mac. The host console
+retains loopback-only administration checks. Public LAN access does not weaken them.
 
 The backend root and `/health` identify `atlas-server`. It serves `/host`, public
 `/catalog`, `/maps/...`, `/api/...` and local administration endpoints. Consumer
@@ -40,7 +44,7 @@ for the backend catalog, API, map and administration paths.
 
 | Setting | Where | Default / use |
 | --- | --- | --- |
-| `ATLAS_SERVER_URL` | Client build or static server | `http://127.0.0.1:13100/`; written to or served as `/client-config.json` |
+| `ATLAS_SERVER_URL` | Client build or static server | `http://192.168.0.179:3100/`; written to or served as `/client-config.json` |
 | `?server=...` | Consumer URL | Overrides configuration; Composer's connection form writes this |
 | `ATLAS_CLIENT_URL` | Map server | `http://127.0.0.1:5173/`; destination for host-library links |
 | `ATLAS_CORS_ORIGINS` | Map server | `*` for public map consumers; optional comma-separated exact HTTP(S) origins |
@@ -91,7 +95,7 @@ fixture. It checks the app boundary, range/ETag round trips, cross-origin operat
 preflight and result identity, separate client/server data reads, admin isolation,
 restricted CORS origins and correct links between the two applications.
 
-## Live verification — 2026-10-10
+## Initial split verification — 2026-10-10
 
 The split was deployed to the HM90S with all existing map files retained. Its
 systemd service runs the backend on port 3100, reached from the Mac through 13100.
@@ -112,3 +116,22 @@ Browser checks against the actual remote server confirmed:
 These are functional checks and individual observations, not a performance benchmark.
 TypeScript validation and all 122 Bun tests passed, including five new split-boundary
 integration tests. Deployment's native Linux build and candidate smoke checks passed.
+
+
+## Direct LAN verification — 2026-10-10
+
+After the LAN-only firewall module was applied, the client was rebuilt and its
+saved composition reconnected directly to `http://192.168.0.179:3100/`.
+
+- The direct health endpoint and a 32-byte HTTP range returned 200 and 206
+  respectively, including the expected CORS and package identity headers.
+- The browser discovered five maps and rendered the four selected regional maps:
+  23 of 23 visible tiles ready, 4.51 MB read, WASM renderer active.
+- A server search for Stephansplatz in Vienna & Lower Austria returned 15 matches
+  (eight displayed), reporting 1,099 ms and 1.7 KB returned.
+- The successful browser session reported no console errors.
+
+These measurements are individual functional observations, not benchmarks. The
+client default, catalog, map URLs and tool source all use the LAN origin; the SSH
+tunnel is only an optional path to the still-local-only administration console.
+The client build, TypeScript validation and installer shell syntax check passed.
