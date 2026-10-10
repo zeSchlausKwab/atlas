@@ -21,8 +21,10 @@ bun run deploy rollback
 bun run deploy tunnel
 ```
 
-Keep the tunnel command running and open **http://127.0.0.1:13100/** or
-**http://127.0.0.1:13100/host**. Port 13100 avoids the Mac development server on 3100.
+Keep the tunnel command running and open **http://127.0.0.1:13100/host**.
+Start the separate client with `bun run dev` and open **http://127.0.0.1:5173/**.
+The server root now returns service metadata, not the consumer app.
+Port 13100 avoids the Mac development server on 3100.
 SSH forwards to the remote server, so the data and tools actually run on the HM90S.
 Localhost also supports the browser secure-context APIs used for hashing, persistent
 caches and service workers. Plain `http://192.168.0.179:3100` is not an equivalent
@@ -35,8 +37,9 @@ Flags accept `--name value` or `--name=value`; run `bun run deploy --help`.
 
 ## What is deployed
 
-The current working tree, including uncommitted tracked changes and non-ignored
-new files. Git commit and dirty status are recorded, and every staged file receives
+The server portion of the current working tree, including uncommitted tracked
+changes and non-ignored new files. `apps/web/` is excluded; the consumer is built
+and hosted independently. `apps/host/`, shared libraries and server code are included. Git commit and dirty status are recorded, and every staged file receives
 a SHA-256 checksum verified after upload. No Git remote/push is needed. A local
 snapshot is taken after checks/builds; avoid editing while it is being staged.
 
@@ -46,8 +49,9 @@ local agent/credential directories, `node_modules`, native `target`, `dist` and
 importers are compiled on the target; Mac executables are never transferred.
 Code should never contain credentials; the exclusion list is not a secret scanner.
 
-Default checks: TypeScript, Bun tests, Rust tests, WASM build and web build.
-`--skip-checks` skips the test/typecheck stage only; both asset builds still run.
+Default checks: TypeScript, Bun tests, Rust tests, WASM build and host-console build.
+`--skip-checks` skips the test/typecheck stage only; WASM and host assets still build.
+The target builds `dist/host` before smoke checks. Server startup never builds the client.
 Use it only after those checks have already passed for the same changes.
 
 `--map` explicitly uploads a selected Atlas base map into content-addressed storage.
@@ -93,8 +97,10 @@ locks also protect the upload receiver and activation if an SSH connection dies.
 is checksum-verified, dependencies installed and native tools built in a resource
 limited scope. Native binaries stay inside each release so building a candidate
 cannot replace tools used by a live preparation or rollback. It starts on an ephemeral loopback port with separate temporary
-host state. Checks cover health/release identity, frontend/WASM assets, the catalog,
-an actual 206 byte-range response and native preparation tool availability.
+host state. Checks cover health/release identity, host-console/WASM assets, the catalog,
+an actual 206 byte-range response, public CORS preflight and native preparation tool
+availability. They also confirm that consumer assets are absent from the server.
+Smoke checks retain support for rolling back to earlier combined releases.
 
 Before switching, a short maintenance marker blocks new administrative writes.
 If a preparation is running/cancelling, deployment refuses to restart it. The
@@ -200,5 +206,6 @@ See the kernel's [ARP behavior documentation](https://kernel.org/doc/html/latest
 The optional NixOS module was evaluated against the earlier live configuration without
 applying it; it preserved the model-server firewall rule. Lingering is still off,
 and port 3100 remains closed to direct LAN access. The live demo is available via
-`bun run deploy tunnel` at `http://127.0.0.1:13100/` and `/host`. The one-time
+`bun run deploy tunnel` at `http://127.0.0.1:13100/host`.
+The separate client now runs at `http://127.0.0.1:5173/`. The one-time
 NixOS steps above remain optional and require interactive sudo.

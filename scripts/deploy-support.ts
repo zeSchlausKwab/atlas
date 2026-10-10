@@ -146,6 +146,7 @@ export function deployablePath(path: string) {
   const parts = path.split("/");
   return (
     !isAbsolute(path) &&
+    !path.startsWith("apps/web/") &&
     !parts.some((p) => p === ".." || !p) &&
     !parts.some((p) =>
       [
@@ -169,7 +170,7 @@ export function deployablePath(path: string) {
 export function managedUnit(root: string) {
   return `# Managed by Atlas: ${root}
 [Unit]
-Description=Atlas map demo
+Description=Atlas map server
 After=network-online.target
 
 [Service]

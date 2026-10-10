@@ -1,3 +1,4 @@
+import { clientConnection } from "./connection";
 import { createComposer, type ClientComposer } from "./client-composer";
 import {
   CompositionMap,
@@ -15,6 +16,12 @@ import { setupTabs } from "./tabs";
 import { OperationSession, executionText, type Capability } from "./operations";
 import { ExtractControls } from "./extract";
 setupTabs();
+const connection = await clientConnection().catch((error) => {
+  const element = document.getElementById("error")!;
+  element.textContent = String(error);
+  element.hidden = false;
+  throw error;
+});
 let operations: OperationSession | undefined;
 let extractor: ExtractControls | undefined;
 import {
@@ -539,6 +546,7 @@ async function openComposition() {
     setLabels();
     next.setGrid(el<HTMLInputElement>("tile-grid").checked);
     const control = await createComposer(next, {
+      catalog: connection.catalog,
       store: blockStore,
       signal: abort.signal,
       telemetry,
@@ -679,7 +687,7 @@ el("reopen-map").onclick = async () => {
   else
     await open(
       saved.source instanceof HttpSource
-        ? new HttpSource(saved.source.url)
+        ? new HttpSource(saved.source.url, saved.source.apiUrl)
         : saved.source,
     );
   if (map && saved.center && saved.zoom !== undefined) {
@@ -829,12 +837,16 @@ el<HTMLInputElement>("file-input").onchange = async (event) => {
   }
 };
 const hostedMap = new URLSearchParams(location.search).get("map");
-if (hostedMap)
+if (connection.source)
+  void open(new HttpSource(connection.source, connection.api));
+else if (hostedMap)
   void open(
     new HttpSource(
-      /^[a-f0-9-]{36}$/.test(hostedMap)
-        ? `/maps/${hostedMap}.atlas`
-        : "/maps/demo.atlas",
+      connection.endpoint(
+        /^[a-f0-9-]{36}$/.test(hostedMap)
+          ? `maps/${hostedMap}.atlas`
+          : "maps/demo.atlas",
+      ),
     ),
   );
 else void openComposition();

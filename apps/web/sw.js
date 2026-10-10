@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v22";
+const CACHE = "atlas-shell-v23";
 let generation = 0;
 let paused = false;
 const writes = new Set();
@@ -53,6 +53,7 @@ self.addEventListener("message", (event) => {
 const SHELL = [
   "/",
   "/styles.css",
+  "/client-config.json",
   "/main.js",
   "/offline-worker.js",
   "/routing-worker.js",

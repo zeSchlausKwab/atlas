@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch apps/server/index.ts",
+    "dev": "bun run build:client && bun --watch apps/web/server.ts",
     "start": "bun apps/server/index.ts",
     "build:wasm": "wasm-pack build crates/renderer --target web --out-dir ../../packages/renderer/pkg --release && wasm-pack build crates/routing-wasm --target web --out-dir ../../packages/routing/pkg --release",
     "build:web": "bun scripts/build-web.ts",
@@ -20,7 +20,12 @@
     "demo:contextvm": "bun scripts/contextvm-demo.ts",
     "data:danube": "bun scripts/danube-composition.ts",
     "verify:composition": "bun scripts/verify-composition.ts",
-    "deploy": "bun scripts/deploy.ts"
+    "deploy": "bun scripts/deploy.ts",
+    "server": "bun run build:host && bun apps/server/index.ts",
+    "dev:server": "bun run build:host && bun --watch apps/server/index.ts",
+    "client": "bun apps/web/server.ts",
+    "build:client": "bun scripts/build-web.ts client",
+    "build:host": "bun scripts/build-web.ts host"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

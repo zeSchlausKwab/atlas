@@ -78,6 +78,7 @@ async function getHealth(url = `http://127.0.0.1:${port}`) {
   if (!r.ok) throw new Error(`Health returned ${r.status}`);
   return (await r.json()) as {
     ok: boolean;
+    service?: string;
     release: string | null;
     name: string;
     bytes: number;
@@ -134,7 +135,9 @@ async function smoke(target: string, settings: Settings, id: string) {
           const { done, value: bytes } = await stdout.read();
           if (done) break;
           output = (output + new TextDecoder().decode(bytes)).slice(-8000);
-          const match = output.match(/ATLAS lab → (http:\/\/127\.0\.0\.1:\d+)/);
+          const match = output.match(
+            /ATLAS (?:lab|server) → (http:\/\/127\.0\.0\.1:\d+)/,
+          );
           if (match) return match[1]!;
         }
       } finally {
@@ -154,14 +157,17 @@ async function smoke(target: string, settings: Settings, id: string) {
     const health = await getHealth(url);
     if (!health.ok || health.release !== id)
       throw new Error("Candidate release mismatch");
+    const standalone = health.service === "atlas-server";
     for (const path of [
       "/",
       "/host",
-      "/main.js",
       "/host.js",
+      "/styles.css",
       "/catalog",
       "/wasm/atlas_renderer_bg.wasm",
-      "/wasm/atlas_routing_wasm_bg.wasm",
+      ...(standalone
+        ? ["/host-config.json", "/maplibre.css"]
+        : ["/main.js", "/wasm/atlas_routing_wasm_bg.wasm"]),
     ]) {
       const response = await fetch(url + path, {
         signal: AbortSignal.timeout(5000),
@@ -169,6 +175,31 @@ async function smoke(target: string, settings: Settings, id: string) {
       if (!response.ok)
         throw new Error(`Candidate ${path}: ${response.status}`);
       await response.arrayBuffer();
+    }
+    if (standalone) {
+      for (const path of [
+        "/main.js",
+        "/routing-worker.js",
+        "/sw.js",
+        "/compose",
+      ]) {
+        const response = await fetch(url + path);
+        if (response.status !== 404)
+          throw new Error(`Server leaked consumer assets at ${path}`);
+      }
+      const preflight = await fetch(url + "/api/peak", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://127.0.0.1:5173",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "content-type",
+        },
+      });
+      if (
+        preflight.status !== 204 ||
+        !preflight.headers.get("Access-Control-Allow-Origin")
+      )
+        throw new Error("Public API cross-origin preflight failed");
     }
     const range = await fetch(url + "/maps/demo.atlas", {
       headers: { Range: "bytes=0-31" },
@@ -403,12 +434,19 @@ async function main() {
     release,
     env,
   );
+  await run(
+    [join(release, ".runtime/bin/bun"), "scripts/build-web.ts", "host"],
+    release,
+    env,
+  );
   // Native binaries belong to the release, too. A shared target directory lets
   // a candidate overwrite binaries used by a live preparation or a rollback.
   const target = join(release, "target");
   const resolvedTarget = await realpath(target).catch(() => undefined);
   if (resolvedTarget && resolvedTarget !== target)
-    throw new Error("Release target must not be a shared symlink; use a new release");
+    throw new Error(
+      "Release target must not be a shared symlink; use a new release",
+    );
   await mkdir(target, { recursive: true });
   await run(
     [

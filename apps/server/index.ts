@@ -12,6 +12,9 @@ import { AtlasEngine } from "../../packages/operations/src/index";
 import { createApiHandler } from "./api";
 import { servePackage } from "./ranges";
 import { PackageSource } from "./package-source";
+import { staticFiles } from "../shared/static";
+import { serverAddress } from "../shared/urls";
+import { corsPolicy, publicCors } from "./cors";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const dataDir = resolve(root, process.env.ATLAS_DATA_DIR ?? "data");
 const mapPath = process.env.ATLAS_FILE
@@ -26,26 +29,6 @@ const snapshot = await PackageSource.open(mapPath);
 const etag = snapshot.etag;
 const pluginAssets = await buildPlugins(root);
 const plugins = await loadPlugins(root, pluginAssets);
-const installed = pluginAssets.map((asset, i) => ({
-  ...asset,
-  descriptor: plugins[i]!.plugin.descriptor,
-}));
-const built = await Bun.build({
-  define: { ATLAS_PLUGIN_ASSETS: JSON.stringify(installed) },
-  entrypoints: [
-    resolve(root, "apps/web/src/main.ts"),
-    resolve(root, "apps/web/src/plugin-worker.ts"),
-    resolve(root, "apps/web/src/host.ts"),
-    resolve(root, "apps/web/src/compose.ts"),
-    resolve(root, "apps/web/src/offline-worker.ts"),
-    resolve(root, "apps/web/src/routing-worker.ts"),
-  ],
-  outdir: resolve(root, "dist"),
-  target: "browser",
-  minify: false,
-  sourcemap: "linked",
-});
-if (!built.success) throw new AggregateError(built.logs, "Web build failed");
 const engine = new AtlasEngine(
   await new AtlasReader(snapshot).open(),
   async () =>
@@ -86,135 +69,106 @@ const library = new HostedLibrary(preparations, (reader) => {
   return child;
 });
 
-const routes = new Map([
-  [
-    "/maplibre.css",
-    ["node_modules/maplibre-gl/dist/maplibre-gl.css", "text/css"],
-  ],
-  [
-    "/maplibre/maplibre-gl-worker.mjs",
-    ["node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs", "text/javascript"],
-  ],
-  [
-    "/maplibre/maplibre-gl-shared.mjs",
-    ["node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs", "text/javascript"],
-  ],
-  ["/compose", ["apps/web/compose.html", "text/html; charset=utf-8"]],
-  ["/compose.js", ["dist/compose.js", "text/javascript; charset=utf-8"]],
-  ["/host", ["apps/web/host.html", "text/html; charset=utf-8"]],
-  ["/host.js", ["dist/host.js", "text/javascript; charset=utf-8"]],
-  [
-    "/plugin-worker.js",
-    ["dist/plugin-worker.js", "text/javascript; charset=utf-8"],
-  ],
-  ...pluginAssets.map(
-    (p) =>
-      [p.url, [`dist${p.url}`, "text/javascript; charset=utf-8"]] as [
-        string,
-        string[],
-      ],
-  ),
-  [
-    "/wasm/atlas_renderer_bg.wasm",
-    ["packages/renderer/pkg/atlas_renderer_bg.wasm", "application/wasm"],
-  ],
-  [
-    "/routing-worker.js",
-    ["dist/routing-worker.js", "text/javascript; charset=utf-8"],
-  ],
-  ["/sw.js", ["apps/web/sw.js", "text/javascript; charset=utf-8"]],
-  [
-    "/offline-worker.js",
-    ["dist/offline-worker.js", "text/javascript; charset=utf-8"],
-  ],
-  ["/", ["apps/web/index.html", "text/html; charset=utf-8"]],
-  ["/styles.css", ["apps/web/styles.css", "text/css; charset=utf-8"]],
-  ["/main.js", ["dist/main.js", "text/javascript; charset=utf-8"]],
-  ["/main.js.map", ["dist/main.js.map", "application/json"]],
-  [
-    "/wasm/atlas_routing_wasm_bg.wasm",
-    ["packages/routing/pkg/atlas_routing_wasm_bg.wasm", "application/wasm"],
-  ],
-]);
+const hostAssets = staticFiles(resolve(root, "dist/host"));
+if (!(await Bun.file(resolve(root, "dist/host/index.html")).exists()))
+  throw new Error("Build the host console first: bun run build:host");
+const clientUrl = serverAddress(
+  process.env.ATLAS_CLIENT_URL ?? "http://127.0.0.1:5173/",
+);
+const origins = corsPolicy(process.env.ATLAS_CORS_ORIGINS ?? "*");
 const server = Bun.serve({
   hostname: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3100),
   maxRequestBodySize: 16384,
   async fetch(request, bunServer) {
-    const path = new URL(request.url).pathname;
-    if (
-      path.startsWith("/admin/") &&
-      request.method !== "GET" &&
-      (await Bun.file(resolve(dataDir, "deploy-maintenance")).exists())
-    )
-      return Response.json(
-        { error: "Deployment in progress. Try again shortly." },
-        {
-          status: 503,
-          headers: { "Retry-After": "5", "Cache-Control": "no-store" },
-        },
-      );
-    if (path.startsWith("/admin/preparations"))
-      return preparations.handle(
-        request,
-        bunServer.requestIP(request)?.address,
-      );
-    if (path === "/catalog" && request.method === "GET")
-      return Response.json(
-        {
-          maps: [
-            {
-              id: "demo",
-              url: "/maps/demo.atlas",
-              api: "/api",
-              bytes: snapshot.size,
-              manifest: engine.reader.index.manifest,
-            },
-            ...preparations.catalog(),
-          ],
-        },
-        {
-          headers: {
-            "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*",
+    return publicCors(request, origins, async () => {
+      const path = new URL(request.url).pathname;
+      if (
+        path.startsWith("/admin/") &&
+        request.method !== "GET" &&
+        (await Bun.file(resolve(dataDir, "deploy-maintenance")).exists())
+      )
+        return Response.json(
+          { error: "Deployment in progress. Try again shortly." },
+          {
+            status: 503,
+            headers: { "Retry-After": "5", "Cache-Control": "no-store" },
           },
-        },
-      );
-    const hosted = await library.handle(request);
-    if (hosted) return hosted;
-    if (path === "/admin/operations")
-      return policy(request, bunServer.requestIP(request)?.address);
-    if (path.startsWith("/api/") || path.startsWith("/maps/demo/api/"))
-      return api(request);
-    if (path === "/maps/demo.atlas") {
-      try {
-        await snapshot.assertUnchanged();
-        return servePackage(request, snapshot, etag);
-      } catch (error) {
-        return new Response(String(error), { status: 503 });
+        );
+      if (path.startsWith("/admin/preparations"))
+        return preparations.handle(
+          request,
+          bunServer.requestIP(request)?.address,
+        );
+      if (path === "/catalog" && request.method === "GET")
+        return Response.json(
+          {
+            maps: [
+              {
+                id: "demo",
+                url: "/maps/demo.atlas",
+                api: "/api",
+                bytes: snapshot.size,
+                manifest: engine.reader.index.manifest,
+              },
+              ...preparations.catalog(),
+            ],
+          },
+          {
+            headers: {
+              "Cache-Control": "no-store",
+              "Access-Control-Allow-Origin": "*",
+            },
+          },
+        );
+      const hosted = await library.handle(request);
+      if (hosted) return hosted;
+      if (path === "/admin/operations")
+        return policy(request, bunServer.requestIP(request)?.address);
+      if (path.startsWith("/api/") || path.startsWith("/maps/demo/api/"))
+        return api(request);
+      if (path === "/maps/demo.atlas") {
+        try {
+          await snapshot.assertUnchanged();
+          return servePackage(request, snapshot, etag);
+        } catch (error) {
+          return new Response(String(error), { status: 503 });
+        }
       }
-    }
-    if (path === "/health")
-      return Response.json({
-        ok: true,
-        release: process.env.ATLAS_RELEASE ?? null,
-        bytes: snapshot.size,
-        etag,
-        name: engine.reader.index.manifest.name,
-        contextvm: !!cvm,
-      });
-    if (path === "/favicon.ico") return new Response(null, { status: 204 });
-    const asset = routes.get(path);
-    if (asset && ["GET", "HEAD"].includes(request.method))
-      return new Response(
-        request.method === "HEAD" ? null : Bun.file(resolve(root, asset[0]!)),
-        { headers: { "Content-Type": asset[1]!, "Cache-Control": "no-store" } },
+      if (path === "/health")
+        return Response.json({
+          ok: true,
+          service: "atlas-server",
+          release: process.env.ATLAS_RELEASE ?? null,
+          bytes: snapshot.size,
+          etag,
+          name: engine.reader.index.manifest.name,
+          contextvm: !!cvm,
+        });
+      if (path === "/" && request.method === "GET")
+        return Response.json({
+          service: "atlas-server",
+          version: 1,
+          catalog: "/catalog",
+          hostConsole: "/host",
+          clientUrl,
+          health: "/health",
+        });
+      if (path === "/host-config.json" && request.method === "GET")
+        return Response.json(
+          { clientUrl },
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      if (path === "/favicon.ico") return new Response(null, { status: 204 });
+      return (
+        (await hostAssets(request, path === "/host" ? "/index.html" : path)) ??
+        new Response("Not found", { status: 404 })
       );
-    return new Response("Not found", { status: 404 });
+    });
   },
 });
 console.log(
-  `ATLAS lab → ${server.url}\nPackage: ${mapPath} (${(snapshot.size / 1024 / 1024).toFixed(2)} MiB)\nServing a pinned file descriptor; restart to load a regenerated package.`,
+  `ATLAS server → ${server.url}\nPackage: ${mapPath} (${(snapshot.size / 1024 / 1024).toFixed(2)} MiB)\nServing a pinned file descriptor; restart to load a regenerated package.`,
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)

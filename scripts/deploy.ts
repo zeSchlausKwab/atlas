@@ -77,7 +77,7 @@ Examples:
   bun run deploy --dry-run --map=data/vienna-plus.atlas --with-library
   bun run deploy --map data/vienna-plus.atlas --with-library
   bun run deploy                    # code update; keeps existing server data
-  bun run deploy tunnel             # keep open; visit http://127.0.0.1:13100
+  bun run deploy tunnel             # keep open; server console at http://127.0.0.1:13100/host
   bun run deploy status
   bun run deploy rollback           # previous code release; data stays in place
 
@@ -181,7 +181,7 @@ Uses a user service. No sudo, firewall changes or public announcements.
     await run(["cargo", "test", "--workspace", "--locked"]);
   }
   await run(["bun", "run", "build:wasm"]);
-  await run(["bun", "run", "build:web"]);
+  await run(["bun", "run", "build:host"]);
   const stage = await mkdtemp(join(tmpdir(), "atlas-deploy-"));
   const revision = await run(["git", "rev-parse", "--short=12", "HEAD"], true);
   const id =

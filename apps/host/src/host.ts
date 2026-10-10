@@ -1,3 +1,4 @@
+import { openClient } from "./client-link";
 import { startBuilder } from "./host-builder";
 import type { CatalogEntry } from "../../../packages/operations/src/registry";
 const el = (id: string) => document.getElementById(`host-${id}`)!;
@@ -77,6 +78,7 @@ function render(catalog: any) {
   }
 }
 el("refresh").onclick = () => void load();
+(document.getElementById("open-client") as HTMLAnchorElement).href =
+  openClient();
 void load();
-
 void startBuilder();

@@ -6,24 +6,50 @@ This is a working prototype, not a finalized format or a MapLibre compatibility 
 
 ## Run it
 
-Prerequisites: Bun, Rust/Cargo, `wasm-pack`, and the `wasm32-unknown-unknown` Rust target.
+The map server and consumer are independent apps. The server owns map files,
+preparation jobs, the public API and its host console. The consumer is a static
+HTML/JS/WASM build: its browser reads the remote server directly, with no API proxy.
+
+For the deployed mini PC, keep the SSH tunnel open in one terminal, then start the
+client in another:
+
+```sh
+bun run deploy tunnel
+```
+
+```sh
+bun install
+bun run dev
+```
+
+Open **http://127.0.0.1:5173/** for the client and
+**http://127.0.0.1:13100/host** for server administration. The client defaults to
+that tunneled server. Change **Client composer → Primary map server**, use a
+`?server=https://maps.example/` link, or set `ATLAS_SERVER_URL` when building/running
+the client. Its catalog, map ranges and server operations all use that address.
+
+For a fully local setup, prerequisites are Bun, Rust/Cargo, `wasm-pack`, and the
+`wasm32-unknown-unknown` target:
 
 ```sh
 bun install
 rustup target add wasm32-unknown-unknown
 bun run setup
-bun run dev
+bun run server                     # server + host console on 3100
+# In another terminal:
+ATLAS_SERVER_URL=http://127.0.0.1:3100 bun run dev
 ```
 
-Open **http://127.0.0.1:3100**. `setup` downloads a dated ~3.3 MiB Liechtenstein PBF, builds a native Rust importer, generates the package, and builds the WASM and web artifacts. First compilation downloads Cargo dependencies and may build wasm-bindgen tooling. Nothing is published externally.
+`setup` downloads a dated ~3.3 MiB Liechtenstein PBF and builds the package and WASM.
+`dev` builds the client and serves it on 5173; after frontend edits run
+`bun run build:client` and refresh. `bun run dev:server` watches server code.
+Rust changes require `bun run build:wasm` followed by the relevant browser build.
+Restart the server after replacing a map file. `PORT` and `HOST` apply independently
+to each process; `ATLAS_FILE` and `ATLAS_DATA_DIR` belong to the server only.
 
-For an already prepared checkout:
-
-```sh
-bun run dev
-```
-
-The server watches TypeScript changes and rebuilds the frontend on restart. Refresh the browser after changes. Rust renderer or routing changes require `bun run build:wasm`. Server restart is required to load a regenerated map package. `PORT`, `HOST`, and `ATLAS_FILE` override the defaults; the host defaults to loopback.
+`dist/client/` is also a complete static website, including workers, WASM, plugins
+and `client-config.json`. It can be hosted independently without Bun, OSM source
+files or server code. See [server/client boundaries and configuration](docs/SERVER-CLIENT.md).
 
 ## Vienna Plus and offline drawing
 
@@ -84,7 +110,7 @@ The following local-data experiments assume **Run tools on → This device**:
 
 ## Compose hosted maps
 
-Open **http://127.0.0.1:3100/** → **Client composer**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Walking, cycling and driving routes run on the client across excerpts of one shared compiled graph. Use the normal **Route** tab for composed routes and isochrones. **Tool source** scopes search, extraction, queries and offline export to one selected map. Legacy `/compose` links redirect into this workspace. See [composition design and limitations](docs/COMPOSITION.md).
+Open **http://127.0.0.1:5173/** → **Client composer**, or select maps in the host library and choose **Compose selected maps**. Combine excerpts in one WASM-rendered view, select layers per source, inspect coverage and capabilities, adjust overlap priority, and copy a view link. Add another server's public `/catalog` to compose across hosts. Walking, cycling and driving routes run on the client across excerpts of one shared compiled graph. Use the normal **Route** tab for composed routes and isochrones. **Tool source** scopes search, extraction, queries and offline export to one selected map. Legacy `/compose` links redirect into this workspace. See [composition design and limitations](docs/COMPOSITION.md).
 
 The larger four-region demo uses cached, pinned Austria/Slovakia/Hungary PBFs, builds one shared transport graph, and then generates the full-capability map files sequentially:
 
@@ -241,7 +267,8 @@ Integer zoom transitions retain the current visible geometry until the next deta
 `bun run deploy --dry-run` previews deployment of the current working tree. The first
 release uses `bun run deploy --map data/vienna-plus.atlas --with-library`; subsequent
 `bun run deploy` commands update code while retaining server maps and settings.
-`bun run deploy tunnel` opens access at http://127.0.0.1:13100.
+`bun run deploy tunnel` opens the server console at http://127.0.0.1:13100/host.
+`bun run dev` serves the independent client at http://127.0.0.1:5173.
 See [deployment, rollback and NixOS setup](docs/DEPLOYMENT.md) and the
 [server demo roadmap](docs/DEMO-ROADMAP.md). `ATLAS_DATA_DIR` keeps runtime state
 outside code releases; `/health` reports the deployed release identifier.

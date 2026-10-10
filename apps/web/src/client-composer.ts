@@ -1,3 +1,4 @@
+import { sourceLink } from "./connection";
 import {
   CompositionMap,
   type CompositionMapSource,
@@ -71,8 +72,9 @@ class SubscriptionSource extends HttpSource {
   constructor(
     url: string,
     private readonly cacheOnly: () => boolean,
+    api?: string,
   ) {
-    super(url);
+    super(url, api);
   }
   override read(start: number, end: number, signal?: AbortSignal) {
     if (this.cacheOnly())
@@ -87,6 +89,7 @@ class SubscriptionSource extends HttpSource {
 export async function createComposer(
   map: CompositionMap,
   options: {
+    catalog: string;
     store?: BlockStore;
     signal: AbortSignal;
     telemetry: (event: ReadEvent) => void;
@@ -219,7 +222,7 @@ export async function createComposer(
     if (entry.reader || entry.opening) return entry.opening;
     entry.error = undefined;
     const reader = new AtlasReader(
-      new SubscriptionSource(entry.offer.url, options.offline),
+      new SubscriptionSource(entry.offer.url, options.offline, entry.offer.api),
       options.telemetry,
       {
         purposes: ["map", "labels"],
@@ -370,13 +373,7 @@ export async function createComposer(
       };
       links.append(fit);
       for (const [label, path] of [
-        [
-          "Open this map only ↗",
-          new URL(
-            `/?map=${encodeURIComponent(entry.offer.id)}`,
-            entry.offer.url,
-          ).href,
-        ],
+        ["Open this map only ↗", sourceLink(entry.offer.url, entry.offer.api)],
         ["Atlas file ↗", entry.offer.url],
         ["Capabilities ↗", `${entry.offer.api}/capabilities`],
       ]) {
@@ -460,10 +457,7 @@ export async function createComposer(
     recipe = saved;
   }
   const failures: string[] = [];
-  for (const url of new Set([
-    new URL("/catalog", location.href).href,
-    ...(recipe?.catalogs ?? []),
-  ])) {
+  for (const url of new Set([options.catalog, ...(recipe?.catalogs ?? [])])) {
     try {
       await discover(url, true);
     } catch (e) {

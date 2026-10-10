@@ -126,10 +126,11 @@ export class OperationSession {
       : (this.transportProfiles[0] ?? "walking");
     if (reader.source instanceof HttpSource)
       this.remote = new RemoteOperations(
-        new URL(reader.source.url, location.href).href.replace(
-          /\.atlas(?:\?.*)?$/,
-          "/api",
-        ),
+        reader.source.apiUrl ??
+          new URL(reader.source.url, location.href).href.replace(
+            /\.atlas(?:\?.*)?$/,
+            "/api",
+          ),
         reader.index.manifest.snapshot,
       );
   }

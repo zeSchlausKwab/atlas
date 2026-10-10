@@ -64,7 +64,10 @@ export interface ByteSource {
 }
 export class HttpSource implements ByteSource {
   private etag?: string;
-  constructor(readonly url: string) {}
+  constructor(
+    readonly url: string,
+    readonly apiUrl?: string,
+  ) {}
   async read(start: number, end: number, signal?: AbortSignal) {
     const headers: Record<string, string> = {
       Range: `bytes=${start}-${end - 1}`,

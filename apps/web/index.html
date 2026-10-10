@@ -15,7 +15,7 @@
           >.</span
         ></a
       >
-      <span class="masthead-note">A geographic format experiment</span>
+      <span class="masthead-note">CLIENT DEMO · independent map consumer</span>
       <div class="masthead-right">
         <button
           id="purge-caches"
@@ -25,7 +25,12 @@
           Purge caches
         </button>
         <button id="open-composer" class="cache-purge">Client composer</button
-        ><a href="/host">Host console ↗</a
+        ><a
+          id="host-console"
+          href="#tab=composer"
+          target="_blank"
+          rel="noopener"
+          >Host console ↗</a
         ><span class="prototype">PROTOTYPE 009</span
         ><a
           href="https://www.openstreetmap.org/copyright"
@@ -149,6 +154,21 @@
             <section class="client-composer">
               <p class="eyebrow">MANY SOURCES / ONE VIEW</p>
               <h2>Client composer.</h2>
+              <form id="server-form" class="host-field">
+                <label for="server-address">Primary map server</label>
+                <input
+                  id="server-address"
+                  type="url"
+                  required
+                  placeholder="https://maps.example/"
+                />
+                <button type="submit" class="secondary-button">
+                  Connect to server
+                </button>
+              </form>
+              <p id="server-status" class="quiet" role="status">
+                Connecting to the map server…
+              </p>
               <p class="section-copy">
                 Choose maps and the data each one supplies. Routes can cross
                 compatible chunks; nothing is downloaded in full.
@@ -158,7 +178,10 @@
                   You are viewing one map. Open the composer to combine the
                   hosted maps.
                 </p>
-                <a class="secondary-button" href="/#tab=composer"
+                <a
+                  id="compose-all"
+                  class="secondary-button"
+                  href="/#tab=composer"
                   >Compose hosted maps</a
                 >
               </div>

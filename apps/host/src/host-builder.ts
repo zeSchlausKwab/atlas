@@ -1,3 +1,4 @@
+import { openClient } from "./client-link";
 import { budgetControl, storageSize } from "./host-budget";
 import {
   preparationSpace,
@@ -267,9 +268,9 @@ async function request(path: string, body: unknown) {
 }
 const composition = new Set<string>();
 function updateComposition() {
-  el<HTMLAnchorElement>("compose").href = composition.size
-    ? `/?maps=${[...composition].join(",")}`
-    : "/#tab=composer";
+  el<HTMLAnchorElement>("compose").href = openClient(
+    composition.size ? { maps: [...composition] } : {},
+  );
   el("compose").textContent = composition.size
     ? `Compose ${composition.size} selected maps ↗`
     : "Compose hosted maps ↗";
@@ -314,7 +315,7 @@ function jobs(values: PreparationJob[]) {
       const links = document.createElement("div");
       links.className = "host-actions";
       for (const [label, url] of [
-        ["Open map ↗", `/?map=${job.id}`],
+        ["Open in client ↗", openClient({ map: job.id })],
         ["Download .atlas", `/maps/${job.id}.atlas`],
         ["Capabilities ↗", `/maps/${job.id}/api/capabilities`],
       ]) {

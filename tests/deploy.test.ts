@@ -59,6 +59,8 @@ describe("deployment input and isolation", () => {
       "node_modules/foo/index.ts",
       "target/release/importer",
       "dist/main.js",
+      "apps/web/server.ts",
+      "apps/web/src/main.ts",
       ".aws/credentials",
       "../outside.ts",
       "/tmp/outside.ts",
@@ -67,6 +69,8 @@ describe("deployment input and isolation", () => {
       expect(deployablePath(path)).toBe(false);
     for (const path of [
       "apps/server/index.ts",
+      "apps/host/src/host.ts",
+      "apps/shared/styles.css",
       "bun.lock",
       "Cargo.lock",
       "deploy/runtime.nix",
