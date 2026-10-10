@@ -65,7 +65,7 @@ deploys avoid this. Large map staging temporarily needs additional local disk sp
   previous -> releases/<previous-id>
   releases/<release-id>/       source, Linux dependencies, portable WASM
     .runtime -> /nix/store/... immutable runtime, protected from Nix GC
-    target -> ../../shared/target
+    target/                    release-specific Linux binaries/build cache
     deploy/manifest.json       checksums, revision, dirty status
     deploy/settings.json      selected map and service settings
   shared/
@@ -73,7 +73,6 @@ deploys avoid this. Large map staging temporarily needs additional local disk sp
     data/hosted/               prepared maps, job records, source cache/work
     data/host-policy.json      persistent operation policy
     server.env                optional environment settings/secrets, mode 0600
-    target/                   reusable Linux Cargo build cache
 ```
 
 `ATLAS_DATA_DIR` separates mutable state from release code. `ATLAS_FILE` chooses
@@ -92,7 +91,8 @@ network dependency caches and the host channel are inputs too.
 An exclusive deployment lock serializes code switches and rollbacks. Process-held
 locks also protect the upload receiver and activation if an SSH connection dies. The candidate
 is checksum-verified, dependencies installed and native tools built in a resource
-limited scope. It starts on an ephemeral loopback port with separate temporary
+limited scope. Native binaries stay inside each release so building a candidate
+cannot replace tools used by a live preparation or rollback. It starts on an ephemeral loopback port with separate temporary
 host state. Checks cover health/release identity, frontend/WASM assets, the catalog,
 an actual 206 byte-range response and native preparation tool availability.
 
@@ -110,7 +110,8 @@ directories and their Nix GC roots only after checking current/previous referenc
 automatic pruning is not implemented. An interrupted SSH client can leave
 `.deploy-lock` or a maintenance marker; verify no deployment is active before
 removing them. Failed uploads remain in the unused release directory. SSH keepalives detect a
-lost connection and uploads retry three times. To resume later, repeat the original
+lost connection and uploads retry three times. Both rsync ends enforce a 60-second
+I/O timeout so a disconnected receiver releases its process lock. To resume later, repeat the original
 options with `--resume RELEASE_ID` from the failure message. Checksum comparison
 and rsync partial files avoid retransferring completed data. An activated/current/
 previous release cannot be resumed in place. Removed source files are also removed

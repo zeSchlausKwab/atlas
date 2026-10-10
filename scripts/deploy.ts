@@ -279,7 +279,7 @@ Uses a user service. No sudo, firewall changes or public announcements.
       "--timeout=60",
       ...(o.uploadMiB ? [`--bwlimit=${o.uploadMiB * 1024}`] : []),
       "--rsync-path",
-      `flock -w 75 ${q(o.root + "/.upload.lock")} rsync`,
+      `flock -w 75 ${q(o.root + "/.upload.lock")} rsync --timeout=60`,
       "--stats",
       "--partial-dir=.rsync-partial",
       "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=",

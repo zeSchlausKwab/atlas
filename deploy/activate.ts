@@ -403,14 +403,13 @@ async function main() {
     release,
     env,
   );
-  const target = join(root, "shared/target");
+  // Native binaries belong to the release, too. A shared target directory lets
+  // a candidate overwrite binaries used by a live preparation or a rollback.
+  const target = join(release, "target");
+  const resolvedTarget = await realpath(target).catch(() => undefined);
+  if (resolvedTarget && resolvedTarget !== target)
+    throw new Error("Release target must not be a shared symlink; use a new release");
   await mkdir(target, { recursive: true });
-  const linkedTarget = await realpath(join(release, "target")).catch(
-    () => undefined,
-  );
-  if (linkedTarget && linkedTarget !== target)
-    throw new Error("Unexpected target directory in release");
-  if (!linkedTarget) await symlink(target, join(release, "target"));
   await run(
     [
       "systemd-run",
@@ -427,6 +426,8 @@ async function main() {
       "--locked",
       "-p",
       "atlas-osm-import",
+      "-p",
+      "atlas-routing",
       "--bins",
     ],
     release,
