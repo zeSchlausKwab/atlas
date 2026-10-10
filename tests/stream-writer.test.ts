@@ -45,3 +45,40 @@ test("disk directory preserves all blocks across multiple leaves and rejects dup
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("in-place archive compaction preserves payload across overlapping chunks and failed replacement", async () => {
+  const { randomFillSync } = await import("node:crypto");
+  const dir = await mkdtemp("/tmp/atlas-writer-large-");
+  const path = dir + "/map.atlas";
+  const writer = await new StreamWriter(path, 100 * 1024 ** 2).open();
+  const hashes: string[] = [];
+  try {
+    // More than the reserved 64 MiB prefix, and multiple 4 MiB copy chunks.
+    for (let x = 0; x < 9; x++) {
+      const bytes = randomFillSync(new Uint8Array(8 * 1024 ** 2));
+      hashes.push(new Bun.CryptoHasher("sha256").update(bytes).digest("hex"));
+      await writer.add({ key: `tile/water/6/${x}/1`, bytes });
+    }
+    await writer.finish(m);
+    const reader = await new AtlasReader(new FileSource(Bun.file(path))).open();
+    for (let x = 0; x < 9; x++)
+      expect(
+        new Bun.CryptoHasher("sha256")
+          .update(await reader.block(`tile/water/6/${x}/1`))
+          .digest("hex"),
+      ).toBe(hashes[x]);
+    const snapshot = reader.index.manifest.snapshot;
+    reader.dispose();
+    const replacement = await new StreamWriter(path, 1).open();
+    await expect(
+      replacement.add({ key: "query/test", bytes: new Uint8Array(100) }),
+    ).rejects.toThrow("budget");
+    await replacement.abort();
+    const old = await new AtlasReader(new FileSource(Bun.file(path))).open();
+    expect(old.index.manifest.snapshot).toBe(snapshot);
+    old.dispose();
+  } finally {
+    await writer.abort();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30000);

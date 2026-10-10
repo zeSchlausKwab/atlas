@@ -1,3 +1,4 @@
+import { PlacesView } from "../../labels/src/place-pages";
 import type { WorkspaceMap } from "./workspace-map";
 import { defaultOverlays, type OverlayFrame } from "./overlays";
 import { FeatureOverlay } from "./features";
@@ -57,6 +58,7 @@ interface Session {
   prefix: string;
   clips: Map<Channel, number>;
   places?: Place[];
+  placesView?: PlacesView;
   placesLoading: boolean;
   placesFailed: boolean;
   dead: boolean;
@@ -258,6 +260,7 @@ export class CompositionMap implements WorkspaceMap {
       s.source.reader.offline = offline;
       s.scheduler.retry();
       s.labels.retry();
+      s.placesView?.retry();
       s.placesFailed = false;
     }
     this.invalidate();
@@ -490,6 +493,7 @@ export class CompositionMap implements WorkspaceMap {
     for (const [id, session] of this.sessions)
       if (!this.sources.some((s) => s.id === id)) {
         session.dead = true;
+        session.placesView?.destroy();
         session.scheduler.destroy();
         session.labels.destroy();
         this.sessions.delete(id);
@@ -714,32 +718,14 @@ export class CompositionMap implements WorkspaceMap {
           ].every((p) =>
             contains(mask, screenToWorld(p as [number, number], camera)),
           );
-        if (
-          this.placeNames &&
-          !s.places &&
-          !s.placesLoading &&
-          !s.placesFailed
-        ) {
-          if (
-            source.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY)
-          ) {
-            s.placesLoading = true;
-            source.reader
-              .block(PLACE_LABEL_KEY)
-              .then((bytes) => {
-                if (!s.dead) s.places = decodePlaces(bytes);
-              })
-              .catch((e) => {
-                if (!s.dead) {
-                  s.placesFailed = true;
-                  this.onError(source.id, String(e));
-                }
-              })
-              .finally(() => {
-                s.placesLoading = false;
-                this.invalidate();
-              });
-          } else s.places = source.manifest.places;
+        if (this.placeNames) {
+          s.placesView ??= new PlacesView(
+            source.reader,
+            () => this.invalidate(),
+            (message) => this.onError(source.id, message),
+          );
+          s.places = s.placesView.update(view, this.zoom);
+          s.placesLoading = s.placesView.loading;
         }
         ctx.font = '500 12px "Avenir Next", sans-serif';
         ctx.textAlign = "center";
@@ -822,6 +808,7 @@ export class CompositionMap implements WorkspaceMap {
     this.observer.disconnect();
     for (const s of this.sessions.values()) {
       s.dead = true;
+      s.placesView?.destroy();
       s.scheduler.destroy();
       s.labels.destroy();
     }

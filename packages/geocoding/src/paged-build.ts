@@ -116,6 +116,12 @@ export class PagedSearchBuilder {
           [r.name, ...r.aliases, r.context ?? ""].map(normalize).join(" "),
         );
         for (const term of terms) insert.run(termBucket(term), term, records);
+        for (const gram of grams(
+          [r.name, ...r.aliases].map(normalize).join(" "),
+        )) {
+          const term = "n:" + gram;
+          insert.run(termBucket(term), term, records);
+        }
         records++;
         chunk.push(r);
         if (chunk.length === RECORDS_PER_PAGE) {
@@ -218,7 +224,12 @@ export class PagedSearchBuilder {
       }
       await write(
         "search/locations",
-        { schema: "locations-paged-v1", records, pages: recordPage },
+        {
+          schema: "locations-paged-v1",
+          names: true,
+          records,
+          pages: recordPage,
+        },
         records,
       );
     }

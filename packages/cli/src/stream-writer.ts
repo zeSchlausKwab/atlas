@@ -1,12 +1,13 @@
 import { Database } from "bun:sqlite";
 import { open, rename, rm, type FileHandle } from "node:fs/promises";
-import { createReadStream } from "node:fs";
 import {
   describeBlock,
   encodePrefix,
   type InputBlock,
 } from "../../format/src/writer";
 import {
+  MAX_METADATA,
+  HEADER_SIZE,
   INDEX_PAGE_SIZE,
   spatialAddress,
   pageKey,
@@ -17,9 +18,11 @@ import {
 export interface BlockWriter {
   add(input: InputBlock): Promise<void>;
 }
-async function writeAll(file: FileHandle, bytes: Uint8Array) {
+const RESERVE = MAX_METADATA + HEADER_SIZE;
+async function writeAll(file: FileHandle, bytes: Uint8Array, at: number) {
   for (let n = 0; n < bytes.length; ) {
-    const written = (await file.write(bytes, n, bytes.length - n)).bytesWritten;
+    const written = (await file.write(bytes, n, bytes.length - n, at + n))
+      .bytesWritten;
     if (!written) throw new Error("Archive write made no progress");
     n += written;
   }
@@ -37,6 +40,14 @@ export class StreamWriter implements BlockWriter {
   get bytesWritten() {
     return this.length;
   }
+  featureCount(prefix: string) {
+    return this.db
+      .query<
+        { n: number },
+        [string]
+      >("SELECT coalesce(sum(json_extract(metadata,'$.features')),0) AS n FROM blocks WHERE key LIKE ?")
+      .get(prefix + "%")!.n;
+  }
   get blockCount() {
     return this.count;
   }
@@ -47,7 +58,7 @@ export class StreamWriter implements BlockWriter {
       .run(`PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE; PRAGMA cache_size=-16384;
       CREATE TABLE blocks(key TEXT PRIMARY KEY, page TEXT NOT NULL, metadata TEXT NOT NULL) WITHOUT ROWID;
       CREATE INDEX by_page ON blocks(page,key); BEGIN;`);
-    this.file = await open(this.output + ".payload.part", "w");
+    this.file = await open(this.output + ".payload.part", "w+");
     return this;
   }
   async add(input: InputBlock) {
@@ -83,7 +94,7 @@ export class StreamWriter implements BlockWriter {
     this.db
       .query("INSERT INTO blocks VALUES(?,?,?)")
       .run(b.key, page, JSON.stringify(b));
-    await writeAll(this.file, stored.bytes);
+    await writeAll(this.file, stored.bytes, RESERVE + this.length);
     this.length += stored.bytes.length;
     if (++this.count % 10000 === 0) this.db.run("COMMIT; BEGIN;");
   }
@@ -134,29 +145,45 @@ export class StreamWriter implements BlockWriter {
         count: blocks.length,
         prefix: a.prefix,
       });
-      await writeAll(this.file, bytes);
+      await writeAll(this.file, bytes, RESERVE + this.length);
       this.length += bytes.length;
       // Current format root has a 64 MiB encoded cap. Fail before unbounded descriptor growth.
       if (pages.length > 180000 || this.length > this.maxBytes)
         throw new Error("Archive directory/output budget exceeded");
     }
-    await this.file.close();
     root.sort((a, b) => a.offset - b.offset);
     const prefix = await encodePrefix(manifest, root, this.length, pages);
     const size = prefix.length + this.length;
     if (size > this.maxBytes) throw new Error("Package exceeds output budget");
     await beforeCopy?.(size);
-    const final = await open(this.output + ".part", "w");
-    try {
-      await writeAll(final, prefix);
-      for await (const chunk of createReadStream(this.output + ".payload.part"))
-        await writeAll(final, chunk);
-    } finally {
-      await final.close();
+    if (prefix.length > RESERVE)
+      throw new Error("Archive metadata exceeds reserved prefix");
+    // Move the payload left in bounded forward chunks. The destination is always
+    // behind the next unread source byte, so overlapping ranges cannot corrupt it.
+    // This needs no second full archive's worth of free disk space.
+    const chunk = new Uint8Array(4 * 1024 * 1024);
+    for (let offset = 0; offset < this.length; ) {
+      const length = Math.min(chunk.length, this.length - offset);
+      const { bytesRead } = await this.file.read(
+        chunk,
+        0,
+        length,
+        RESERVE + offset,
+      );
+      if (!bytesRead) throw new Error("Archive payload is truncated");
+      await writeAll(
+        this.file,
+        chunk.subarray(0, bytesRead),
+        prefix.length + offset,
+      );
+      offset += bytesRead;
     }
-    await rename(this.output + ".part", this.output);
+    await writeAll(this.file, prefix, 0);
+    await this.file.truncate(size);
+    await this.file.sync();
+    await this.file.close();
+    await rename(this.output + ".payload.part", this.output);
     this.db.close();
-    await rm(this.output + ".payload.part");
     await rm(this.output + ".directory.part");
     return size;
   }

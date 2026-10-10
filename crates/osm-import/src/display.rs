@@ -42,39 +42,13 @@ pub fn import(
         }
         if let OsmObj::Node(node) = object {
             let position = [node.lon(), node.lat()];
-            nodes.push(node.id, position, [false; 3])?;
-            if let Some(name) = node.tags.get("name").filter(|name| !name.trim().is_empty()) {
-                let tag = |key: &str| node.tags.get(key).map(|s| s.as_str()).unwrap_or("");
-                let kind = if !tag("place").is_empty() {
-                    "place"
-                } else if tag("natural") == "peak" {
-                    "peak"
-                } else {
-                    "poi"
-                };
-                let category = [
-                    "place",
-                    "amenity",
-                    "tourism",
-                    "shop",
-                    "historic",
-                    "public_transport",
-                    "natural",
-                ]
-                .iter()
-                .map(|key| tag(key))
-                .find(|v| !v.is_empty());
-                if let Some(category) = category {
-                    let mut aliases: Vec<&str> = ["alt_name", "short_name", "name:de", "name:en"]
-                        .iter()
-                        .flat_map(|key| tag(key).split(';'))
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty() && *s != name.as_str())
-                        .collect();
-                    aliases.sort();
-                    aliases.dedup();
-                    locations.push(json!({"id":format!("node/{}",node.id.0),"name":name.trim(),"aliases":aliases,"kind":kind,"category":category,"coordinates":position}));
-                }
+            nodes.push(
+                node.id,
+                [node.decimicro_lon, node.decimicro_lat],
+                [false; 3],
+            )?;
+            if let Some(location) = node_location(&node) {
+                locations.push(location);
             }
             if legacy_routing && walking::node_blocked(&node.tags) {
                 blocked_nodes.insert(node.id);
@@ -99,8 +73,6 @@ pub fn import(
             if member_ids.contains(&way.id) {
                 member_ways.insert(way.id, way.nodes.clone());
             }
-            let tag = |key: &str| way.tags.get(key).map(|v| v.as_str()).unwrap_or("");
-            let highway = tag("highway");
             let directions = walking::directions(&way.tags);
             if legacy_routing && directions != 0 {
                 if way.nodes.iter().any(|id| !nodes.contains_key(id)) {
@@ -118,64 +90,11 @@ pub fn import(
                     }
                 }
             }
-            let closed = way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
-            let area = closed.then(|| areas::class(&way.tags)).flatten();
-            let (class, polygon) = if let Some(class) = area {
-                (class, true)
-            } else if !highway.is_empty() {
-                (
-                    if [
-                        "motorway",
-                        "motorway_link",
-                        "trunk",
-                        "trunk_link",
-                        "primary",
-                        "primary_link",
-                        "secondary",
-                        "secondary_link",
-                    ]
-                    .contains(&highway)
-                    {
-                        4
-                    } else if ["path", "footway", "cycleway", "steps", "bridleway", "track"]
-                        .contains(&highway)
-                    {
-                        5
-                    } else {
-                        3
-                    },
-                    false,
-                )
-            } else if !tag("railway").is_empty() {
-                (6, false)
-            } else if !tag("waterway").is_empty() {
-                (1, closed && tag("area") == "yes")
-            } else {
-                continue;
-            };
-            let coordinates: Option<Vec<[f64; 2]>> = way
-                .nodes
-                .iter()
-                .map(|id| nodes.get(id).map(|n| n.0))
-                .collect();
-            let Some(coordinates) = coordinates else {
-                skipped_ways += 1;
-                continue;
-            };
-            if coordinates.len() < 2 {
-                continue;
+            match way_feature(&way, &nodes) {
+                Ok(Some(feature)) => features.push(feature),
+                Ok(None) => {}
+                Err(()) => skipped_ways += 1,
             }
-            let geometry = if polygon {
-                json!({"type":"Polygon","coordinates":[coordinates]})
-            } else {
-                json!({"type":"LineString","coordinates":coordinates})
-            };
-            let tags: serde_json::Map<String, Value> = way
-                .tags
-                .iter()
-                .map(|(k, v)| (k.to_string(), json!(v.as_str())))
-                .collect();
-            features.push(json!({"type":"Feature","geometry":geometry,"properties":{"id":format!("way/{}",way.id.0),"class":class,"name":tag("name"),"tags":tags}}));
         }
     }
     let mut assembled_relations = 0;
@@ -289,7 +208,7 @@ pub fn import(
     Ok(())
 }
 
-fn parse_elevation(value: &str) -> Option<f64> {
+pub(crate) fn parse_elevation(value: &str) -> Option<f64> {
     // Accept numeric metres and a single explicit m suffix. Other units stay unknown.
     let trimmed = value.trim();
     let value = trimmed
@@ -311,4 +230,112 @@ mod tests {
         assert_eq!(parse_elevation("2599mm"), None);
         assert_eq!(parse_elevation("NaN"), None);
     }
+}
+
+pub(crate) fn node_location(node: &osmpbfreader::Node) -> Option<Value> {
+    let position = [node.lon(), node.lat()];
+    if let Some(name) = node.tags.get("name").filter(|name| !name.trim().is_empty()) {
+        let tag = |key: &str| node.tags.get(key).map(|s| s.as_str()).unwrap_or("");
+        let kind = if !tag("place").is_empty() {
+            "place"
+        } else if tag("natural") == "peak" {
+            "peak"
+        } else {
+            "poi"
+        };
+        let category = [
+            "place",
+            "amenity",
+            "tourism",
+            "shop",
+            "historic",
+            "public_transport",
+            "natural",
+        ]
+        .iter()
+        .map(|key| tag(key))
+        .find(|v| !v.is_empty());
+        if let Some(category) = category {
+            let mut aliases: Vec<&str> = ["alt_name", "short_name", "name:de", "name:en"]
+                .iter()
+                .flat_map(|key| tag(key).split(';'))
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != name.as_str())
+                .collect();
+            aliases.sort();
+            aliases.dedup();
+            return Some(
+                json!({"id":format!("node/{}",node.id.0),"name":name.trim(),"aliases":aliases,"kind":kind,"category":category,"coordinates":position}),
+            );
+        }
+    }
+
+    None
+}
+
+pub(crate) fn way_feature(
+    way: &osmpbfreader::Way,
+    nodes: &crate::node_store::NodeStore,
+) -> Result<Option<Value>, ()> {
+    let tag = |key: &str| way.tags.get(key).map(|v| v.as_str()).unwrap_or("");
+    let highway = tag("highway");
+    let closed = way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
+    let area = closed.then(|| areas::class(&way.tags)).flatten();
+    let (class, polygon) = if let Some(class) = area {
+        (class, true)
+    } else if !highway.is_empty() {
+        (
+            if [
+                "motorway",
+                "motorway_link",
+                "trunk",
+                "trunk_link",
+                "primary",
+                "primary_link",
+                "secondary",
+                "secondary_link",
+            ]
+            .contains(&highway)
+            {
+                4
+            } else if ["path", "footway", "cycleway", "steps", "bridleway", "track"]
+                .contains(&highway)
+            {
+                5
+            } else {
+                3
+            },
+            false,
+        )
+    } else if !tag("railway").is_empty() {
+        (6, false)
+    } else if !tag("waterway").is_empty() {
+        (1, closed && tag("area") == "yes")
+    } else {
+        return Ok(None);
+    };
+    let coordinates: Option<Vec<[f64; 2]>> = way
+        .nodes
+        .iter()
+        .map(|id| nodes.get(id).map(|n| n.0))
+        .collect();
+    let Some(coordinates) = coordinates else {
+        return Err(());
+    };
+    if coordinates.len() < 2 {
+        return Ok(None);
+    }
+    let geometry = if polygon {
+        json!({"type":"Polygon","coordinates":[coordinates]})
+    } else {
+        json!({"type":"LineString","coordinates":coordinates})
+    };
+    let tags: serde_json::Map<String, Value> = way
+        .tags
+        .iter()
+        .map(|(k, v)| (k.to_string(), json!(v.as_str())))
+        .collect();
+    Ok(Some(
+        json!({"type":"Feature","geometry":geometry,"properties":{"id":format!("way/{}",way.id.0),"class":class,"name":tag("name"),"tags":tags}}),
+    ))
 }

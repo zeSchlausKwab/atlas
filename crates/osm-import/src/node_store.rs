@@ -4,7 +4,7 @@ use memmap2::Mmap;
 use osmpbfreader::NodeId;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
-const WIDTH: usize = 32;
+const WIDTH: usize = 17;
 pub struct NodeWriter {
     file: BufWriter<File>,
     last: Option<i64>,
@@ -22,7 +22,7 @@ impl NodeWriter {
             count: 0,
         })
     }
-    pub fn push(&mut self, id: NodeId, position: [f64; 2], blocked: [bool; 3]) -> io::Result<()> {
+    pub fn push(&mut self, id: NodeId, position: [i32; 2], blocked: [bool; 3]) -> io::Result<()> {
         if self.last.is_some_and(|last| id.0 <= last) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -31,9 +31,9 @@ impl NodeWriter {
         }
         let mut record = [0u8; WIDTH];
         record[..8].copy_from_slice(&id.0.to_le_bytes());
-        record[8..16].copy_from_slice(&position[0].to_le_bytes());
-        record[16..24].copy_from_slice(&position[1].to_le_bytes());
-        record[24] = blocked
+        record[8..12].copy_from_slice(&position[0].to_le_bytes());
+        record[12..16].copy_from_slice(&position[1].to_le_bytes());
+        record[16] = blocked
             .iter()
             .enumerate()
             .fold(0, |bits, (i, b)| bits | (u8::from(*b) << i));
@@ -76,10 +76,10 @@ impl NodeStore {
                 std::cmp::Ordering::Equal => {
                     return Some((
                         [
-                            f64::from_le_bytes(row[8..16].try_into().unwrap()),
-                            f64::from_le_bytes(row[16..24].try_into().unwrap()),
+                            i32::from_le_bytes(row[8..12].try_into().unwrap()) as f64 * 1e-7,
+                            i32::from_le_bytes(row[12..16].try_into().unwrap()) as f64 * 1e-7,
                         ],
-                        [row[24] & 1 != 0, row[24] & 2 != 0, row[24] & 4 != 0],
+                        [row[16] & 1 != 0, row[16] & 2 != 0, row[16] & 4 != 0],
                     ))
                 }
             }
@@ -99,7 +99,7 @@ mod tests {
         for i in 0..10000 {
             w.push(
                 NodeId(i * 100003),
-                [i as f64 / 10., -48.],
+                [i as i32, -480000000],
                 [i % 2 == 0, false, true],
             )
             .unwrap();
@@ -108,7 +108,7 @@ mod tests {
         for i in [0, 1, 200, 5001, 9999] {
             assert_eq!(
                 s.get(&NodeId(i * 100003)),
-                Some(([i as f64 / 10., -48.], [i % 2 == 0, false, true]))
+                Some(([i as f64 * 1e-7, -48.], [i % 2 == 0, false, true]))
             );
         }
         assert!(s.get(&NodeId(2)).is_none());
@@ -118,9 +118,9 @@ mod tests {
     #[test]
     fn rejects_duplicates_and_unsorted_input() {
         let mut w = NodeWriter::new().unwrap();
-        w.push(NodeId(2), [0., 0.], [false; 3]).unwrap();
-        assert!(w.push(NodeId(2), [0., 0.], [false; 3]).is_err());
-        assert!(w.push(NodeId(1), [0., 0.], [false; 3]).is_err());
+        w.push(NodeId(2), [0, 0], [false; 3]).unwrap();
+        assert!(w.push(NodeId(2), [0, 0], [false; 3]).is_err());
+        assert!(w.push(NodeId(1), [0, 0], [false; 3]).is_err());
         assert!(NodeWriter::new()
             .unwrap()
             .finish()

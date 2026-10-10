@@ -59,6 +59,10 @@ function midpoint(line: Position[]): Position {
 export function buildGeocoding(
   nodes: Location[],
   features: FeatureCollection,
+  options: {
+    nearby?: (point: Position) => Location | undefined;
+    group?: (key: string, record: Location, distance: number) => void;
+  } = {},
 ): { locations: LocationBlock; streets: StreetBlock } {
   const records = nodes
     .filter((n) => validPosition(n.coordinates))
@@ -68,18 +72,20 @@ export function buildGeocoding(
       n.kind === "place" &&
       ["city", "town", "village", "hamlet"].includes(n.category),
   );
-  function nearby(point: Position) {
-    let best: Location | undefined,
-      dist = Infinity;
-    for (const place of places) {
-      const d = meters(point, place.coordinates);
-      if (d < dist) {
-        dist = d;
-        best = place;
+  const nearby =
+    options.nearby ??
+    function nearby(point: Position) {
+      let best: Location | undefined,
+        dist = Infinity;
+      for (const place of places) {
+        const d = meters(point, place.coordinates);
+        if (d < dist) {
+          dist = d;
+          best = place;
+        }
       }
-    }
-    return dist <= 10000 ? best : undefined;
-  }
+      return dist <= 10000 ? best : undefined;
+    };
   for (const r of records)
     if (r.kind !== "place") {
       const place = nearby(r.coordinates);
@@ -184,8 +190,8 @@ export function buildGeocoding(
       });
     }
   }
-  for (const g of groups.values())
-    records.push({
+  for (const [key, g] of groups) {
+    const record: Location = {
       id: g.street.id,
       name: g.street.name!,
       aliases: [...g.aliases].sort(),
@@ -193,7 +199,10 @@ export function buildGeocoding(
       category: "street",
       coordinates: g.point,
       context: g.context,
-    });
+    };
+    if (options.group) options.group(key, record, g.distance);
+    else records.push(record);
+  }
   records.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   streets.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return {

@@ -221,6 +221,12 @@ export async function planPreparation(
     report(`Finding ${mode} graph cells…`);
     add(await spatial(p.prefix, p.zoom, s.paddingCells));
   }
+  if (m.labelZoom !== undefined)
+    for (const family of ["roads", "pois"] as const) {
+      if (family === "roads" ? !s.streetNames : !s.pois) continue;
+      for (const tier of [13, 14, 15, 16, 17])
+        add(await spatial(`labels/${family}/${tier}`, m.labelZoom));
+    }
   for (const b of reader.index.blocks) {
     if (b.key === "labels/places") {
       if (s.placeNames) add([b]);

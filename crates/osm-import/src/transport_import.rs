@@ -95,7 +95,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
             OsmObj::Node(n) => {
                 nodes.push(
                     n.id,
-                    [n.lon(), n.lat()],
+                    [n.decimicro_lon, n.decimicro_lat],
                     [
                         transport::blocked(&n.tags, 0),
                         transport::blocked(&n.tags, 1),

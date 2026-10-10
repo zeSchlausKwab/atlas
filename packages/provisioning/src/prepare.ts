@@ -1,3 +1,6 @@
+import { selectedPeaks } from "../../format/src/peaks";
+import { selectedPlaces } from "../../labels/src/place-pages";
+import { selectedSearch } from "../../geocoding/src/selection";
 import booleanIntersects from "@turf/boolean-intersects";
 import type { Polygon as GeoPolygon } from "geojson";
 import { DiskWriter } from "../../cli/src/disk-writer";
@@ -136,9 +139,7 @@ export async function preparePackage(
           keep = false;
         }
       } else if (b.key === "labels/places") {
-        const values = decodePlaces(bytes).filter((v) =>
-          inside(v.coordinates, s.polygon),
-        );
+        const values = await selectedPlaces(reader, s.polygon);
         outputBytes = encodePlaces(values);
         features = values.length;
         keep = !!features;
@@ -166,16 +167,22 @@ export async function preparePackage(
         outputBytes = encode({ schema: "features-v1", features: values });
         keep = !!features;
       } else if (b.key === "search/locations") {
-        const data = JSON.parse(
-          new TextDecoder().decode(bytes),
-        ) as LocationBlock;
+        const root = JSON.parse(new TextDecoder().decode(bytes));
+        const data: LocationBlock =
+          root.schema === "locations-paged-v1"
+            ? await selectedSearch(reader, s.polygon, "locations")
+            : root;
         data.records = data.records.filter((v) =>
           inside(v.coordinates, s.polygon),
         );
         features = data.records.length;
         outputBytes = encode(data);
       } else if (b.key === "search/streets") {
-        const data = JSON.parse(new TextDecoder().decode(bytes)) as StreetBlock;
+        const root = JSON.parse(new TextDecoder().decode(bytes));
+        const data: StreetBlock =
+          root.schema === "streets-paged-v1"
+            ? await selectedSearch(reader, s.polygon, "streets")
+            : root;
         data.streets = data.streets.flatMap((v) =>
           clipLine(v.coordinates, s.polygon).map((coordinates) => ({
             ...v,
@@ -185,9 +192,7 @@ export async function preparePackage(
         features = data.streets.length;
         outputBytes = encode(data);
       } else if (b.key === "query/peaks") {
-        const values = (
-          JSON.parse(new TextDecoder().decode(bytes)) as Peak[]
-        ).filter((v) => inside(v.coordinates, s.polygon));
+        const values = await selectedPeaks(reader, s.polygon);
         peakCount = features = values.length;
         outputBytes = encode(values);
       } else if (b.key.startsWith("routing/")) {

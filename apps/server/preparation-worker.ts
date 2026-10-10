@@ -1,8 +1,9 @@
 import {
   importCachedPbf,
+  planCachedBuild,
   type VerifiedBuildSource,
 } from "../../packages/provisioning/src/cached-build";
-import { rm } from "node:fs/promises";
+import { rm, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PackageSource } from "./package-source";
 import { AtlasReader } from "../../packages/format/src/reader";
@@ -70,28 +71,35 @@ process.on(
               report,
             )
           : data.source;
-      file = await PackageSource.open(source);
-      abort.signal.throwIfAborted();
-      const reader = await new AtlasReader(file).open();
-      const selection =
-        data.sourcePlan || data.cachedSource
-          ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
-          : data.selection;
-      const prepared = await preparePackage(
-        reader,
-        selection,
-        output,
-        abort.signal,
-        report,
-      );
-      report({
-        phase: "verifying",
-        message: "Verifying the saved package…",
-        completed: 0,
-        total: 0,
-        readBytes: reader.bytesRead,
-        writtenBytes: prepared.size,
-      });
+      if (data.cachedSource && planCachedBuild(data.selection).partitioned) {
+        // The partitioned compiler already applies the exact capability/polygon selection.
+        // Move the completed archive; avoid rewriting Europe through the regional excerpt path.
+        abort.signal.throwIfAborted();
+        await rename(source, output);
+      } else {
+        file = await PackageSource.open(source);
+        abort.signal.throwIfAborted();
+        const reader = await new AtlasReader(file).open();
+        const selection =
+          data.sourcePlan || data.cachedSource
+            ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
+            : data.selection;
+        const prepared = await preparePackage(
+          reader,
+          selection,
+          output,
+          abort.signal,
+          report,
+        );
+        report({
+          phase: "verifying",
+          message: "Verifying the saved package…",
+          completed: 0,
+          total: 0,
+          readBytes: reader.bytesRead,
+          writtenBytes: prepared.size,
+        });
+      }
       result = await PackageSource.open(output);
       const verified = await new AtlasReader(result).open();
       abort.signal.throwIfAborted();

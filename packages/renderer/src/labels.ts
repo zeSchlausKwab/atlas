@@ -168,6 +168,8 @@ export class MapLabels {
   private failed = new Set<string>();
   private wanted: string[] = [];
   private keys: Set<string>;
+  private directorySignature = "";
+  private directoryLoading = false;
   private hits: { box: Box; poi: Location }[] = [];
   constructor(
     readonly reader: AtlasReader,
@@ -191,6 +193,7 @@ export class MapLabels {
     );
   }
   retry() {
+    this.directorySignature = "";
     this.failed.clear();
   }
   pick(x: number, y: number) {
@@ -217,6 +220,52 @@ export class MapLabels {
     }
     const n = 2 ** z,
       [west, north, east, south] = cameraBounds(camera);
+    const range = [
+      Math.max(0, Math.floor(west * n)),
+      Math.min(n - 1, Math.floor(east * n)),
+      Math.max(0, Math.floor(north * n)),
+      Math.min(n - 1, Math.floor(south * n)),
+    ] as const;
+    const directorySignature = [
+      ...range,
+      Math.min(17, Math.floor(zoom)),
+      this.roads,
+      this.pois,
+    ].join(",");
+    if (
+      !this.directoryLoading &&
+      directorySignature !== this.directorySignature &&
+      this.reader.index.pages.some((p) => p.prefix?.startsWith("labels/"))
+    ) {
+      this.directorySignature = directorySignature;
+      this.directoryLoading = true;
+      void (async () => {
+        const keys = new Set(
+          this.reader.index.blocks
+            .filter((b) => b.key.startsWith("labels/"))
+            .map((b) => b.key),
+        );
+        for (const kind of ["roads", "pois"] as const)
+          if (this[kind])
+            for (const tier of [13, 14, 15, 16, 17])
+              if (zoom >= tier)
+                for (const b of await this.reader.spatial(
+                  `labels/${kind}/${tier}`,
+                  z,
+                  ...range,
+                ))
+                  keys.add(b.key);
+        if (!this.dead) this.keys = keys;
+      })()
+        .catch((e) => {
+          if (!this.dead) this.error(String(e));
+        })
+        .finally(() => {
+          this.directoryLoading = false;
+          if (!this.dead) this.invalidate();
+        });
+    }
+    if (this.directoryLoading) stats.loading++;
     this.wanted = [];
     for (
       let x = Math.max(0, Math.floor(west * n));

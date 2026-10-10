@@ -222,7 +222,9 @@ export class AtlasGeocoder {
     };
     const catalogs = new Map<number, Term[]>();
     let chosen: Term | undefined;
-    for (const gram of queryGrams(q)) {
+    const namePrefix = this.catalog!.names && !q.includes(" ") ? "n:" : "",
+      terms = new Map<string, Term>();
+    for (const gram of queryGrams(q).map((g) => namePrefix + g)) {
       const bucket = termBucket(gram);
       if (!catalogs.has(bucket)) {
         const x = bucket >> 8,
@@ -238,7 +240,7 @@ export class AtlasGeocoder {
             (t: Term) =>
               typeof t.term === "string" &&
               t.term.length >= 1 &&
-              t.term.length <= 3 &&
+              t.term.length <= (t.term.startsWith("n:") ? 5 : 3) &&
               termBucket(t.term) === bucket &&
               Number.isSafeInteger(t.count) &&
               t.count > 0 &&
@@ -254,42 +256,91 @@ export class AtlasGeocoder {
       }
       const term = catalogs.get(bucket)!.find((t) => t.term === gram);
       if (!term) return this.emptySearch(before);
+      terms.set(gram, term);
       if (!chosen || term.count < chosen.count) chosen = term;
     }
     if (!chosen) return this.emptySearch(before);
-    if (chosen.count > MAX_CANDIDATES)
-      throw new Error(
-        "This search is too broad. Add a more specific name or place.",
-      );
+    // Broad terms are intersected as sorted streams. Each cursor holds one
+    // posting page; the result and total decoded reads retain explicit budgets.
     const candidates = new Map<number, number[]>();
-    let previous = -1,
-      count = 0;
-    for (let p = 0; p < chosen.pages; p++) {
-      const data = await json(ordinalKey("postings", chosen.start + p));
-      if (
-        data.schema !== "postings-v1" ||
-        !Array.isArray(data.ids) ||
-        data.ids.length !==
-          Math.min(POSTINGS_PER_PAGE, chosen.count - p * POSTINGS_PER_PAGE)
-      )
-        throw new Error("Invalid search postings");
-      for (const id of data.ids) {
-        if (
-          !Number.isInteger(id) ||
-          id <= previous ||
-          id >= this.catalog!.records
-        )
-          throw new Error("Invalid search record reference");
-        previous = id;
-        count++;
-        const page = Math.floor(id / RECORDS_PER_PAGE);
-        let ids = candidates.get(page);
-        if (!ids) candidates.set(page, (ids = []));
-        ids.push(id % RECORDS_PER_PAGE);
+    let count = 0;
+    const add = (id: number) => {
+      if (++count > MAX_CANDIDATES)
+        throw new Error(
+          "This search is too broad. Add a more specific name or place.",
+        );
+      const page = Math.floor(id / RECORDS_PER_PAGE);
+      let ids = candidates.get(page);
+      if (!ids) candidates.set(page, (ids = []));
+      ids.push(id % RECORDS_PER_PAGE);
+    };
+    const cursor = (term: Term) => {
+      let page = 0,
+        ids: number[] = [],
+        offset = 0,
+        previous = -1;
+      return {
+        value: -1,
+        async seek(target: number): Promise<number> {
+          while (true) {
+            while (offset < ids.length && ids[offset]! < target) offset++;
+            if (offset < ids.length) return (this.value = ids[offset]!);
+            if (page >= term.pages) return (this.value = Infinity);
+            const data = await json(ordinalKey("postings", term.start + page));
+            if (
+              data.schema !== "postings-v1" ||
+              !Array.isArray(data.ids) ||
+              data.ids.length !==
+                Math.min(
+                  POSTINGS_PER_PAGE,
+                  term.count - page * POSTINGS_PER_PAGE,
+                )
+            )
+              throw new Error("Invalid search postings");
+            for (const id of data.ids) {
+              if (!Number.isInteger(id) || id <= previous || id >= recordCount)
+                throw new Error("Invalid search record reference");
+              previous = id;
+            }
+            page++;
+            ids = data.ids;
+            offset = 0;
+          }
+        },
+      };
+    };
+    const recordCount = this.catalog!.records;
+    let selected = [chosen];
+    if (chosen.count > MAX_CANDIDATES) {
+      const tokenBest = q.split(" ").map(
+        (t) =>
+          queryGrams(t)
+            .map((g) => terms.get(namePrefix + g)!)
+            .sort((a, b) => a.count - b.count)[0]!,
+      );
+      selected = [
+        ...new Map([chosen, ...tokenBest].map((t) => [t.term, t])).values(),
+      ]
+        .sort((a, b) => a.count - b.count)
+        .slice(0, 4);
+    }
+    const streams = selected.map(cursor);
+    let target = 0;
+    outer: while (true) {
+      let matched = true;
+      for (const stream of streams) {
+        const value = await stream.seek(target);
+        if (!Number.isFinite(value)) break outer;
+        if (value > target) {
+          target = value;
+          matched = false;
+        }
+      }
+      if (matched) {
+        add(target);
+        target++;
       }
     }
-    if (count !== chosen.count)
-      throw new Error("Search posting count mismatch");
     const matches: ReturnType<typeof locations> = [];
     for (const [page, ids] of candidates) {
       const bytes = await this.reader.block(ordinalKey("records", page));

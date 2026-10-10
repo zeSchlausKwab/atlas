@@ -1,3 +1,4 @@
+import { importPartitionedCached } from "./partitioned-cached";
 import { mkdir, readdir, rename, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,7 @@ export interface DisplayPartition {
   bounds: Bounds;
 }
 export interface CachedBuildPlan {
+  partitioned?: true;
   bounds: Bounds;
   partitions: DisplayPartition[];
   candidateTiles: number;
@@ -63,9 +65,7 @@ export function planCachedBuild(selection: PackageSelection): CachedBuildPlan {
   const y0 = Math.floor(nw[1] * n),
     y1 = Math.min(n - 1, Math.floor(se[1] * n));
   if ((x1 - x0 + 1) * (y1 - y0 + 1) > 16 || candidateTiles > 100000)
-    throw new Error(
-      "Cached-source builds currently support regional areas (up to 16 display partitions and 100,000 candidate tiles). Full Europe still needs partitioned graph and search compilation. Choose Vienna–Bratislava or a smaller area.",
-    );
+    return { bounds: b, partitions: [], candidateTiles, partitioned: true };
   if (selection.layers.length && selection.maxZoom >= DETAIL_MIN_ZOOM)
     for (let x = x0; x <= x1; x++)
       for (let y = y0; y <= y1; y++) {
@@ -185,6 +185,15 @@ export async function importCachedPbf(
   if (sourceStat.size !== source.bytes || sourceStat.mtimeMs !== source.mtimeMs)
     throw new Error(
       "Verified PBF changed on disk. Select a verified source again.",
+    );
+  if (plan.partitioned)
+    return importPartitionedCached(
+      source,
+      selection,
+      work,
+      plan.bounds,
+      signal,
+      report,
     );
   const identity = createHash("sha256")
     .update(

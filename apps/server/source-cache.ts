@@ -260,9 +260,9 @@ export class SourceCache {
           source: "cached-planet-or-europe",
           selection: body.selection,
           savedAt: new Date().toISOString(),
-          state: "compiler-required",
+          state: "ready-to-build",
           message:
-            "Recipe saved. Full Europe needs a disk-backed, partitioned compiler before compilation can start. The current regional importer keeps coordinates and graphs in RAM.",
+            "Recipe saved. Start a preparation using a verified cached PBF; the partitioned compiler will build the selected capabilities.",
         };
         await mkdir(this.directory, { recursive: true });
         const file = join(this.directory, "europe-recipe.json");

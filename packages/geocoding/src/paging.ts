@@ -1,18 +1,19 @@
 /** Search pages share the archive directory, but record/posting addresses are ordinals, not geography. */
 export const RECORDS_PER_PAGE = 256;
 export const POSTINGS_PER_PAGE = 4096;
-export const STREET_ZOOM = 12;
+export const STREET_ZOOM = 14;
 export const MAX_SEARCH_PAGE = 4 * 1024 * 1024;
 export const MAX_CANDIDATES = 50000;
 export interface SearchCatalog {
   schema: "locations-paged-v1";
+  names?: true;
   records: number;
   pages: number;
 }
 export interface StreetCatalog {
   schema: "streets-paged-v1";
   streets: number;
-  zoom: 12;
+  zoom: 14;
 }
 export interface Term {
   term: string;
@@ -23,7 +24,9 @@ export interface Term {
 export function ordinalKey(kind: "records" | "postings", page: number) {
   if (!Number.isSafeInteger(page) || page < 0 || page >= 2 ** 32)
     throw new Error("Search page ordinal overflow");
-  return `search/${kind}/16/${Math.floor(page / 65536)}/${page % 65536}`;
+  const leaf = Math.floor(page / 1024),
+    slot = page % 1024;
+  return `search/${kind}/16/${(leaf % 2048) * 32 + Math.floor(slot / 32)}/${Math.floor(leaf / 2048) * 32 + (slot % 32)}`;
 }
 export function termBucket(term: string) {
   let hash = 2166136261;

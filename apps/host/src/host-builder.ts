@@ -1,3 +1,4 @@
+import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
 import { budgetControl, storageSize } from "./host-budget";
 import {
@@ -41,6 +42,19 @@ let installedScope: SelectionScope,
   globalScope: SelectionScope,
   sourcePlan: PbfPlan | undefined;
 let storage: StorageInfo | undefined;
+let europeSourceId = "";
+function largeSelection() {
+  if (europe()) return true;
+  if (points.length < 3) return false;
+  const p = points.map(([x, y]) => project(x, y));
+  const xs = p.map((v) => Math.floor(v[0] * 512)),
+    ys = p.map((v) => Math.floor(v[1] * 512));
+  return (
+    (Math.max(...xs) - Math.min(...xs) + 1) *
+      (Math.max(...ys) - Math.min(...ys) + 1) >
+    16
+  );
+}
 let outputBudget: ReturnType<typeof budgetControl> | undefined,
   sourceBudget: ReturnType<typeof budgetControl> | undefined;
 const outputBytes = () =>
@@ -48,21 +62,14 @@ const outputBytes = () =>
 const sourceBytes = () =>
   el<HTMLInputElement>("source-budget").valueAsNumber * 1048576;
 function spaceNeeded() {
-  if (cached()) return cachedBuildSpace(outputBytes());
+  if (cached() || europe())
+    return cachedBuildSpace(outputBytes(), largeSelection());
   return preparationSpace(
     outputBytes(),
     global() ? (sourcePlan?.bytes ?? sourceBytes()) : undefined,
   );
 }
 function renderStorage() {
-  if (europe()) {
-    el("storage-estimate").textContent =
-      "Europe workspace estimate pending the partitioned compiler. Source downloads have a separate disk check and preserve 60 GiB free.";
-    if (storage)
-      el("storage-free").textContent =
-        `${storageSize(storage.availableBytes)} available of ${storageSize(storage.totalBytes)}`;
-    return;
-  }
   const available = storage?.availableBytes;
   el("storage-meter").hidden = available === undefined;
   if (available !== undefined) {
@@ -72,10 +79,14 @@ function renderStorage() {
     meter.max = storage!.totalBytes || 1;
     meter.value = available;
     outputBudget?.setCapacity(
-      cached()
+      cached() || europe()
         ? Math.max(
             1048576,
-            Math.floor((available - 64 * 1024 ** 3) / 6 / 1048576) * 1048576,
+            Math.floor(
+              (largeSelection()
+                ? available - 124 * 1024 ** 3
+                : (available - 64 * 1024 ** 3) / 6) / 1048576,
+            ) * 1048576,
           )
         : capacityBudget(available, "output", global()),
     );
@@ -94,7 +105,7 @@ function renderStorage() {
   estimate.dataset.insufficient = String(
     available !== undefined && needed > available,
   );
-  estimate.textContent = `${storageSize(needed)} ${cached() ? "workspace allowance including 60 GiB reserve; cached PBF is already on disk" : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
+  estimate.textContent = `${storageSize(needed)} ${cached() || europe() ? "minimum workspace allowance including 60 GiB reserve; actual free space is monitored throughout compilation" : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
 }
 let checking = false,
   submitting = false,
@@ -157,12 +168,13 @@ function update() {
     !closed ||
     submitting ||
     !valid ||
+    (europe() && !europeSourceId) ||
     (remotePbf() && !sourcePlan) ||
-    (!europe() &&
+    ((!europe() || !!europeSourceId) &&
       storage !== undefined &&
       spaceNeeded() > storage.availableBytes);
   el("submit").textContent = europe()
-    ? "Save Europe build recipe ↗"
+    ? "Build Europe & host ↗"
     : cached()
       ? "Build from cached PBF & host ↗"
       : global()
@@ -469,6 +481,11 @@ async function refresh() {
     const data = await r.json();
     jobs(data.jobs);
     const sources = data.cachedSources ?? [];
+    europeSourceId =
+      (
+        sources.find((v: { kind: string }) => v.kind === "europe") ??
+        sources.find((v: { kind: string }) => v.kind === "planet")
+      )?.id ?? "";
     const sourceIdentity = JSON.stringify(sources);
     if (sourceIdentity !== lastSources) {
       lastSources = sourceIdentity;
@@ -518,7 +535,7 @@ function configureSource() {
       ? "Worldwide OSM · Geofabrik extracts"
       : source.name;
   el("source-note").textContent = cached()
-    ? "No source download. We scan the cached PBF locally, build shared routing and search, then compile detail partitions into one map. This first stage supports regional areas with a 256 MiB extracted-PBF limit; full Europe compilation remains in development."
+    ? "No source download. The server extracts your area and builds one map. Large selections use disk-backed source, routing and search indexes plus resumable display batches."
     : global()
       ? "Choose an area anywhere in the supported coverage. The source check finds one covering Geofabrik region, including routing padding. OpenFreeMap supplies only the preview."
       : `Source coverage: ${source.bounds.map((n: number) => n.toFixed(3)).join(", ")}. Prepare from this installed snapshot; OpenFreeMap is a preview only.`;
@@ -660,10 +677,10 @@ async function configureEurope() {
       );
     el("source").textContent = "Europe · full provider extent";
     el("source-note").textContent =
-      "The preview rectangle shows the extent of Geofabrik’s Europe extract. Exact coverage follows the source dataset, not every point inside the rectangle.";
+      "The rectangle uses Geofabrik’s Europe bounds. When building from the cached planet, coverage follows this rectangle, including adjacent areas; it is not a political Europe boundary.";
     el("message").textContent = data.recipe
-      ? "Loaded the saved Europe recipe. Edit capabilities below and save again."
-      : "Full Europe recipe: all supported capabilities, z0–16. Save the recipe; cache the planet source above.";
+      ? "Loaded the saved Europe recipe. Edit capabilities below, then start the server build."
+      : "Full Europe: all supported capabilities, z0–16. A verified planet or Europe PBF must be cached before building.";
     await switchPreview();
     preview?.fitArea(data.bounds);
   } catch (error) {
@@ -758,7 +775,14 @@ export async function startBuilder() {
         const recipe = await request("/admin/sources/europe-recipe", {
           selection: selection(),
         });
-        el("message").textContent = recipe.message;
+        if (!europeSourceId)
+          throw new Error("Cache a verified planet or Europe PBF first.");
+        await request("/admin/preparations", {
+          ...recipe.selection,
+          cachedSourceId: europeSourceId,
+        });
+        el("message").textContent =
+          "Europe preparation started on the server. Follow extraction, routing, search and display stages below; completed stages are retained if the build stops.";
       } catch (error) {
         el("message").textContent = String(error);
       } finally {
@@ -926,8 +950,9 @@ export async function startBuilder() {
           !closed ||
           submitting ||
           !validBudget(outputBytes()) ||
+          (europe() && !europeSourceId) ||
           (remotePbf() && (!sourcePlan || !validBudget(sourceBytes()))) ||
-          (!europe() &&
+          ((!europe() || !!europeSourceId) &&
             storage !== undefined &&
             spaceNeeded() > storage.availableBytes);
     }

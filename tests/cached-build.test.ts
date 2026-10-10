@@ -57,7 +57,7 @@ test("regional plan has exclusive detail-tile ownership across every partition s
         ownsDetailTile(`tile/water/11/${part.x * 4}/${part.y * 4}`, part),
       ).toBe(false);
     }
-  expect(() =>
+  expect(
     planCachedBuild({
       ...selection,
       polygon: [
@@ -66,8 +66,8 @@ test("regional plan has exclusive detail-tile ownership across every partition s
         [46, 81],
         [-32, 81],
       ],
-    }),
-  ).toThrow("Full Europe");
+    }).partitioned,
+  ).toBe(true);
 });
 test("checkpoint resumes complete artifacts only, refuses changed recipes and damaged files", async () => {
   const dir = await mkdtemp("/tmp/atlas-checkpoints-");

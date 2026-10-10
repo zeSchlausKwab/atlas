@@ -28,7 +28,10 @@
     "dev:server": "bun run build:host && bun --watch apps/server/index.ts",
     "client": "bun apps/web/server.ts",
     "build:client": "bun scripts/build-web.ts client",
-    "build:host": "bun scripts/build-web.ts host"
+    "build:host": "bun scripts/build-web.ts host",
+    "verify:partitioned-graph": "bun scripts/verify-partitioned-graph.ts",
+    "verify:source-store": "bun scripts/verify-source-store.ts",
+    "verify:partitioned-build": "bun scripts/verify-partitioned-build.ts"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

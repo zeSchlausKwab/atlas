@@ -217,3 +217,13 @@ Direction bits retain the RTE1 convention. Times are full-segment travel costs r
 RCL2 retains the RCL1 16-byte envelope (`magic`, z, x, y) followed by RTE2 and one original segment ordinal u32 per segment. Original OSM node IDs join cells; ordinals deduplicate overlapping cell copies. Every owner cell contains all incident segments and turn rules for retained nodes. A loaded cell must match the selected mode. Directory prefixes are `routing/<mode>/cells`; page keys are `index/routing/<mode>/cells/14/pageX/pageY`.
 
 Per-cell limits: 200,000 nodes, 300,000 segments, 50,000 turn rules, and 16 MiB decoded payload. A search retains a bounded cell cache and returns explicit `missing-data` or `budget-exceeded` results. Routes return `seconds` as well as `meters`; isochrones return snapshot-scoped GeoJSON MultiPolygon bands with seconds, minutes, envelope area, approximation flag and contour resolution. See [routing contract](ROUTING.md).
+
+## Disk-built semantic pages
+
+Continent builds use paged location records/postings, z14 nearest-street cells,
+z8 settlement cells and a highest-peak summary with geographic peak pages.
+Street/POI label descriptors are now spatially paged as well. Regional payloads
+remain readable. See [partitioned compiler schemas and limits](PARTITIONED-COMPILER.md)
+for the precise layouts and consumer budgets. The container version, TIL2 and
+RCL2 codecs remain unchanged; semantic consumers must understand the new schema
+markers rather than interpreting a paged root as a regional array.

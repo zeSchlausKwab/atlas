@@ -151,8 +151,17 @@ export interface Block {
 }
 export const INDEX_PAGE_SIZE = 32;
 export function spatialAddress(key: string) {
+  const label =
+    /^labels\/(\d+)\/(\d+)\/(\d+)\/(roads|pois)\/(13|14|15|16|17)$/.exec(key);
+  if (label)
+    return {
+      prefix: `labels/${label[4]}/${label[5]}`,
+      z: Number(label[1]),
+      x: Number(label[2]),
+      y: Number(label[3]),
+    };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|search\/(?:records|postings|terms|streets-data|locations-data)|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|search\/(?:records|postings|terms|streets-data|locations-data)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -418,11 +427,16 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
               : !!manifest.tileLayers)
           : isRoutingCell(`${p.prefix}/`)
             ? p.z !== routingZoom(manifest, p.prefix!)
-            : pagedZoom(p.prefix!) !== undefined
-              ? p.z !== pagedZoom(p.prefix!)
-              : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                  p.prefix!,
-                ) || p.z !== manifest.featureZoom) ||
+            : p.prefix === "labels/settlements" ||
+                p.prefix === "query/peaks-data"
+              ? p.z !== 8
+              : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
+                ? p.z !== manifest.labelZoom
+                : pagedZoom(p.prefix!) !== undefined
+                  ? p.z !== pagedZoom(p.prefix!)
+                  : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                      p.prefix!,
+                    ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -440,7 +454,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     if (
       blocks.some(
         (b) =>
-          spatialAddress(b.key) !== null ||
+          (spatialAddress(b.key) !== null && !/^labels\/\d+\//.test(b.key)) ||
           b.key.startsWith("index/") ||
           b.offset + b.length >
             (pages[0]?.offset ?? header.fileLength - header.payloadOffset),
@@ -512,7 +526,11 @@ export function validateBlocks(
       !/^[a-f0-9]{64}$/.test(block.hash)
     )
       throw new Error("Invalid ATLAS block directory");
-    if (block.key.startsWith("labels/") && block.key !== "labels/places") {
+    if (
+      block.key.startsWith("labels/") &&
+      block.key !== "labels/places" &&
+      !block.key.startsWith("labels/settlements/")
+    ) {
       const match =
         /^labels\/(\d+)\/(\d+)\/(\d+)(?:\/(roads|pois)\/(13|14|15|16|17))?$/.exec(
           block.key,
@@ -524,6 +542,20 @@ export function validateBlocks(
         Number(match[3]) >= 2 ** manifest.labelZoom!
       )
         throw new Error("Invalid label address");
+    }
+    if (
+      block.key.startsWith("labels/settlements/") ||
+      block.key.startsWith("query/peaks-data/")
+    ) {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== 8 ||
+        a.x >= 256 ||
+        a.y >= 256 ||
+        (block.rawLength ?? block.length) > 4 * 1024 * 1024
+      )
+        throw new Error("Invalid geographic semantic page");
     }
     if (block.key.startsWith("features/") && block.key !== "features/geojson") {
       const a = spatialAddress(block.key);

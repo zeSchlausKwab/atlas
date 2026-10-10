@@ -1,3 +1,6 @@
+import { selectedPeaks } from "../../format/src/peaks";
+import { selectedPlaces } from "../../labels/src/place-pages";
+import { selectedSearch } from "../../geocoding/src/selection";
 import {
   PLACE_LABEL_KEY,
   decodePlaces,
@@ -108,6 +111,28 @@ export async function plan(reader: AtlasReader, s: Selection) {
       c = unproject((x! + 1) / n, y! / n);
     return intersectsRectangle(s.polygon, [...a, ...c]);
   });
+  if (m.labelZoom !== undefined) {
+    const n = 2 ** m.labelZoom;
+    for (const kind of ["roads", "pois"] as const)
+      if (kind === "roads" ? s.streetNames !== false : s.pois !== false)
+        for (const tier of [13, 14, 15, 16, 17])
+          labelBlocks.push(
+            ...(await reader.spatial(
+              `labels/${kind}/${tier}`,
+              m.labelZoom,
+              Math.floor(nw[0] * n),
+              Math.min(n - 1, Math.floor(se[0] * n)),
+              Math.floor(nw[1] * n),
+              Math.min(n - 1, Math.floor(se[1] * n)),
+            )),
+          );
+    const seen = new Set<string>();
+    for (let i = labelBlocks.length - 1; i >= 0; i--) {
+      const key = labelBlocks[i]!.key;
+      if (seen.has(key)) labelBlocks.splice(i, 1);
+      else seen.add(key);
+    }
+  }
   if (!tiles.length && !labelBlocks.length)
     throw new Error(
       "No selected map data intersects this area. Enable a layer or choose another area.",
@@ -229,9 +254,7 @@ export async function extract(
     progress("Packing street names and points of interest…");
     for (const b of selection.labelBlocks) {
       if (b.key === PLACE_LABEL_KEY) {
-        const places = decodePlaces(await reader.block(b.key)).filter((p) =>
-          inside(p.coordinates, s.polygon),
-        );
+        const places = await selectedPlaces(reader, s.polygon);
         if (places.length)
           await add({
             key: b.key,
@@ -289,9 +312,7 @@ export async function extract(
   let routing: Manifest["routing"];
   let peaks: Peak[] = [];
   if (s.queries && m.capabilities.includes("peak-query")) {
-    peaks = ((await json("query/peaks")) as Peak[]).filter((p) =>
-      inside(p.coordinates, s.polygon),
-    );
+    peaks = await selectedPeaks(reader, s.polygon);
     await add({
       key: "query/peaks",
       bytes: encode(peaks),
@@ -320,7 +341,11 @@ export async function extract(
   }
   if (s.search && m.capabilities.includes("location-search")) {
     progress("Selecting places and streets…");
-    const locations = (await json("search/locations")) as LocationBlock;
+    const root = (await json("search/locations")) as { schema: string };
+    const locations =
+      root.schema === "locations-paged-v1"
+        ? await selectedSearch(reader, s.polygon, "locations")
+        : (root as LocationBlock);
     locations.records = locations.records.filter((r) =>
       inside(r.coordinates, s.polygon),
     );
@@ -331,7 +356,11 @@ export async function extract(
     });
     capabilities.push("location-search");
     if (m.capabilities.includes("reverse-street")) {
-      const streets = (await json("search/streets")) as StreetBlock,
+      const root = (await json("search/streets")) as { schema: string };
+      const streets =
+          root.schema === "streets-paged-v1"
+            ? await selectedSearch(reader, s.polygon, "streets")
+            : (root as StreetBlock),
         clipped: Street[] = [];
       for (const street of streets.streets) {
         let part: Street | undefined;

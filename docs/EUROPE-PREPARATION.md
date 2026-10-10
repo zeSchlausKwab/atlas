@@ -5,81 +5,95 @@ walking/cycling/driving routing and isochrones, location search, nearest street,
 peak queries and extractable source features. The user chose full detail rather
 than a reduced overview, and authorized predownloading the planet PBF.
 
-## Host UI workflow
+## Current workflow: partitioned compiler
 
-1. Open `http://192.168.0.179:3100/host`. Trusted LAN administration is configured
-   explicitly; the public map client remains a separate application.
-2. Source library → Whole planet → Check download. Inspect the pinned date,
-   exact bytes and disk headroom → Download PBF to server. Pause/Resume retains
-   partial bytes. The transfer and checksum stages appear here; closing the
-   page or deploying the map server does not stop the separate download unit.
-3. Configure full Europe · z0–16 loads the provider extent and selects all
-   currently supported capabilities. Edit the same capability controls used by
-   regional preparation and save the recipe to the server. It reloads on return.
-   The output cap is a budget, not a predicted file size.
-4. The current UI explicitly marks the continent compiler as pending. A cached
-   PBF or saved recipe is not an Atlas map and is never advertised in the catalog.
-   Existing regional preparation, serving and composition remain available.
+1. Open <http://192.168.0.179:3100/host>. Trusted LAN administration is configured;
+   the public map client remains a separate application.
+2. Keep a verified planet or Europe PBF in the Source library. The cached planet
+   is `planet-261005.osm.pbf`, 95,244,184,503 bytes (88.70 GiB), SHA-256
+   `1f0255832803e73280b634f0cd5767d287a9b63c15220388c7862efca393f9ef`.
+3. **Configure full Europe · z0–16** restores the saved all-capability recipe.
+   **Build Europe & host** saves it and starts an actual preparation job using
+   the cached Europe source, or the cached planet if Europe is absent.
+4. Watch extraction, transport, semantic indexes, display batches and final
+   packing in Preparation progress. Closing the page does not stop the job.
+   A stopped/restarted job can resume its verified stages. Deployment refuses
+   to replace the server while a preparation is active.
+5. Only a completed archive enters the public catalog. Open its library card
+   in the standalone client, or add it through Client composer.
 
-## Source snapshot
+When using the planet, the Europe preset extracts the provider's bounding
+rectangle, including adjacent regions. It is **not a political Europe boundary**.
+The saved 128 GiB output cap is a budget, not a prediction. The admission check
+requires output budget + 64 GiB workspace + 60 GiB reserve. This is a minimum
+allowance, not a continental disk-use estimate; actual space is checked during
+work and the job stops if it approaches the reserve. A cached PBF alone is not
+a rendered map.
 
-Official OSM source: `planet-261005.osm.pbf`, currently redirected by the provider
-to its EU S3 mirror. HEAD on 2026-10-10 reported 95,244,184,503 bytes
-(95.24 GB / 88.70 GiB), published 2026-10-08. Published MD5:
-`d3b708ffc28873cf24a053e092dfd731`. The worker checks this after the download and
-records its own SHA-256. These hashes identify a source snapshot; the dated source
-does not silently change to the next weekly file.
+## Construction and recovery
 
-The host also offers a Europe-only download, inspected live from Geofabrik.
-Verified sources now appear in **Prepare a map → Data source**. The
-**Vienna–Bratislava · cached PBF** preset uses the local planet, z0–16 and all
-capabilities. No regional PBF download is needed.
+Large cached-source requests now use `partitioned-cached.ts` and
+`packages/cli/src/partitioned.ts`. Smaller requests retain the regional path.
+The new path does not retain a whole graph, all source geometry, or a complete
+search index in memory:
 
-## Cached-source compiler slice
+- Smart-extract the area from the verified PBF and check references. A checksum
+  checkpoint avoids repeating the planet scan after this stage completes.
+- Store sorted node coordinates in a temporary, file-backed 17-byte/node index.
+  Preserve original OSM node identities and decimicrodegree precision.
+- Spool directed segments and restrictions to SQLite, one transport mode at a
+  time. Emit one z14 RCL2 cell at a time with canonical source segment ordinals.
+  This retains cross-cell connectivity and the existing WASM routing contract.
+- Build a SQLite source object store; assemble one multipolygon relation at a
+  time. Settlement proximity and street grouping also use disk indexes.
+- Write paged text postings, location records, nearest-street cells, labels,
+  peak summaries and extractable geometry. Clients and server operations read
+  the same independently verified pages.
+- Tile spatially ordered geometry in bounded batches. SQLite atomically commits
+  each batch's fragments and source cursor; an interrupted batch rolls back.
+- Write compressed payloads and directory descriptors incrementally. Final
+  packing compacts the reserved header space in place, avoiding a second
+  complete archive copy. Publication is an atomic rename.
 
-`packages/provisioning/src/cached-build.ts` owns the build lifecycle:
+Completed stage files have SHA-256 receipts tied to source, recipe and compiler
+version. Invalid receipts fail explicitly. Unfinished native import, graph and
+semantic stages restart; completed stages are reused. Display generation resumes
+at its last committed batch. Finished source/fragment scratch is removed before
+final assembly. Source downloads remain independent systemd units; preparations
+are children of the Atlas service and become resumable when that service stops.
 
-1. Validate the cached source receipt, immutable source identity and recipe.
-2. Smart-extract a padded regional PBF and check node references.
-3. Compile one shared routing/semantic root and z0–11 overview.
-4. Extract and compile z12–16 geometry in z9 partitions with a guard band.
-5. Copy each detail tile from its sole owning partition, copy the canonical
-   graph/search/labels/features once, verify input blocks, and assemble one archive.
-6. Select the final polygon and publish it through the existing map catalog.
+This removes the known whole-region graph/search memory bottlenecks. **Continental
+completion and peak disk/RAM use still require the first Europe run.** The service
+retains its 20 GiB memory limit. Oversized individual relations, cells, blocks or
+directories fail explicitly; capabilities are never silently dropped. See
+[compiler contracts and limits](PARTITIONED-COMPILER.md).
 
-Both Rust importers now store sorted node coordinates in a private temporary
-file with a read-only memory map. Sparse node IDs are binary-searched; duplicate
-or unsorted IDs fail explicitly. Selected builds skip the unused legacy walking
-graph. The source PBF is never loaded as one buffer.
+## Verification
 
-Each completed extraction/compilation/assembly stage has a SHA-256 checkpoint.
-Stop retains completed work; resume verifies it and continues at the first
-unfinished stage. Server restarts leave a resumable failed job. Recipe/compiler
-version changes and corrupt checkpoints are refused. Closing the browser does
-not stop a build; deployment still refuses an active preparation. Checkpoints
-are removed after successful publication. Planet downloads remain independent
-systemd jobs; compilation is currently a child of the Atlas server.
+The all-capability Liechtenstein z0–16 fixture produced 5,339 display blocks and
+242 routing cells. Every display record and every routing-cell byte matches the
+regional pipeline (display ordering is compared as a multiset). Native source
+parity covers 37,146 features, 3,111 grouped locations and 7,696 street records.
+Search results and totals, reverse geocoding, peak summaries and paged labels
+also agree. These are compatibility checks, not a Europe-scale benchmark.
 
-Regional admission limits: 16 z9 display partitions, 100,000 candidate tiles,
-and a 256 MiB extracted PBF. Input-size and disk checks stop oversized extraction;
-source storage preserves 60 GiB free. These are conservative prototype guards,
-not a guarantee of RAM use. Full graphs, semantic feature state, JSON indexes and
-the final block directory still have regional in-memory components. The 20 GiB
-service memory limit remains the backstop. Source bytes fitting on disk does
-**not** yet make full-Europe compilation available.
+```sh
+bun run verify:partitioned-graph data/liechtenstein.osm.pbf
+bun run verify:source-store data/liechtenstein.osm.pbf
+bun run cli generate --partitioned --input data/liechtenstein.osm.pbf \
+  --output /tmp/new.atlas --selection /tmp/selection.json
+bun run verify:partitioned-build /tmp/new.atlas /tmp/regional.atlas /tmp/selection.json
+```
 
-Run `bun run verify:cached-build` for a real PBF integration test: stop after
-extraction, resume, package all capabilities, verify every final block and route
-across a display partition boundary in all three modes. Unit tests additionally
-check partition ownership, checkpoint corruption and verified-source admission.
+The last command expects two all-capability Liechtenstein builds of the same
+source/zooms and a matching selection recipe. It selects the regional reference
+before comparing it. Unit tests cover interrupted display batches, rollback,
+search-page budgets, writer compaction and preservation of an existing archive
+when replacement fails. `verify:cached-build` retains the regional lifecycle and
+cross-partition routing check.
 
-## Remaining compiler work
-
-Stream canonical feature/relationship state; partition graph construction with
-stable global edge identity; spatially partition search and geocoding; bound the
-writer's directory memory. Measure disk/RAM requirements on progressively larger
-regions. Then execute the saved full-Europe recipe. The current UI continues to
-save that recipe without claiming continent compilation is implemented.
+The following sections are historical deployment records; descriptions of
+compiler limitations and download progress apply to their stated revision.
 
 ## Live verification — 2026-10-10
 

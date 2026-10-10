@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { compilePartitioned } from "./partitioned";
 import { WORLD_SOURCE } from "../../provisioning/src/global-source";
 import {
   validateSelectionScope,
@@ -51,6 +52,7 @@ function args(argv: string[]) {
     "help",
     "dry-run",
     "no-source-features",
+    "partitioned",
     "features",
   ]);
   const allowed = new Set([
@@ -114,7 +116,7 @@ async function main() {
     throw new Error("--format must be md or json");
   if (command === "help" || flags.help) {
     console.log(
-      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n                       [--bounds W,S,E,N] [--selection recipe.json]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli transport --input FILE.atlas --pbf FILE.osm.pbf [--output FILE.atlas]\n  bun run cli routing-cells --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
+      `ATLAS prototype compiler\n\nUsage:\n  bun run cli fetch [--url URL] [--out FILE] [--sha256 HASH] [--dry-run]\n  bun run cli generate [--input FILE.osm.pbf] [--output FILE.atlas]\n                       [--name NAME] [--min-zoom 9] [--max-zoom 14] [--dry-run]\n                       [--max-bytes 2000000000] [--no-source-features] [--features]\n                       [--bounds W,S,E,N] [--selection recipe.json] [--partitioned]\n  bun run cli split-layers --input FILE.atlas [--output FILE.atlas]\n  bun run cli transport --input FILE.atlas --pbf FILE.osm.pbf [--output FILE.atlas]\n  bun run cli routing-cells --input FILE.atlas [--output FILE.atlas]\n  bun run cli inspect [--input FILE.atlas]\n\nAll commands support --format md|json and --flag=value. Defaults use Liechtenstein.\n--features adds optional spatial source geometry for selection and GeoJSON export.\n--partitioned requires a selection recipe; disk-backed stages resume from OUTPUT.work.\nThe generator requires Cargo. Rust/WASM compilation is a separate bun run build:wasm step.`,
     );
     return;
   }
@@ -245,6 +247,46 @@ async function main() {
         requestedBounds[3]! > 85)
     )
       throw new Error("Invalid --bounds");
+    if (flags.partitioned) {
+      if (!selected)
+        throw new Error("--partitioned requires --selection recipe.json");
+      const build = Bun.spawn(
+        [
+          "cargo",
+          "build",
+          "--release",
+          "--locked",
+          "-p",
+          "atlas-osm-import",
+          "--bins",
+        ],
+        { cwd: ROOT, stdout: "inherit", stderr: "inherit" },
+      );
+      if ((await build.exited) !== 0)
+        throw new Error("Native compiler build failed");
+      const abort = new AbortController();
+      const stop = () =>
+        abort.abort(
+          new Error(
+            "Build interrupted; rerun the same command to resume saved stages",
+          ),
+        );
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      try {
+        await compilePartitioned({
+          input,
+          output,
+          work: output + ".work",
+          selection: selected,
+          signal: abort.signal,
+        });
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
+      return;
+    }
     const importedPath = `${output}.import.json`;
     const proc = Bun.spawn(
       [

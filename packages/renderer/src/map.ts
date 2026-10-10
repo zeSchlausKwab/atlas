@@ -1,3 +1,4 @@
+import { PlacesView } from "../../labels/src/place-pages";
 import { defaultOverlays } from "./overlays";
 import { MapInput } from "./input";
 import type { Reachable } from "../../routing/src/index";
@@ -131,6 +132,7 @@ export class AtlasMap {
   selected: Peak | null = null;
   onPoiSelect?: (poi: Location) => void;
   private placeNames = true;
+  private placesView?: PlacesView;
   private places: Place[] | undefined;
   private placesLoading = false;
   private placesFailed = false;
@@ -443,6 +445,7 @@ export class AtlasMap {
     this.tiles.retry();
     this.labels.retry();
     this.placesFailed = false;
+    this.placesView?.retry();
     this.invalidate();
   }
   setGrid(grid: boolean) {
@@ -536,27 +539,15 @@ export class AtlasMap {
   }
   private visiblePlaces(): Place[] {
     if (!this.placeNames) return [];
-    if (!this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY))
-      return this.reader.index.manifest.places;
-    if (!this.places && !this.placesLoading && !this.placesFailed) {
-      this.placesLoading = true;
-      this.reader
-        .block(PLACE_LABEL_KEY)
-        .then((bytes) => {
-          if (!this.dead) this.places = decodePlaces(bytes);
-        })
-        .catch((e) => {
-          if (!this.dead) {
-            this.placesFailed = true;
-            this.onError(String(e));
-          }
-        })
-        .finally(() => {
-          this.placesLoading = false;
-          this.invalidate();
-        });
-    }
-    return this.places ?? [];
+    this.placesView ??= new PlacesView(
+      this.reader,
+      () => this.invalidate(),
+      (message) => this.onError(message),
+    );
+    const values = this.placesView.update(cameraBounds(this.camera), this.zoom);
+    this.placesLoading = this.placesView.loading;
+    this.places = values;
+    return values;
   }
   private drawOverlay(
     width: number,
@@ -604,6 +595,7 @@ export class AtlasMap {
   destroy() {
     if (this.picker) this.endPicking(this.picker.owner);
     this.dead = true;
+    this.placesView?.destroy();
     this.labels.destroy();
     this.overlays.destroy();
     this.tiles.destroy();

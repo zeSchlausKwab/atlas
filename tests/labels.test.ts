@@ -185,7 +185,7 @@ test("offline map exports retain clipped labels independently of the search opti
   expect(child.index.manifest.capabilities).toContain("map-labels");
   expect(child.index.manifest.capabilities).not.toContain("location-search");
   const blocks = await Promise.all(
-    child.index.blocks
+    (await child.allBlocks())
       .filter((b) => b.key.startsWith("labels/"))
       .map(async (b) => decodeLabels(await child.block(b.key))),
   );

@@ -89,7 +89,9 @@ test("paged search preserves ranking, aliases, substrings, context and nearest s
     const reads: string[] = [];
     const reader = await new AtlasReader(
       new FileSource(Bun.file(dir + "/map.atlas")),
-      e => { reads.push(e.key); },
+      (e) => {
+        reads.push(e.key);
+      },
     ).open();
     const paged = new AtlasGeocoder(reader);
     const ref = await new AtlasReader(
@@ -154,3 +156,81 @@ test("paged search preserves ranking, aliases, substrings, context and nearest s
     await rm(dir, { recursive: true, force: true });
   }
 }, 30000);
+
+test("broad name/context postings intersect without loading all candidates", async () => {
+  const { termKey, termBucket, ordinalKey, POSTINGS_PER_PAGE } = await import(
+    "../packages/geocoding/src/paging"
+  );
+  const blocks: { key: string; bytes: Uint8Array }[] = [],
+    groups = new Map<number, any[]>();
+  let page = 0;
+  for (const [terms, start] of [
+    [["alp", "lph", "pha"], 0],
+    [["ome", "meg", "ega"], 49999],
+  ] as [string[], number][]) {
+    const begin = page,
+      count = 50001;
+    for (let i = 0; i < count; i += POSTINGS_PER_PAGE)
+      blocks.push({
+        key: ordinalKey("postings", page++),
+        bytes: encode({
+          schema: "postings-v1",
+          ids: Array.from(
+            { length: Math.min(POSTINGS_PER_PAGE, count - i) },
+            (_, j) => start + i + j,
+          ),
+        }),
+      });
+    for (const term of terms) {
+      const bucket = termBucket(term),
+        values = groups.get(bucket) ?? [];
+      values.push({ term, count, start: begin, pages: page - begin });
+      groups.set(bucket, values);
+    }
+  }
+  for (const [bucket, terms] of groups)
+    blocks.push({
+      key: termKey(bucket),
+      bytes: encode({ schema: "terms-v1", terms }),
+    });
+  const recordPage = Math.floor(49999 / 256),
+    records: Location[] = Array.from({ length: 256 }, (_, i) => ({
+      id: `node/${recordPage * 256 + i}`,
+      name: [49999, 50000].includes(recordPage * 256 + i)
+        ? "Alpha Omega"
+        : "Other",
+      aliases: [],
+      kind: "poi",
+      category: "museum",
+      coordinates: [16, 48],
+    }));
+  blocks.push(
+    {
+      key: ordinalKey("records", recordPage),
+      bytes: encode({ schema: "locations-v1", records }),
+    },
+    {
+      key: "search/locations",
+      bytes: encode({
+        schema: "locations-paged-v1",
+        records: 100001,
+        pages: Math.ceil(100001 / 256),
+      }),
+    },
+  );
+  const reader = await new AtlasReader(
+    new FileSource(
+      new Blob([
+        await encodePackage(
+          { ...m, capabilities: ["location-search"] },
+          blocks,
+          { paged: true },
+        ),
+      ]),
+    ),
+  ).open();
+  const geocoder = new AtlasGeocoder(reader);
+  expect((await geocoder.search("alpha omega")).total).toBe(2);
+  await expect(geocoder.search("alpha")).rejects.toThrow("too broad");
+  reader.dispose();
+});

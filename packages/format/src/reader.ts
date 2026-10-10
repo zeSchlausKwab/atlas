@@ -1,3 +1,4 @@
+import { peakSummary } from "./peaks";
 import {
   BudgetCache,
   DecodedCache,
@@ -40,7 +41,8 @@ export function purposeOf(key: string): TransferPurpose {
   if (key.startsWith("tile/")) return "map";
   if (key.startsWith("features/") && key !== "features/geojson")
     return "features";
-  if (key === "labels/places") return "placeNames";
+  if (key === "labels/places" || key.startsWith("labels/settlements/"))
+    return "placeNames";
   if (key.startsWith("labels/"))
     return key.includes("/roads/")
       ? "streetNames"
@@ -395,6 +397,11 @@ export class AtlasReader {
   }
 
   /** Explicit full-catalog operation for auditing, never needed to display a view. */
+  async *iterateBlocks(): AsyncGenerator<Block> {
+    for (const b of this.index.blocks) yield b;
+    for (const page of this.index.pages)
+      for (const b of await this.loadPage(page)) yield b;
+  }
   async allBlocks() {
     const result = [...this.index.blocks];
     for (const page of this.index.pages)
@@ -502,28 +509,11 @@ export class AtlasReader {
     snapshot: string;
     scope: string;
   }> {
-    const peaks = JSON.parse(
-      new TextDecoder().decode(await this.block("query/peaks")),
-    ) as Peak[];
-    if (
-      !Array.isArray(peaks) ||
-      !peaks.every(
-        (p) =>
-          typeof p.name === "string" &&
-          Array.isArray(p.coordinates) &&
-          p.coordinates.length === 2 &&
-          p.coordinates.every(Number.isFinite) &&
-          (p.elevation === null || Number.isFinite(p.elevation)),
-      )
-    )
-      throw new Error("Invalid peak query block");
-    const known = peaks
-      .filter((p) => p.elevation !== null)
-      .sort((a, b) => b.elevation! - a.elevation!);
+    const result = peakSummary(
+      JSON.parse(new TextDecoder().decode(await this.block("query/peaks"))),
+    );
     return {
-      peak: known[0] ?? null,
-      known: known.length,
-      unknown: peaks.length - known.length,
+      ...result,
       snapshot: this.index.manifest.snapshot,
       scope:
         "Recorded peaks in this source extract; known numeric elevations only",
