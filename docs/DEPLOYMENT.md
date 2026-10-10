@@ -146,3 +146,35 @@ Authenticated HTTPS administration is a future demo slice.
 Resource defaults are documented in [the demo roadmap](DEMO-ROADMAP.md).
 Sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
 [Bun locked installs](https://bun.com/docs/pm/cli/install).
+
+## Live validation record — 2026-10-10
+
+Local verification passed: TypeScript, 117 Bun tests and 42 native Rust tests,
+plus both portable WASM builds and the frontend build. Resume/rate-limit changes
+also passed focused CLI tests and TypeScript. The Nix runtime was actually built
+on the HM90S (Bun 1.3.13, Rust/Cargo 1.95.0, Osmium 1.19.1). The optional NixOS
+module was evaluated against the live configuration without applying it; it kept
+the existing model-server firewall rule and enabled the proposed Atlas rule/linger.
+
+The first 5.57 GiB deployment was interrupted during upload. Three regional
+archives and the base file arrived, with the fourth partially transferred.
+No Atlas service was activated. Model serving was still active on the last
+successful check. Candidate startup, code-only update and rollback remain to be
+verified on this host once the network is stable.
+
+During a disconnect, the Mac resolved `192.168.0.179` to the server's Wi-Fi MAC
+`10:6f:d9:76:0b:f3`, while its Ethernet MAC is `1c:83:41:32:c2:53`. This is evidence
+of an interface/addressing issue consistent with ARP flux, not a confirmed complete
+network diagnosis. Ethernet-only operation or an explicit multi-interface ARP
+policy should be checked before more large transfers. Network changes were not
+made as part of deployment. See the kernel's
+[ARP behavior documentation](https://kernel.org/doc/html/latest/networking/ip-sysctl.html).
+
+The unfinished release ID is `20261010T064147309Z-a495dbcf1785-38a9b710`.
+After checking that no upload/activation remains active and clearing any abandoned
+`.deploy-lock`, resume with:
+
+```sh
+bun run deploy --map data/vienna-plus.atlas --with-library \
+  --resume 20261010T064147309Z-a495dbcf1785-38a9b710 --upload-mib 8
+```
