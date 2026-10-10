@@ -30,10 +30,14 @@ try {
     [16.876, 48.204],
     [16.874, 48.204],
     [16.88, 48.201],
+    [16.8745, 48.2012],
+    [16.8755, 48.2012],
+    [16.8755, 48.2018],
+    [16.8745, 48.2018],
   ];
   await Bun.write(
     join(dir, "fixture.osm"),
-    `<?xml version="1.0"?><osm version="0.6" generator="atlas-test">${positions.map(([lon, lat], i) => `<node id="${i + 1}" version="1" lon="${lon}" lat="${lat}">${i === 0 ? '<tag k="name" v="Seam town"/><tag k="place" v="town"/>' : i === 11 ? '<tag k="natural" v="peak"/><tag k="name" v="Test peak"/><tag k="ele" v="300"/>' : ""}</node>`).join("")}<way id="100" version="1"><nd ref="1"/><nd ref="2"/><nd ref="3"/><tag k="highway" v="residential"/><tag k="name" v="Seam road"/></way><way id="101" version="1"><nd ref="4"/><nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="4"/><tag k="building" v="yes"/><tag k="height" v="18"/><tag k="name" v="Seam museum"/><tag k="tourism" v="museum"/></way><way id="102" version="1"><nd ref="8"/><nd ref="9"/><nd ref="10"/><nd ref="11"/><nd ref="8"/><tag k="natural" v="water"/><tag k="water" v="lake"/><tag k="name" v="Seam lake"/></way></osm>`,
+    `<?xml version="1.0"?><osm version="0.6" generator="atlas-test">${positions.map(([lon, lat], i) => `<node id="${i + 1}" version="1" lon="${lon}" lat="${lat}">${i === 0 ? '<tag k="name" v="Seam town"/><tag k="place" v="town"/>' : i === 11 ? '<tag k="natural" v="peak"/><tag k="name" v="Test peak"/><tag k="ele" v="300"/>' : ""}</node>`).join("")}<way id="100" version="1"><nd ref="1"/><nd ref="2"/><nd ref="3"/><tag k="highway" v="residential"/><tag k="name" v="Seam road"/></way><way id="101" version="1"><nd ref="4"/><nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="4"/></way><way id="102" version="1"><nd ref="8"/><nd ref="9"/><nd ref="10"/><nd ref="11"/><nd ref="8"/><tag k="natural" v="water"/><tag k="water" v="lake"/><tag k="name" v="Seam lake"/></way><way id="103" version="1"><nd ref="13"/><nd ref="14"/><nd ref="15"/><nd ref="16"/><nd ref="13"/></way><relation id="200" version="1"><member type="way" ref="101" role="outer"/><member type="way" ref="103" role="inner"/><tag k="type" v="multipolygon"/><tag k="building" v="yes"/><tag k="height" v="18"/><tag k="name" v="Seam museum"/><tag k="tourism" v="museum"/></relation></osm>`,
   );
   const pbf = join(dir, "fixture.osm.pbf");
   await runCompiler(
@@ -101,6 +105,67 @@ try {
   );
   assert.ok(reused);
   const root = await new AtlasReader(new FileSource(Bun.file(compiled))).open();
+  // Compare all tiles with an independently generated non-partitioned reference.
+  // The building courtyard and lake both straddle the ownership boundary.
+  const reference = join(dir, "reference.atlas"),
+    recipe = join(dir, "reference.json");
+  await Bun.write(
+    recipe,
+    JSON.stringify({
+      ...s,
+      profiles: [],
+      featureKinds: [],
+      placeNames: false,
+      streetNames: false,
+      pois: false,
+      search: false,
+      reverse: false,
+      peaks: false,
+    }),
+  );
+  await runCompiler(
+    [
+      process.execPath,
+      "packages/cli/src/index.ts",
+      "generate",
+      "--input",
+      join(dir, "work/area.osm.pbf"),
+      "--output",
+      reference,
+      "--min-zoom",
+      "0",
+      "--max-zoom",
+      "16",
+      "--bounds",
+      planCachedBuild(s).bounds.join(","),
+      "--selection",
+      recipe,
+      "--no-source-features",
+    ],
+    process.cwd(),
+    signal(),
+  );
+  const expected = await new AtlasReader(
+    new FileSource(Bun.file(reference)),
+  ).open();
+  const actualTiles = (await root.allBlocks()).filter((b) =>
+    b.key.startsWith("tile/"),
+  );
+  const expectedTiles = await expected.allBlocks();
+  assert.deepEqual(
+    actualTiles.map((b) => b.key).sort(),
+    expectedTiles.map((b) => b.key).sort(),
+  );
+  for (const block of actualTiles)
+    assert.deepEqual(
+      await root.block(block.key),
+      await expected.block(block.key),
+      block.key,
+    );
+  expected.dispose();
+  console.log(
+    `${actualTiles.length} partitioned tiles exactly match the reference, including courtyard and lake seams.`,
+  );
   const final = join(dir, "final.atlas");
   await preparePackage(
     root,

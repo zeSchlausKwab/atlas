@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import {
   BuildCheckpoints,
+  cachedSourceDate,
   planCachedBuild,
   ownsDetailTile,
   DETAIL_PARTITION_ZOOM,
@@ -78,6 +79,7 @@ test("checkpoint resumes complete artifacts only, refuses changed recipes and da
     await first.complete("area.osm.pbf");
     const resumed = await new BuildCheckpoints(dir, "recipe-a").open();
     expect(await resumed.reusable("area.osm.pbf")).toBe(true);
+    expect(await Bun.file(dir + "/partial").exists()).toBe(false);
     await expect(new BuildCheckpoints(dir, "recipe-b").open()).rejects.toThrow(
       "changed",
     );
@@ -122,4 +124,13 @@ test("cached build inputs must be published verified jobs; arbitrary paths and p
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("provenance uses the pinned source date rather than its publication date", () => {
+  expect(
+    cachedSourceDate({
+      url: "https://planet.openstreetmap.org/pbf/planet-261005.osm.pbf",
+      lastModified: "2026-10-08T12:00:00Z",
+    }),
+  ).toBe("2026-10-05");
 });

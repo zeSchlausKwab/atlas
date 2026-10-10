@@ -309,7 +309,8 @@ function updateComposition() {
     ? "These sources will share one map view."
     : "Choose maps below, or open the full library.";
 }
-let lastJobs = "";
+let lastJobs = "",
+  lastSources = "";
 function jobs(values: PreparationJob[]) {
   const identity = JSON.stringify(values);
   if (identity === lastJobs) return;
@@ -406,7 +407,7 @@ function jobs(values: PreparationJob[]) {
           progress,
           text(
             "p",
-            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit === "stages" ? "stages" : "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} Atlas written`,
+            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit === "stages" ? "stages" : "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} ${job.progress.unit === "stages" ? "saved stage data" : "Atlas written"}`,
             "quiet",
           ),
         );
@@ -462,26 +463,29 @@ async function refresh() {
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
     jobs(data.jobs);
-    const select = el<HTMLSelectElement>("data-source");
-    const savedValue = select.value;
     const sources = data.cachedSources ?? [];
-    for (const option of select.querySelectorAll('option[value^="cached:"]'))
-      option.remove();
-    for (const item of sources) {
-      const option = new Option(
-        `Cached ${item.name} · verified`,
-        `cached:${item.id}`,
-      );
-      select.append(option);
+    const sourceIdentity = JSON.stringify(sources);
+    if (sourceIdentity !== lastSources) {
+      lastSources = sourceIdentity;
+      const select = el<HTMLSelectElement>("data-source"),
+        savedValue = select.value;
+      for (const option of select.querySelectorAll('option[value^="cached:"]'))
+        option.remove();
+      for (const item of sources)
+        select.append(
+          new Option(`Cached ${item.name} · verified`, `cached:${item.id}`),
+        );
+      if ([...select.options].some((o) => o.value === savedValue))
+        select.value = savedValue;
+      const corridor = document.getElementById(
+        "source-corridor",
+      ) as HTMLButtonElement;
+      corridor.disabled = !sources.length;
+      corridor.dataset.source =
+        sources.find((s: any) => s.kind === "planet")?.id ??
+        sources[0]?.id ??
+        "";
     }
-    if ([...select.options].some((o) => o.value === savedValue))
-      select.value = savedValue;
-    const corridor = document.getElementById(
-      "source-corridor",
-    ) as HTMLButtonElement;
-    corridor.disabled = !sources.length;
-    corridor.dataset.source =
-      sources.find((s: any) => s.kind === "planet")?.id ?? sources[0]?.id ?? "";
     storage =
       typeof data.storage?.availableBytes === "number"
         ? data.storage

@@ -1,4 +1,4 @@
-import { mkdir, rename, rm, stat, statfs } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -126,7 +126,19 @@ export class BuildCheckpoints {
         );
       this.state = saved;
     }
+    // Unfinished compiler scratch is not a checkpoint. Process-group cancellation
+    // can leave transport spools and JSON behind; don't accumulate them on resume.
+    const keep = new Set(["build.json", ...Object.keys(this.state.completed)]);
+    for (const name of await readdir(this.directory))
+      if (!keep.has(name))
+        await rm(join(this.directory, name), { recursive: true, force: true });
     return this;
+  }
+  get savedBytes() {
+    return Object.values(this.state.completed).reduce(
+      (sum, v) => sum + v.bytes,
+      0,
+    );
   }
   async reusable(name: string) {
     const saved = this.state.completed[name],
@@ -152,6 +164,14 @@ export class BuildCheckpoints {
     await Bun.write(record + ".tmp", JSON.stringify(this.state));
     await rename(record + ".tmp", record);
   }
+}
+export function cachedSourceDate(
+  source: Pick<CachedSource, "url" | "lastModified">,
+) {
+  const date = source.url.match(/-(\d{2})(\d{2})(\d{2})\.osm\.pbf$/);
+  return date
+    ? `20${date[1]}-${date[2]}-${date[3]}`
+    : source.lastModified.slice(0, 10);
 }
 export async function importCachedPbf(
   source: VerifiedBuildSource,
@@ -187,7 +207,7 @@ export async function importCachedPbf(
       total,
       unit: "stages",
       readBytes: 0,
-      writtenBytes: 0,
+      writtenBytes: checkpoint.savedBytes,
     });
   async function space() {
     const fs = await statfs(work);
@@ -215,6 +235,15 @@ export async function importCachedPbf(
     await build(output);
     signal.throwIfAborted();
     await checkpoint.complete(name);
+    report({
+      phase,
+      message: `[${stage}/${total}] Saved ${message}`,
+      completed: stage,
+      total,
+      unit: "stages",
+      readBytes: 0,
+      writtenBytes: checkpoint.savedBytes,
+    });
   }
   async function extract(input: string, output: string, bounds: Bounds) {
     const partial = output + ".part.osm.pbf",
@@ -285,7 +314,7 @@ export async function importCachedPbf(
         extraction: {
           bounds: plan.bounds,
           strategy: "smart; types=multipolygon,restriction; cached-build-v1",
-          sourceDate: source.lastModified.slice(0, 10),
+          sourceDate: cachedSourceDate(source),
         },
       }),
     );
@@ -451,7 +480,7 @@ export async function importCachedPbf(
     total,
     unit: "stages",
     readBytes: 0,
-    writtenBytes: 0,
+    writtenBytes: checkpoint.savedBytes,
   });
   return join(work, "source.atlas");
 }
