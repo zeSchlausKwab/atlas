@@ -229,3 +229,29 @@ running the saved Europe recipe, partition graph/semantic construction and
 search indexing, bound final directory memory, and make routing coverage / work
 budgets explicit in build and operation interfaces. Do not remove the regional
 admission guards merely because the source PBF fits on disk.
+
+## Partitioned compiler deployment and first Europe run — 2026-10-10
+
+Compiler implementation commits: `fdb085b` and `8780ef9`. Deployed revision
+`3c0cca4` (including corrected host copy) as release
+`20261010T172931718Z-3c0cca454c9d-04440439`. Both host and the local standalone
+client understand the new semantic pages. The existing map library remains
+available and the independent model service remains active.
+
+Validation passed: 143 Bun tests, Rust workspace tests, TypeScript, both browser
+builds, source parity and full-package parity. In the real browser, Vaduz search
+returned 148 matches with 0.15 MB read, and the new package routed Vaduz–Triesen
+in driving mode (3.76 km, seven cells, 0.22 MB read). Direct HTTP comparisons
+matched client/server route coordinates and costs for walking, cycling and
+driving, reachable-area contours for 60/180-second bands, search, nearest street
+and highest peak.
+
+Started **Europe · all capabilities** from the host UI at 17:31:48 UTC:
+job `f338f58d-7554-41c8-8424-56d841fb3d25`. The persisted recipe contains z0–16,
+six display layers, all labels, three profiles, search, reverse geocoding,
+peaks, all five extraction categories, one routing padding cell and a 128 GiB
+output budget. It uses the verified 88.70 GiB planet cache. Roughly 285 GiB was
+free at launch. The progress card and `osmium` process confirmed extraction was
+running (6% at observation); this percentage is extraction progress, not total
+build completion. Continental compilation, final size and peak resource use
+remain unverified until the job completes.
