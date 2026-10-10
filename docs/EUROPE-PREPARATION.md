@@ -106,3 +106,11 @@ systemd limit killed the old implementation in 255 ms. Sequential ranges
 completed and verified the same fixture in 9.7 seconds. Run the reusable check
 on the Linux server with `bun run verify:source-memory`. Fixture files and the
 transient test unit are cleaned up; it does not read or change the planet cache.
+
+Deployed fix `b758a4e`, then replaced the existing worker at 14:13 CEST while
+preserving 30,665,495,147 downloaded bytes. The fixed worker continued past
+31.1 GB with about 24 MiB anonymous memory at inspection and zero cgroup OOM
+or memory-limit events. The deployed memory regression also passed in 10.2 s.
+The host UI showed downloading, and the existing model service remained active.
+The planet transfer was still in progress; final checksum verification remains
+part of the completion path.
