@@ -199,13 +199,18 @@ export async function importCachedPbf(
   const checkpoint = await new BuildCheckpoints(work, identity).open();
   const total = 3 + plan.partitions.length * 2;
   let stage = 0;
-  const progress = (phase: PreparationProgress["phase"], message: string) =>
+  const progress = (
+    phase: PreparationProgress["phase"],
+    message: string,
+    stagePercent?: number,
+  ) =>
     report({
       phase,
       message: `[${stage}/${total}] ${message}`,
       completed: stage - 1,
       total,
       unit: "stages",
+      stagePercent,
       readBytes: 0,
       writtenBytes: checkpoint.savedBytes,
     });
@@ -283,7 +288,16 @@ export async function importCachedPbf(
         ],
         ROOT,
         AbortSignal.any([signal, abort.signal]),
-        (line) => progress("extracting", line),
+        (line) => {
+          const percent = line.match(/\]\s+(\d+)%/);
+          if (percent)
+            progress(
+              "extracting",
+              `Reading PBF · ${percent[1]}% of three extraction passes (the final pass writes the region)…`,
+              Number(percent[1]),
+            );
+          else progress("extracting", line);
+        },
       );
       await check();
       if (failure) throw failure;

@@ -400,8 +400,13 @@ function jobs(values: PreparationJob[]) {
       card.append(text("p", job.error ?? job.progress.message));
       if (job.state === "running" || job.state === "cancelling") {
         const progress = document.createElement("progress");
-        progress.max = job.progress.total || 1;
-        if (job.progress.total) progress.value = job.progress.completed;
+        progress.max =
+          job.progress.stagePercent !== undefined
+            ? 100
+            : job.progress.total || 1;
+        if (job.progress.stagePercent !== undefined)
+          progress.value = job.progress.stagePercent;
+        else if (job.progress.total) progress.value = job.progress.completed;
         progress.setAttribute("aria-label", `Preparing ${job.name}`);
         card.append(
           progress,

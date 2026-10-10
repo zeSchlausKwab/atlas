@@ -46,6 +46,7 @@ export interface PreparationProgress {
     | "indexing"
     | "verifying";
   unit?: "blocks" | "bytes" | "stages";
+  stagePercent?: number;
   message: string;
   completed: number;
   total: number;
