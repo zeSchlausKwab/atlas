@@ -16,6 +16,7 @@
     "atlas.plugins.ts",
     "packages/**/*.ts",
     "scripts/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "deploy/**/*.ts"
   ]
 }

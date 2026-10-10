@@ -19,7 +19,8 @@
     "data:vienna": "bun scripts/vienna-plus.ts",
     "demo:contextvm": "bun scripts/contextvm-demo.ts",
     "data:danube": "bun scripts/danube-composition.ts",
-    "verify:composition": "bun scripts/verify-composition.ts"
+    "verify:composition": "bun scripts/verify-composition.ts",
+    "deploy": "bun scripts/deploy.ts"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

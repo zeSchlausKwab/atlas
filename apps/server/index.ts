@@ -13,13 +13,15 @@ import { createApiHandler } from "./api";
 import { servePackage } from "./ranges";
 import { PackageSource } from "./package-source";
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const mapPath = resolve(
-  root,
-  process.env.ATLAS_FILE ??
-    ((await Bun.file(resolve(root, "data/vienna-plus.atlas")).exists())
-      ? "data/vienna-plus.atlas"
-      : "data/liechtenstein.atlas"),
-);
+const dataDir = resolve(root, process.env.ATLAS_DATA_DIR ?? "data");
+const mapPath = process.env.ATLAS_FILE
+  ? resolve(root, process.env.ATLAS_FILE)
+  : resolve(
+      dataDir,
+      (await Bun.file(resolve(dataDir, "vienna-plus.atlas")).exists())
+        ? "vienna-plus.atlas"
+        : "liechtenstein.atlas",
+    );
 const snapshot = await PackageSource.open(mapPath);
 const etag = snapshot.etag;
 const pluginAssets = await buildPlugins(root);
@@ -58,7 +60,9 @@ const host = new OperationHost(engine);
 let cvm: Awaited<ReturnType<typeof startContextVM>>;
 const policy = await hostPolicy(
   host,
-  resolve(root, process.env.ATLAS_HOST_POLICY ?? "data/host-policy.json"),
+  process.env.ATLAS_HOST_POLICY
+    ? resolve(root, process.env.ATLAS_HOST_POLICY)
+    : resolve(dataDir, "host-policy.json"),
   () => {
     void cvm?.sendToolListChanged().catch(console.error);
   },
@@ -66,7 +70,7 @@ const policy = await hostPolicy(
 cvm = await startContextVM(host);
 const api = createApiHandler(engine, host);
 const preparations = await Preparations.open(
-  resolve(root, "data/hosted"),
+  resolve(dataDir, "hosted"),
   mapPath,
   engine.reader.index.manifest,
 );
@@ -138,6 +142,18 @@ const server = Bun.serve({
   maxRequestBodySize: 16384,
   async fetch(request, bunServer) {
     const path = new URL(request.url).pathname;
+    if (
+      path.startsWith("/admin/") &&
+      request.method !== "GET" &&
+      (await Bun.file(resolve(dataDir, "deploy-maintenance")).exists())
+    )
+      return Response.json(
+        { error: "Deployment in progress. Try again shortly." },
+        {
+          status: 503,
+          headers: { "Retry-After": "5", "Cache-Control": "no-store" },
+        },
+      );
     if (path.startsWith("/admin/preparations"))
       return preparations.handle(
         request,
@@ -181,6 +197,7 @@ const server = Bun.serve({
     if (path === "/health")
       return Response.json({
         ok: true,
+        release: process.env.ATLAS_RELEASE ?? null,
         bytes: snapshot.size,
         etag,
         name: engine.reader.index.manifest.name,

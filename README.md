@@ -235,3 +235,13 @@ Integer zoom transitions retain the current visible geometry until the next deta
 [Hosting, ContextVM tools and composed maps](docs/HOSTING-DISCUSSION.md) defines the proposed dataset/package/offer/view split, host UI, capability semantics and shared-snapshot Vienna–Bratislava proof. The host console now prepares and serves multiple excerpts with independently selected capabilities. It has an OpenFreeMap/local Atlas area picker, background progress/cancellation, and a persistent library. The worldwide OSM option finds a covering Geofabrik PBF, shows its full download size, downloads/crops it locally with Osmium, and compiles selected capabilities; source and output budgets are independent. Disk-aware sliders and exact inputs set arbitrary source/output budgets. The initial importer uses one covering region, not geographic byte reads from a planet PBF. [Try host preparation](docs/HOST-PREPARATION.md). ContextVM currently serves the configured source; multi-map ContextVM dispatch, announcements and federation remain future work.
 
 [Extensible capabilities and plugins](docs/EXTENSIONS.md) develops the open operation registry, plugin SDK, data/build extensions and ContextVM tool projection. The first trusted TypeScript slice is working: a generic **Tools** tab, fingerprinted **Largest lakes** plugin, local/server comparison, GeoJSON selection/export and persisted **Host console** switches. [Try it or author a plugin](docs/PLUGIN-DEMO.md). Run `bun run demo:contextvm` for a real MCP/ContextVM round trip over an isolated local Nostr relay.
+
+## NixOS demo deployment
+
+`bun run deploy --dry-run` previews deployment of the current working tree. The first
+release uses `bun run deploy --map data/vienna-plus.atlas --with-library`; subsequent
+`bun run deploy` commands update code while retaining server maps and settings.
+`bun run deploy tunnel` opens access at http://127.0.0.1:13100.
+See [deployment, rollback and NixOS setup](docs/DEPLOYMENT.md) and the
+[server demo roadmap](docs/DEMO-ROADMAP.md). `ATLAS_DATA_DIR` keeps runtime state
+outside code releases; `/health` reports the deployed release identifier.
