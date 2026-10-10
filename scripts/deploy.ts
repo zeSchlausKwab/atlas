@@ -312,7 +312,7 @@ Uses a user service. No sudo, firewall changes or public announcements.
       ),
     );
     console.error(
-      `Open the demo with: bun run deploy tunnel --local-port ${o.localPort}`,
+      `Open the server console via: bun run deploy tunnel --local-port ${o.localPort}`,
     );
   } catch (error) {
     console.error(

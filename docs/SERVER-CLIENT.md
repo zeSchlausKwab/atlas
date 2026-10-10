@@ -90,3 +90,25 @@ TLS or authentication configuration, or publish Nostr announcements.
 fixture. It checks the app boundary, range/ETag round trips, cross-origin operation
 preflight and result identity, separate client/server data reads, admin isolation,
 restricted CORS origins and correct links between the two applications.
+
+## Live verification — 2026-10-10
+
+The split was deployed to the HM90S with all existing map files retained. Its
+systemd service runs the backend on port 3100, reached from the Mac through 13100.
+The Mac's separate client process serves only static assets on 5173.
+
+Browser checks against the actual remote server confirmed:
+
+- All four prepared regional maps rendered together, with 206 range reads.
+- A search for Stephansplatz in Vienna & Lower Austria ran on the server:
+  1,113 ms reported and 1.7 KB returned; client search payload reads remained zero.
+- The host library opened its Vienna map at the client origin with the backend
+  address and map identity preserved.
+- The Vienna Plus walking example, Stephansplatz → Praterstern, ran on the server:
+  2.06 km, about 26 minutes, 124 ms reported and 6.8 KB returned. The server read
+  three routing cells (0.56 MB); the client received the route, not the graph.
+- No browser console errors were reported on the successful route page.
+
+These are functional checks and individual observations, not a performance benchmark.
+TypeScript validation and all 122 Bun tests passed, including five new split-boundary
+integration tests. Deployment's native Linux build and candidate smoke checks passed.

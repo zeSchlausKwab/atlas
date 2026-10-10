@@ -518,6 +518,7 @@ function configureSource() {
   clear();
 }
 export async function startBuilder() {
+  updateComposition();
   outputBudget = budgetControl("prepare-budget");
   sourceBudget = budgetControl("prepare-source-budget");
   el("storage-refresh").onclick = async () => {

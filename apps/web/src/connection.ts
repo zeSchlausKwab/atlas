@@ -10,6 +10,8 @@ export async function clientConnection() {
     new URL(path.replace(/^\//, ""), server).href;
   const input = document.getElementById("server-address") as HTMLInputElement;
   input.value = server;
+  document.querySelector<HTMLAnchorElement>('[aria-label="Atlas home"]')!.href =
+    clientLink(location.href, server);
   (document.getElementById("compose-all") as HTMLAnchorElement).href =
     clientLink(location.href, server);
   document.getElementById("server-status")!.textContent =
