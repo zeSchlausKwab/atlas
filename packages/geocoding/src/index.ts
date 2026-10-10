@@ -1,3 +1,17 @@
+import { project } from "../../format/src/index";
+import {
+  ordinalKey,
+  termBucket,
+  termKey,
+  queryGrams,
+  RECORDS_PER_PAGE,
+  POSTINGS_PER_PAGE,
+  STREET_ZOOM,
+  MAX_SEARCH_PAGE,
+  MAX_CANDIDATES,
+  type SearchCatalog,
+  type Term,
+} from "./paging";
 import { AtlasReader } from "../../format/src/reader";
 import {
   type Location,
@@ -44,7 +58,7 @@ function baseValid(r: unknown): r is Location | Street {
     aliasesValid(v.aliases)
   );
 }
-function locations(bytes: Uint8Array) {
+export function locations(bytes: Uint8Array) {
   const data = JSON.parse(new TextDecoder().decode(bytes)) as LocationBlock;
   if (
     data?.schema !== "locations-v1" ||
@@ -70,7 +84,7 @@ function locations(bytes: Uint8Array) {
     context: normalize(record.context ?? ""),
   }));
 }
-function streets(bytes: Uint8Array) {
+export function streets(bytes: Uint8Array) {
   const data = JSON.parse(new TextDecoder().decode(bytes)) as StreetBlock;
   let points = 0;
   if (
@@ -104,7 +118,39 @@ function streets(bytes: Uint8Array) {
     return { street, bounds };
   });
 }
+export function rankLocations(names: ReturnType<typeof locations>, q: string) {
+  const tokens = q.split(" ");
+  return names
+    .flatMap(({ record, names, context }) => {
+      let score = Infinity;
+      for (const name of names) {
+        const words = name.split(" ");
+        if (name === q) score = Math.min(score, 0);
+        else if (name.startsWith(q)) score = Math.min(score, 1);
+        else if (tokens.every((t) => words.some((w) => w.startsWith(t))))
+          score = Math.min(score, 2);
+        else if (tokens.every((t) => name.includes(t)))
+          score = Math.min(score, 3);
+        else if (
+          tokens.some((t) => name.includes(t)) &&
+          tokens.every((t) => `${name} ${context}`.includes(t))
+        )
+          score = Math.min(score, 4);
+      }
+      return Number.isFinite(score) ? [{ record, score }] : [];
+    })
+    .sort(
+      (a, b) =>
+        a.score - b.score ||
+        (a.record.kind === "place" ? 0 : 1) -
+          (b.record.kind === "place" ? 0 : 1) ||
+        a.record.name.localeCompare(b.record.name, "de") ||
+        a.record.id.localeCompare(b.record.id),
+    );
+}
 export class AtlasGeocoder {
+  private catalog?: SearchCatalog;
+  private pagedStreets = false;
   private names?: ReturnType<typeof locations>;
   private roads?: ReturnType<typeof streets>;
   private pendingNames?: Promise<void>;
@@ -132,42 +178,28 @@ export class AtlasGeocoder {
       throw new Error("Search limit must be 1–30");
     if (q.length < 2 || q.length > 120)
       throw new Error("Enter between 2 and 120 searchable characters.");
-    if (!this.names) {
+    if (!this.names && !this.catalog) {
       this.pendingNames ??= this.load("search/locations", "location-search")
         .then((bytes) => {
-          this.names = locations(bytes);
+          const root = JSON.parse(new TextDecoder().decode(bytes));
+          if (root.schema === "locations-paged-v1") {
+            if (
+              !Number.isSafeInteger(root.records) ||
+              root.records < 0 ||
+              root.records > 2 ** 32 ||
+              root.pages !== Math.ceil(root.records / RECORDS_PER_PAGE)
+            )
+              throw new Error("Invalid paged search catalog");
+            this.catalog = root;
+          } else this.names = locations(bytes);
         })
         .finally(() => {
           this.pendingNames = undefined;
         });
       await this.pendingNames;
     }
-    const tokens = q.split(" ");
-    const ranked = this.names!.flatMap(({ record, names, context }) => {
-      let score = Infinity;
-      for (const name of names) {
-        const words = name.split(" ");
-        if (name === q) score = Math.min(score, 0);
-        else if (name.startsWith(q)) score = Math.min(score, 1);
-        else if (tokens.every((t) => words.some((w) => w.startsWith(t))))
-          score = Math.min(score, 2);
-        else if (tokens.every((t) => name.includes(t)))
-          score = Math.min(score, 3);
-        else if (
-          tokens.some((t) => name.includes(t)) &&
-          tokens.every((t) => `${name} ${context}`.includes(t))
-        )
-          score = Math.min(score, 4);
-      }
-      return Number.isFinite(score) ? [{ record, score }] : [];
-    }).sort(
-      (a, b) =>
-        a.score - b.score ||
-        (a.record.kind === "place" ? 0 : 1) -
-          (b.record.kind === "place" ? 0 : 1) ||
-        a.record.name.localeCompare(b.record.name, "de") ||
-        a.record.id.localeCompare(b.record.id),
-    );
+    if (this.catalog) return this.searchPaged(q, limit);
+    const ranked = rankLocations(this.names!, q);
     return {
       matches: ranked.slice(0, limit).map((r) => r.record),
       total: ranked.length,
@@ -176,14 +208,142 @@ export class AtlasGeocoder {
       scope: SCOPE,
     };
   }
+  private async searchPaged(q: string, limit: number): Promise<SearchResult> {
+    const before = this.reader.requests;
+    let readBytes = 0;
+    const json = async (key: string) => {
+      const bytes = await this.reader.block(key);
+      readBytes += bytes.length;
+      if (bytes.length > MAX_SEARCH_PAGE || readBytes > 64 * 1024 * 1024)
+        throw new Error(
+          "Search read budget reached. Add a more specific name or place.",
+        );
+      return JSON.parse(new TextDecoder().decode(bytes));
+    };
+    const catalogs = new Map<number, Term[]>();
+    let chosen: Term | undefined;
+    for (const gram of queryGrams(q)) {
+      const bucket = termBucket(gram);
+      if (!catalogs.has(bucket)) {
+        const x = bucket >> 8,
+          y = bucket & 255;
+        const blocks = await this.reader.spatial("search/terms", 8, x, x, y, y);
+        if (!blocks.length) return this.emptySearch(before);
+        const data = await json(termKey(bucket));
+        if (
+          data.schema !== "terms-v1" ||
+          !Array.isArray(data.terms) ||
+          data.terms.length > 10000 ||
+          !data.terms.every(
+            (t: Term) =>
+              typeof t.term === "string" &&
+              t.term.length >= 1 &&
+              t.term.length <= 3 &&
+              termBucket(t.term) === bucket &&
+              Number.isSafeInteger(t.count) &&
+              t.count > 0 &&
+              t.count <= this.catalog!.records &&
+              Number.isSafeInteger(t.start) &&
+              t.start >= 0 &&
+              t.start + t.pages <= 2 ** 32 &&
+              t.pages === Math.ceil(t.count / POSTINGS_PER_PAGE),
+          )
+        )
+          throw new Error("Invalid search term catalog");
+        catalogs.set(bucket, data.terms);
+      }
+      const term = catalogs.get(bucket)!.find((t) => t.term === gram);
+      if (!term) return this.emptySearch(before);
+      if (!chosen || term.count < chosen.count) chosen = term;
+    }
+    if (!chosen) return this.emptySearch(before);
+    if (chosen.count > MAX_CANDIDATES)
+      throw new Error(
+        "This search is too broad. Add a more specific name or place.",
+      );
+    const candidates = new Map<number, number[]>();
+    let previous = -1,
+      count = 0;
+    for (let p = 0; p < chosen.pages; p++) {
+      const data = await json(ordinalKey("postings", chosen.start + p));
+      if (
+        data.schema !== "postings-v1" ||
+        !Array.isArray(data.ids) ||
+        data.ids.length !==
+          Math.min(POSTINGS_PER_PAGE, chosen.count - p * POSTINGS_PER_PAGE)
+      )
+        throw new Error("Invalid search postings");
+      for (const id of data.ids) {
+        if (
+          !Number.isInteger(id) ||
+          id <= previous ||
+          id >= this.catalog!.records
+        )
+          throw new Error("Invalid search record reference");
+        previous = id;
+        count++;
+        const page = Math.floor(id / RECORDS_PER_PAGE);
+        let ids = candidates.get(page);
+        if (!ids) candidates.set(page, (ids = []));
+        ids.push(id % RECORDS_PER_PAGE);
+      }
+    }
+    if (count !== chosen.count)
+      throw new Error("Search posting count mismatch");
+    const matches: ReturnType<typeof locations> = [];
+    for (const [page, ids] of candidates) {
+      const bytes = await this.reader.block(ordinalKey("records", page));
+      readBytes += bytes.length;
+      if (bytes.length > MAX_SEARCH_PAGE || readBytes > 64 * 1024 * 1024)
+        throw new Error(
+          "Search read budget reached. Add a more specific name or place.",
+        );
+      const records = locations(bytes);
+      if (
+        records.length !==
+        Math.min(
+          RECORDS_PER_PAGE,
+          this.catalog!.records - page * RECORDS_PER_PAGE,
+        )
+      )
+        throw new Error("Search record page length mismatch");
+      for (const id of ids) matches.push(records[id]!);
+    }
+    const ranked = rankLocations(matches, q);
+    return {
+      matches: ranked.slice(0, limit).map((r) => r.record),
+      total: ranked.length,
+      snapshot: this.reader.index.manifest.snapshot,
+      cached: before === this.reader.requests,
+      scope: SCOPE,
+    };
+  }
+  private emptySearch(before: number): SearchResult {
+    return {
+      matches: [],
+      total: 0,
+      snapshot: this.reader.index.manifest.snapshot,
+      cached: before === this.reader.requests,
+      scope: SCOPE,
+    };
+  }
   async reverse(point: Position): Promise<ReverseResult> {
     if (!validPosition(point))
       throw new Error("Invalid longitude/latitude coordinate");
     const cached = !!this.roads || this.reader.cache.has("search/streets");
-    if (!this.roads) {
+    if (!this.roads && !this.pagedStreets) {
       this.pendingRoads ??= this.load("search/streets", "reverse-street")
         .then((bytes) => {
-          this.roads = streets(bytes);
+          const root = JSON.parse(new TextDecoder().decode(bytes));
+          if (root.schema === "streets-paged-v1") {
+            if (
+              root.zoom !== STREET_ZOOM ||
+              !Number.isSafeInteger(root.streets) ||
+              root.streets < 0
+            )
+              throw new Error("Invalid paged street catalog");
+            this.pagedStreets = true;
+          } else this.roads = streets(bytes);
         })
         .finally(() => {
           this.pendingRoads = undefined;
@@ -197,11 +357,39 @@ export class AtlasGeocoder {
       (Math.asin(Math.sin(angular) / Math.cos((point[1] * Math.PI) / 180)) *
         180) /
       Math.PI;
+    const before = this.reader.requests;
+    let roads = this.roads;
+    if (this.pagedStreets) {
+      const n = 2 ** STREET_ZOOM,
+        a = project(Math.max(-180, point[0] - dx), Math.min(85, point[1] + dy)),
+        b = project(Math.min(180, point[0] + dx), Math.max(-85, point[1] - dy));
+      roads = [];
+      const seen = new Set<string>();
+      for (const cell of await this.reader.spatial(
+        "search/streets-data",
+        STREET_ZOOM,
+        Math.max(0, Math.floor(a[0] * n)),
+        Math.min(n - 1, Math.floor(b[0] * n)),
+        Math.max(0, Math.floor(a[1] * n)),
+        Math.min(n - 1, Math.floor(b[1] * n)),
+      )) {
+        for (const r of streets(await this.reader.block(cell.key))) {
+          const identity = r.street.id + JSON.stringify(r.street.coordinates);
+          if (!seen.has(identity)) {
+            seen.add(identity);
+            roads.push(r);
+          }
+        }
+      }
+      roads.sort((a, b) =>
+        a.street.id < b.street.id ? -1 : a.street.id > b.street.id ? 1 : 0,
+      );
+    }
     let match: ReverseResult["match"] = null;
     for (const {
       street,
       bounds: [w, s, e, n],
-    } of this.roads!) {
+    } of roads!) {
       if (
         e < point[0] - dx ||
         w > point[0] + dx ||
@@ -225,7 +413,9 @@ export class AtlasGeocoder {
       requested: point,
       limitMeters: REVERSE_LIMIT_METERS,
       snapshot: this.reader.index.manifest.snapshot,
-      cached,
+      cached: this.pagedStreets
+        ? cached && before === this.reader.requests
+        : cached,
       scope: SCOPE,
     };
   }

@@ -1,3 +1,4 @@
+import { pagedZoom } from "../../geocoding/src/paging";
 /** ATLAS v0.1: immutable single-file package with independently addressed blocks. */
 export const MAGIC = "ATLAS001";
 export const HEADER_SIZE = 32;
@@ -151,7 +152,7 @@ export interface Block {
 export const INDEX_PAGE_SIZE = 32;
 export function spatialAddress(key: string) {
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|search\/(?:records|postings|terms|streets-data|locations-data)|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -417,9 +418,11 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
               : !!manifest.tileLayers)
           : isRoutingCell(`${p.prefix}/`)
             ? p.z !== routingZoom(manifest, p.prefix!)
-            : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                p.prefix!,
-              ) || p.z !== manifest.featureZoom) ||
+            : pagedZoom(p.prefix!) !== undefined
+              ? p.z !== pagedZoom(p.prefix!)
+              : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                  p.prefix!,
+                ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -533,6 +536,21 @@ export function validateBlocks(
         a.y >= 2 ** a.z
       )
         throw new Error("Invalid feature address");
+    }
+    if (
+      block.key.startsWith("search/") &&
+      !["search/locations", "search/streets"].includes(block.key)
+    ) {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== pagedZoom(a.prefix) ||
+        a.x >= 2 ** a.z ||
+        a.y >= 2 ** a.z ||
+        block.key !== `${a.prefix}/${a.z}/${a.x}/${a.y}` ||
+        (block.rawLength ?? block.length) > 4 * 1024 * 1024
+      )
+        throw new Error("Invalid search page address or size");
     }
     if (isRoutingCell(block.key)) {
       const a = spatialAddress(block.key);

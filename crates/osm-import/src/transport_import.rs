@@ -9,7 +9,7 @@ use std::{
 fn tag<'a>(t: &'a Tags, k: &str) -> &'a str {
     t.get(k).map(|v| v.as_str()).unwrap_or("")
 }
-fn restriction(t: &Tags, mode: usize) -> Option<&str> {
+pub(crate) fn restriction(t: &Tags, mode: usize) -> Option<&str> {
     let exceptions = tag(t, "except")
         .split(';')
         .map(str::trim)
@@ -58,7 +58,7 @@ fn restriction(t: &Tags, mode: usize) -> Option<&str> {
         (!r.is_empty()).then_some(r)
     }
 }
-fn turn_kind(value: &str, from: i64, to: i64) -> u8 {
+pub(crate) fn turn_kind(value: &str, from: i64, to: i64) -> u8 {
     u8::from(value.starts_with("only_"))
         + if value.ends_with("u_turn") && from == to {
             2
