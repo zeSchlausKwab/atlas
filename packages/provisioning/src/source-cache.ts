@@ -2,11 +2,15 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 export type SourceFetch = (
   url: string,
   init?: RequestInit,
 ) => Promise<Response>;
 export const SOURCE_RESERVE = 60 * 1024 ** 3;
+// Bound network read-ahead even on runtimes that do not propagate stream backpressure.
+export const SOURCE_RANGE_BYTES = 16 * 1024 ** 2;
+export class RetryableSourceError extends Error {}
 export type SourceKind = "planet" | "europe";
 export interface CachedSource {
   id: string;
@@ -20,7 +24,14 @@ export interface CachedSource {
   inspectedAt: string;
 }
 export interface SourceJob extends CachedSource {
-  state: "queued" | "downloading" | "verifying" | "paused" | "failed" | "ready";
+  state:
+    | "queued"
+    | "downloading"
+    | "retrying"
+    | "verifying"
+    | "paused"
+    | "failed"
+    | "ready";
   completed: number;
   updatedAt: string;
   message: string;
@@ -119,18 +130,18 @@ export function validateSourceResponse(
   response: Response,
   source: CachedSource,
   offset: number,
+  end = source.bytes - 1,
 ) {
   if (response.headers.get("etag") !== source.etag)
     throw new Error("Source identity changed; inspect a new source");
-  if (offset ? response.status !== 206 : response.status !== 200)
-    throw new Error(
-      `Source download: HTTP ${response.status}; expected ${offset ? 206 : 200}`,
-    );
+  const wholeFile = offset === 0 && end === source.bytes - 1;
+  if (response.status !== 206 && !(wholeFile && response.status === 200))
+    throw new Error(`Source download: HTTP ${response.status}; expected 206`);
   if (
-    Number(response.headers.get("content-length")) !== source.bytes - offset ||
-    (offset &&
+    Number(response.headers.get("content-length")) !== end - offset + 1 ||
+    (response.status === 206 &&
       response.headers.get("content-range") !==
-        `bytes ${offset}-${source.bytes - 1}/${source.bytes}`)
+        `bytes ${offset}-${end}/${source.bytes}`)
   )
     throw new Error(
       "Invalid resume range or source size; partial file was not appended",
@@ -154,7 +165,10 @@ export async function cacheSource(
   if (offset > source.bytes)
     throw new Error("Partial file exceeds source size");
   signal.throwIfAborted();
-  if (offset < source.bytes) {
+  let lastReport = 0;
+  while (offset < source.bytes) {
+    signal.throwIfAborted();
+    const end = Math.min(source.bytes - 1, offset + SOURCE_RANGE_BYTES - 1);
     const controller = new AbortController(),
       stop = () => controller.abort(signal.reason);
     signal.addEventListener("abort", stop, { once: true });
@@ -170,13 +184,24 @@ export async function cacheSource(
         headers: {
           "If-Match": source.etag,
           "Accept-Encoding": "identity",
-          ...(offset ? { Range: `bytes=${offset}-` } : {}),
+          Range: `bytes=${offset}-${end}`,
         },
         signal: controller.signal,
+      }).catch((error) => {
+        signal.throwIfAborted();
+        throw new RetryableSourceError(
+          `Source connection failed: ${String(error)}`,
+        );
       });
       clearTimeout(timer);
+      if ([408, 429, 500, 502, 503, 504].includes(response.status)) {
+        await response.body?.cancel();
+        throw new RetryableSourceError(
+          `Source temporarily unavailable: HTTP ${response.status}`,
+        );
+      }
       try {
-        validateSourceResponse(response, source, offset);
+        validateSourceResponse(response, source, offset, end);
       } catch (e) {
         await response.body?.cancel();
         throw e;
@@ -184,19 +209,26 @@ export async function cacheSource(
       if (!response.body) throw new Error("Empty source response");
       file = await open(part, offset ? "a" : "w");
       reader = response.body.getReader();
-      await report("downloading", offset);
-      let last = performance.now();
+      if (!lastReport) {
+        await report("downloading", offset);
+        lastReport = performance.now();
+      }
       while (true) {
         signal.throwIfAborted();
         timer = setTimeout(
           () => controller.abort(new Error("Source stalled for two minutes")),
           120000,
         );
-        const { done, value } = await reader.read();
+        const { done, value } = await reader.read().catch((error) => {
+          signal.throwIfAborted();
+          throw new RetryableSourceError(
+            `Source connection interrupted: ${String(error)}`,
+          );
+        });
         clearTimeout(timer);
         if (done) break;
-        if (offset + value.length > source.bytes)
-          throw new Error("Source exceeded its planned size");
+        if (offset + value.length > end + 1)
+          throw new Error("Source exceeded its requested range");
         for (let at = 0; at < value.length; ) {
           const written = (await file.write(value, at, value.length - at))
             .bytesWritten;
@@ -204,16 +236,16 @@ export async function cacheSource(
           at += written;
         }
         offset += value.length;
-        if (performance.now() - last > 1500 || offset === source.bytes) {
+        if (performance.now() - lastReport > 1500 || offset === source.bytes) {
           await report("downloading", offset);
-          last = performance.now();
+          lastReport = performance.now();
         }
       }
-      if (offset !== source.bytes)
-        throw new Error(
+      if (offset !== end + 1)
+        throw new RetryableSourceError(
           "Source connection ended early; partial download retained",
         );
-      await file.sync();
+      if (offset === source.bytes) await file.sync();
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", stop);
@@ -255,4 +287,39 @@ export async function cacheSource(
   await rename(path + ".source.json.tmp", path + ".source.json");
   if (!alreadyPublished) await rename(part, path);
   return { path, sha256 };
+}
+
+/** Retry only interrupted transfers; identity, checksum and disk failures need attention. */
+export async function cacheSourceWithRetries(
+  source: CachedSource,
+  directory: string,
+  signal: AbortSignal,
+  report: (
+    state: "downloading" | "verifying" | "retrying",
+    completed: number,
+    message?: string,
+  ) => Promise<void>,
+  fetcher: SourceFetch = fetch,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = async (
+    ms,
+    signal,
+  ) => {
+    await delay(ms, undefined, { signal });
+  },
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await cacheSource(source, directory, signal, report, fetcher);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!(error instanceof RetryableSourceError) || attempt >= 5) throw error;
+      const ms = Math.min(5000 * 2 ** attempt, 60000);
+      await report(
+        "retrying",
+        await partialSize(join(directory, source.id + ".osm.pbf.part")),
+        `${error.message}. Retrying from saved bytes in ${ms / 1000}s (${attempt + 1}/5).`,
+      );
+      await wait(ms, signal);
+    }
+  }
 }

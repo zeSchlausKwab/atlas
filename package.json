@@ -20,6 +20,7 @@
     "demo:contextvm": "bun scripts/contextvm-demo.ts",
     "data:danube": "bun scripts/danube-composition.ts",
     "verify:composition": "bun scripts/verify-composition.ts",
+    "verify:source-memory": "bun scripts/verify-source-memory.ts",
     "deploy": "bun scripts/deploy.ts",
     "server": "bun run build:host && bun apps/server/index.ts",
     "dev:server": "bun run build:host && bun --watch apps/server/index.ts",

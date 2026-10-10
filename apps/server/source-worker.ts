@@ -1,7 +1,7 @@
 import { readFile, rename, statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  cacheSource,
+  cacheSourceWithRetries,
   SOURCE_RESERVE,
   type SourceJob,
 } from "../../packages/provisioning/src/source-cache";
@@ -16,20 +16,22 @@ const save = async () => {
   await rename(record + ".tmp", record);
 };
 try {
-  const result = await cacheSource(
+  const result = await cacheSourceWithRetries(
     job,
     dirname(record),
     abort.signal,
-    async (state, completed) => {
+    async (state, completed, message) => {
       job.state = state;
       job.completed = completed;
       job.message =
-        state === "verifying"
+        message ??
+        (state === "verifying"
           ? "Checking the published MD5 and computing SHA-256…"
-          : "Downloading to server disk. Leaving the page does not interrupt this job.";
+          : "Downloading to server disk. Leaving the page does not interrupt this job.");
       const disk = await statfs(dirname(record));
       if (disk.bavail * disk.bsize < SOURCE_RESERVE)
         throw new Error("Paused to preserve 60 GiB of free disk space");
+      delete job.error;
       await save();
     },
   );
@@ -40,6 +42,10 @@ try {
     "Source verified and cached. Map compilation is a separate step.";
   delete job.error;
 } catch (error) {
+  if (!abort.signal.aborted) {
+    console.error("Source download failed:", error);
+    process.exitCode = 1;
+  }
   job.state = abort.signal.aborted ? "paused" : "failed";
   job.error = abort.signal.aborted ? undefined : String(error);
   job.message =

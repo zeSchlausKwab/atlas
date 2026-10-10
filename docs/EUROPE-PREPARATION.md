@@ -82,3 +82,27 @@ assertions), host build, and deployment smoke checks passed. The full Bun suite
 had passed before the initial source-library deployment. Real browser checks
 covered LAN access, all-capability recipe save/reload, and planet pause/resume.
 The existing `lemond.service` remained active. No full-Europe map was compiled.
+
+## Download memory fix — 2026-10-10
+
+The first planet transfer later stopped at roughly 26.9 GiB. The worker journal
+and kernel log at 13:48 CEST reported `oom-kill`: application memory reached its
+1 GiB cgroup limit. The server still had 349 GiB free disk space. The console had
+mistakenly presented any vanished worker as an ordinary paused download.
+
+The downloader had requested the entire remaining PBF in one HTTP response.
+A slow consumer can cause this Bun runtime to buffer far ahead of disk writes
+(also reported upstream at <https://github.com/oven-sh/bun/issues/32471>).
+Transfers now request sequential 16 MiB ranges and validate the exact returned
+range, total size, and pinned ETag before appending. The worker also uses Bun's
+low-memory mode; the existing 1 GiB safety limit is unchanged. Transient network
+failures retry from the partial file with bounded backoff; changed identity,
+checksum failures and disk errors still require attention. Pause cancels retry
+waits. Failed systemd units retain their result for diagnostics, and unexpected
+exits display as failures, including the memory-limit reason when available.
+
+Reproduction: a local 1.5 GiB fixture and a delayed consumer with a 256 MiB
+systemd limit killed the old implementation in 255 ms. Sequential ranges
+completed and verified the same fixture in 9.7 seconds. Run the reusable check
+on the Linux server with `bun run verify:source-memory`. Fixture files and the
+transient test unit are cleaned up; it does not read or change the planet cache.

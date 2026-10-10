@@ -1,3 +1,4 @@
+import { SourceCache } from "../apps/server/source-cache";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -5,6 +6,7 @@ import {
   inspectSource,
   trustedSourceUrl,
   cacheSource,
+  cacheSourceWithRetries,
   validateSourceResponse,
   type CachedSource,
   type SourceFetch,
@@ -88,7 +90,9 @@ test("resuming appends exact ranges, verifies publisher checksum and publishes a
         states.push(state);
       },
       (async (_u, init) => {
-        expect(new Headers(init?.headers).get("range")).toBe("bytes=7-");
+        expect(new Headers(init?.headers).get("range")).toBe(
+          `bytes=7-${source.bytes - 1}`,
+        );
         expect(new Headers(init?.headers).get("if-match")).toBe(source.etag);
         expect(await Bun.file(part.replace(/\.part$/, "")).exists()).toBe(
           false,
@@ -183,6 +187,189 @@ test("checksum failure never publishes a source and cancellation preserves parti
     );
     expect(await Bun.file(result.path).exists()).toBe(true);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("large sources use bounded HTTP ranges and resume from the last complete bytes", async () => {
+  const directory = await mkdtemp("/tmp/atlas-bounded-source-");
+  const chunkBytes = 16 * 1024 ** 2;
+  const payload = new Uint8Array(chunkBytes + 19).fill(67);
+  const large = {
+    ...source,
+    bytes: payload.length,
+    md5: createHash("md5").update(payload).digest("hex"),
+  };
+  const requests: string[] = [];
+  try {
+    await Bun.write(
+      `${directory}/${large.id}.osm.pbf.part`,
+      payload.slice(0, 7),
+    );
+    const result = await cacheSource(
+      large,
+      directory,
+      new AbortController().signal,
+      async () => {},
+      async (_url, init) => {
+        const range = new Headers(init?.headers).get("range")!;
+        requests.push(range);
+        // The old open-ended response allows the runtime to buffer the remaining planet.
+        const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+        expect(match).not.toBeNull();
+        const start = Number(match![1]),
+          end = Number(match![2]);
+        expect(end - start + 1).toBeLessThanOrEqual(chunkBytes);
+        return new Response(payload.slice(start, end + 1), {
+          status: 206,
+          headers: {
+            etag: large.etag,
+            "content-length": String(end - start + 1),
+            "content-range": `bytes ${start}-${end}/${large.bytes}`,
+          },
+        });
+      },
+    );
+    expect(requests).toEqual([
+      `bytes=7-${chunkBytes + 6}`,
+      `bytes=${chunkBytes + 7}-${large.bytes - 1}`,
+    ]);
+    expect(result.sha256).toBe(
+      createHash("sha256").update(payload).digest("hex"),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("temporary failures retry from persisted bytes without restarting the file", async () => {
+  const directory = await mkdtemp("/tmp/atlas-source-retry-");
+  const ranges: string[] = [],
+    waits: number[] = [],
+    retried: number[] = [];
+  try {
+    const result = await cacheSourceWithRetries(
+      source,
+      directory,
+      new AbortController().signal,
+      async (state, completed) => {
+        if (state === "retrying") retried.push(completed);
+      },
+      async (_url, init) => {
+        ranges.push(new Headers(init?.headers).get("range")!);
+        return ranges.length === 1
+          ? response(0, body.slice(0, 7))
+          : response(7);
+      },
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    expect(ranges).toEqual([
+      `bytes=0-${source.bytes - 1}`,
+      `bytes=7-${source.bytes - 1}`,
+    ]);
+    expect(waits).toEqual([5000]);
+    expect(retried).toEqual([7]);
+    expect(new Uint8Array(await Bun.file(result.path).arrayBuffer())).toEqual(
+      body,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("retries are bounded and stop on pause or changed source identity", async () => {
+  const directory = await mkdtemp("/tmp/atlas-source-retry-stop-");
+  try {
+    let calls = 0;
+    const waits: number[] = [];
+    await expect(
+      cacheSourceWithRetries(
+        source,
+        directory,
+        new AbortController().signal,
+        async () => {},
+        async () => {
+          calls++;
+          return new Response(null, { status: 503 });
+        },
+        async (ms) => {
+          waits.push(ms);
+        },
+      ),
+    ).rejects.toThrow("HTTP 503");
+    expect(calls).toBe(6);
+    expect(waits).toEqual([5000, 10000, 20000, 40000, 60000]);
+    calls = 0;
+    const abort = new AbortController();
+    await expect(
+      cacheSourceWithRetries(
+        source,
+        directory,
+        abort.signal,
+        async (state) => {
+          if (state === "retrying") abort.abort();
+        },
+        async () => {
+          calls++;
+          return response(0, body.slice(0, 7));
+        },
+      ),
+    ).rejects.toThrow();
+    expect(calls).toBe(1);
+    expect(Bun.file(`${directory}/${source.id}.osm.pbf.part`).size).toBe(7);
+    calls = 0;
+    await expect(
+      cacheSourceWithRetries(
+        source,
+        directory,
+        new AbortController().signal,
+        async () => {},
+        async () => {
+          calls++;
+          const r = response(7);
+          r.headers.set("etag", '"changed"');
+          return r;
+        },
+        async () => {
+          throw new Error("Must not retry identity failure");
+        },
+      ),
+    ).rejects.toThrow("identity changed");
+    expect(calls).toBe(1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a vanished worker is reported as failed, while an intentional pause stays paused", async () => {
+  const directory = await mkdtemp("/tmp/atlas-source-worker-status-");
+  const manager = new SourceCache(directory);
+  const record = `${directory}/${source.id}.json`;
+  try {
+    const job = {
+      ...source,
+      state: "downloading",
+      completed: 0,
+      updatedAt: new Date(Date.now() - 60000).toISOString(),
+      message: "Downloading",
+    };
+    await Bun.write(record, JSON.stringify(job));
+    await Bun.write(`${directory}/${source.id}.osm.pbf.part`, body.slice(0, 7));
+    const failed = (await manager.list())[0]!;
+    expect(failed.state).toBe("failed");
+    expect(failed.error).toContain("stopped unexpectedly");
+    expect(failed.completed).toBe(7);
+    await Bun.write(
+      record,
+      JSON.stringify({ ...job, state: "paused", message: "Paused by user" }),
+    );
+    const paused = (await manager.list())[0]!;
+    expect(paused.state).toBe("paused");
+    expect(paused.error).toBeUndefined();
+  } finally {
+    await manager.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

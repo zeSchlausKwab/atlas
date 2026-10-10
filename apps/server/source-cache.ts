@@ -34,40 +34,73 @@ export class SourceCache {
           ).json()) as SourceJob;
           if (
             job.state === "downloading" ||
+            job.state === "retrying" ||
             job.state === "paused" ||
             job.state === "failed"
           )
             job.completed = await partialSize(
               join(this.directory, job.id + ".osm.pbf.part"),
             );
-          // A terminated machine may leave a running record; expose resume instead of an endless spinner.
+          // An unexpected exit is a failure, not an intentional pause. Keep the partial resumable.
           if (
-            ["queued", "downloading", "verifying"].includes(job.state) &&
-            Date.now() - Date.parse(job.updatedAt) > 180000
+            ["queued", "downloading", "retrying", "verifying"].includes(
+              job.state,
+            ) &&
+            Date.now() - Date.parse(job.updatedAt) > 15000
           ) {
-            if (!(await this.running(job.id))) {
-              job.state = "paused";
-              job.message = "Worker stopped. Resume the saved download.";
+            const worker = await this.workerStatus(job.id);
+            if (!worker.active) {
+              // Do not overwrite a ready/paused record published while status was queried.
+              const latest = (await Bun.file(
+                join(this.directory, n),
+              ).json()) as SourceJob;
+              if (
+                latest.updatedAt !== job.updatedAt ||
+                latest.state !== job.state
+              )
+                return latest;
+              job.state = "failed";
+              job.error =
+                worker.result === "oom-kill"
+                  ? "Download worker exceeded its memory limit and was killed. Saved bytes are intact; resume the download."
+                  : `Download worker stopped unexpectedly${worker.result && worker.result !== "success" ? ` (${worker.result})` : ""}. Saved bytes are intact; resume the download.`;
+              job.message = job.error;
             }
           }
           return job;
         }),
     );
   }
-  private async running(id: string) {
-    if (!this.systemd) return this.children.has(id);
-    return (
-      (await Bun.spawn(
-        [
-          "systemctl",
-          "--user",
-          "is-active",
-          "--quiet",
-          `atlas-source-${id}.service`,
-        ],
-        { stdout: "ignore", stderr: "ignore" },
-      ).exited) === 0
+  private async workerStatus(id: string) {
+    if (!this.systemd) return { active: this.children.has(id), result: "" };
+    const process = Bun.spawn(
+      [
+        "systemctl",
+        "--user",
+        "show",
+        `atlas-source-${id}.service`,
+        "--property=ActiveState",
+        "--property=Result",
+      ],
+      { stdout: "pipe", stderr: "ignore" },
     );
+    const output = await new Response(process.stdout).text();
+    await process.exited;
+    const values = Object.fromEntries(
+      output
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=")),
+    );
+    return {
+      active: ["active", "activating", "deactivating"].includes(
+        values.ActiveState ?? "",
+      ),
+      result: values.Result ?? "",
+    };
+  }
+  private async running(id: string) {
+    return (await this.workerStatus(id)).active;
   }
   private async launch(source: CachedSource) {
     if (this.busy) throw new Error("A source action is already in progress");
@@ -119,16 +152,26 @@ export class SourceCache {
       await rename(record + ".tmp", record);
       try {
         if (this.systemd) {
+          // Retain failed transient units for diagnostics; release them before retrying.
+          await Bun.spawn(
+            [
+              "systemctl",
+              "--user",
+              "reset-failed",
+              `atlas-source-${source.id}.service`,
+            ],
+            { stdout: "ignore", stderr: "ignore" },
+          ).exited;
           const p = Bun.spawn(
             [
               "systemd-run",
               "--user",
-              "--collect",
               `--unit=atlas-source-${source.id}`,
               "--property=MemoryMax=1G",
               "--property=Nice=10",
               "--property=TimeoutStopSec=30",
               process.execPath,
+              "--smol",
               worker,
               record,
             ],
@@ -137,7 +180,7 @@ export class SourceCache {
           const error = new Response(p.stderr).text();
           if (await p.exited) throw new Error(await error);
         } else {
-          const p = Bun.spawn([process.execPath, worker, record], {
+          const p = Bun.spawn([process.execPath, "--smol", worker, record], {
             stdout: "ignore",
             stderr: "ignore",
           });
@@ -235,7 +278,7 @@ export class SourceCache {
       }
       if (url.pathname === "/admin/sources/start") {
         const source = this.plans.get(body.id);
-        if (!source || Date.now() - Date.parse(source.inspectedAt) > 1800000)
+        if (!source || Date.now() - Date.parse(source.inspectedAt) > 150000)
           throw new Error("Check the source again before starting");
         return json(await this.launch(source), 202);
       }
