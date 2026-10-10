@@ -5,6 +5,7 @@ import {
   AtlasEngine,
   RemoteOperations,
 } from "../packages/operations/src/index";
+import { PagedRouter, readRoutingCell } from "../packages/routing/src/paged";
 import { initSync } from "../packages/routing/pkg/atlas_routing_wasm";
 import { MAP_LAYERS, project } from "../packages/format/src/index";
 const url = process.argv[2];
@@ -86,10 +87,17 @@ try {
   assert.deepEqual(peak.peak, peakRemote.result.peak);
   report.nearestStreet = reverse.match?.name;
   report.peak = peak.peak;
+  // Keep source-geometry queries within the intentional 64 MiB scan budget.
   for (const kind of ["buildings", "water", "railways"] as const) {
+    console.log(`Checking ${kind} extraction near the Danube Canal…`);
     const q = {
       kind,
-      bounds: [16.3, 48.1, 16.5, 48.25] as [number, number, number, number],
+      bounds: [16.37, 48.205, 16.395, 48.225] as [
+        number,
+        number,
+        number,
+        number,
+      ],
       limit: 10,
     };
     const a = await local.query(q),
@@ -99,12 +107,25 @@ try {
     report[kind] = a.features.length;
   }
   for (const profile of ["driving", "cycling", "walking"] as const) {
+    const routeStart: [number, number] = [16.606, 48.116];
+    const routeEnd: [number, number] = [16.94, 48.146];
     console.log(
-      `Checking ${profile} Vienna → Bratislava on client and server…`,
+      `Checking ${profile} ${routeStart} → ${routeEnd} on client and server…`,
     );
     const begin = performance.now(),
-      a = await local.route(start, end, profile),
-      b = await remote.call("route", { start, end, profile });
+      a = await local.route(routeStart, routeEnd, profile),
+      b = await remote.call("route", {
+        start: routeStart,
+        end: routeEnd,
+        profile,
+      });
+    if (a.status !== "found")
+      console.log("Client route:", JSON.stringify({ ...a, cells: undefined }));
+    if (b.result.status !== "found")
+      console.log(
+        "Server route:",
+        JSON.stringify({ ...b.result, cells: undefined }),
+      );
     assert.equal(a.status, "found");
     assert.equal(b.result.status, "found");
     if (a.status !== "found" || b.result.status !== "found")
@@ -117,6 +138,8 @@ try {
     );
     const summary = {
       profile,
+      start: routeStart,
+      end: routeEnd,
       meters: a.meters,
       seconds: a.seconds,
       visited: a.visited,
@@ -139,11 +162,69 @@ try {
     if (iso.status === "reachable" && serverIso.result.status === "reachable")
       assert.deepEqual(iso.contours, serverIso.result.contours);
   }
+  // Longer searches are measured separately: outer coverage and search budgets
+  // are real constraints, not compiler seam failures. Preserve them in the report.
+  report.corridor = [];
+  for (const profile of ["driving", "cycling", "walking"] as const) {
+    console.log(`Checking full corridor limits: ${profile}…`);
+    const a = await local.route(start, end, profile);
+    const b = await remote.call("route", { start, end, profile });
+    assert.equal(a.status, b.result.status);
+    if (a.status === "missing-data" && b.result.status === "missing-data")
+      assert.deepEqual(a.missing, b.result.missing);
+    const summary: Record<string, unknown> = {
+      profile,
+      defaultClientStatus: a.status,
+      defaultServerStatus: b.result.status,
+      missing: a.status === "missing-data" ? a.missing : undefined,
+      reason: a.status === "missing-data" ? a.reason : undefined,
+    };
+    if (profile !== "driving") {
+      const router = new PagedRouter(
+        m.snapshot,
+        (key) => readRoutingCell(reader, key),
+        () => {},
+        async () => {},
+        { searchStates: 1_000_000 },
+      );
+      try {
+        const full = await router.route(
+          start,
+          end,
+          profile,
+          m.transport!.profiles[profile]!.prefix,
+        );
+        if (profile === "walking") assert.equal(full.status, "found");
+        Object.assign(summary, {
+          expandedClientBudget: 1_000_000,
+          expandedClientStatus: full.status,
+          expandedMissing:
+            full.status === "missing-data" ? full.missing : undefined,
+          expandedReason:
+            full.status === "missing-data" ? full.reason : undefined,
+        });
+        if (full.status === "found")
+          Object.assign(summary, {
+            expandedClientBudget: 1_000_000,
+            expandedClientStatus: full.status,
+            meters: full.meters,
+            seconds: full.seconds,
+            visited: full.visited,
+            clientMs: full.computeMs,
+            cells: full.cells?.loadedCells,
+          });
+      } finally {
+        router.destroy();
+      }
+    }
+    (report.corridor as unknown[]).push(summary);
+    console.log(JSON.stringify(summary));
+  }
   report.clientBytesByPurpose = reader.bytesByPurpose;
   if (process.argv[3])
     await Bun.write(process.argv[3], JSON.stringify(report, null, 2));
   console.log(
-    "PASS: hosted planet-derived map, sampled z0–16 blocks, search/reverse/peaks/features, all three routes and isochrones agree across client/server.",
+    "PASS: hosted planet-derived map, sampled z0–16 blocks, search/reverse/peaks/features, Fischamend–Hainburg routes and isochrones agree in all three modes. Full-corridor coverage/budget limits recorded separately.",
   );
 } finally {
   local.destroy();

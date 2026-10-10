@@ -138,3 +138,80 @@ or memory-limit events. The deployed memory regression also passed in 10.2 s.
 The host UI showed downloading, and the existing model service remained active.
 The planet transfer was still in progress; final checksum verification remains
 part of the completion path.
+
+## Cached-planet compiler pilot — 2026-10-10
+
+Deployed revision `351007f` and built **Vienna–Bratislava · planet build** directly
+from the verified local `planet-261005.osm.pbf`. No additional regional source
+was downloaded. Source SHA-256:
+`1f0255832803e73280b634f0cd5767d287a9b63c15220388c7862efca393f9ef`.
+
+- Published map ID: `047b3a1b-12ca-4097-b5cd-83d065628acc`.
+- Final size: **310,866,782 bytes (296.47 MiB)**; z0–16, all six display layers,
+  all labels, three transport profiles, search, nearest street, peaks and all
+  five extraction categories.
+- Six z9 display partitions, 15 checkpoint stages; one canonical regional graph.
+- Regional PBF: **117,785,370 bytes (112.33 MiB)**, extracted in roughly
+  16 minutes through three sequential passes of the 88.70 GiB planet.
+- Deliberately stopped after the extraction checkpoint, deployed/restarted the
+  host, then resumed the same job. It verified and reused that PBF without
+  repeating the planet scan. Published at approximately 14:57 UTC, about
+  23 minutes after the job started, including the deliberate stop/deployment.
+- Linux service memory peak: **5,923,127,296 bytes (5.52 GiB)** after the restart,
+  covering compilation and publication; the earlier extraction peaked around
+  4.57 GiB. These are cgroup measurements, not a prediction for Europe.
+- Server retained roughly **286 GiB free** after publication and scratch cleanup.
+  The independent model service stayed active.
+
+Host console: <http://192.168.0.179:3100/host>. Open the map from its library card
+in the independent client. The initial fitted browser view read about 670 KB;
+starting a route then fetched routing cells on demand.
+
+Validation includes 138 Bun tests, the Rust workspace tests, TypeScript checks,
+host/client builds and deployment smoke checks. The small real-PBF integration
+fixture tests interrupted/resumed compilation and all three routes across a seam;
+41 partitioned display tiles match the single-region reference byte-for-byte,
+including water and a courtyard building.
+
+Run the real-data acceptance check with:
+
+```sh
+bun run verify:hosted-region \
+  http://192.168.0.179:3100/maps/047b3a1b-12ca-4097-b5cd-83d065628acc.atlas \
+  data/cached-planet-verification.json
+```
+
+It samples geometry at z0, 5 and 11–16 in both cities and on either side of the
+16.875° partition seam. Search, nearest street, highest peak, local building /
+water / railway extraction, and 1-/3-minute isochrones agree between device and
+server. Fischamend–Hainburg crosses that seam in all three modes: driving
+37.40 km, cycling 28.64 km, walking 26.96 km, with identical client/server route
+coordinates and costs.
+
+### Limits observed on real data
+
+The longer Vienna–Bratislava walk completes with the client's **1 million
+states** option: 62.68 km, 379,341 explored nodes and 256 cells. The browser
+rendered that route and remained interactive; the final run reported roughly
+795 ms in WASM and 4.9 s overall, including cache reads / newly fetched cells.
+The default 250,000-state limit is insufficient for this walk and the long
+cycling route. Server tools still use that default budget.
+
+The long driving search reaches the package's northern routing boundary before
+it can prove a route. The larger-budget cycling search also encounters missing
+coverage. These are explicit `missing-data` results, not `no-route`, and no
+outside cells are silently treated as empty. A wider routing buffer or adjacent
+compatible coverage is needed for those searches. The acceptance report records
+these limits separately from the successful shorter cross-seam routes.
+
+A city-wide source-feature query also exceeded the intentional 64 MiB scan
+budget. The extraction parity checks use a smaller Danube Canal viewport.
+`limit: 10` limits returned features, not scan work, because the current query
+also computes the complete match count. Bounded pagination / early exit is
+another follow-up for larger datasets.
+
+This is a **regional compiler milestone**, not a full-Europe build. Before
+running the saved Europe recipe, partition graph/semantic construction and
+search indexing, bound final directory memory, and make routing coverage / work
+budgets explicit in build and operation interfaces. Do not remove the regional
+admission guards merely because the source PBF fits on disk.
