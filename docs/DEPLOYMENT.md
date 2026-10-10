@@ -30,6 +30,7 @@ browser environment. Direct LAN use needs trusted HTTPS for the full client demo
 
 Flags accept `--name value` or `--name=value`; run `bun run deploy --help`.
 `--host`, `--root`, `--port`, `--local-port` customize the target.
+`--upload-mib 8` optionally limits transfers on a congested Wi-Fi connection.
 `--format=json` emits a structured result; build progress goes to stderr.
 
 ## What is deployed
@@ -88,7 +89,8 @@ network dependency caches and the host channel are inputs too.
 
 ## Activation and rollback
 
-An exclusive deployment lock serializes code switches and rollbacks. The candidate
+An exclusive deployment lock serializes code switches and rollbacks. Process-held
+locks also protect the upload receiver and activation if an SSH connection dies. The candidate
 is checksum-verified, dependencies installed and native tools built in a resource
 limited scope. It starts on an ephemeral loopback port with separate temporary
 host state. Checks cover health/release identity, frontend/WASM assets, the catalog,
@@ -107,7 +109,13 @@ Completed and failed releases are retained for inspection. Remove old release
 directories and their Nix GC roots only after checking current/previous references;
 automatic pruning is not implemented. An interrupted SSH client can leave
 `.deploy-lock` or a maintenance marker; verify no deployment is active before
-removing them. Failed uploads remain in the unused release directory.
+removing them. Failed uploads remain in the unused release directory. SSH keepalives detect a
+lost connection and uploads retry three times. To resume later, repeat the original
+options with `--resume RELEASE_ID` from the failure message. Checksum comparison
+and rsync partial files avoid retransferring completed data. An activated/current/
+previous release cannot be resumed in place. Removed source files are also removed
+from the unused candidate; shared map data is outside this synchronization root. A resumed attempt keeps its original
+ID but records the current source revision and file checksums in its new manifest.
 
 ## One-time NixOS integration
 

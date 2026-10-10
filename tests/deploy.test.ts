@@ -24,6 +24,14 @@ describe("deployment input and isolation", () => {
     expect(options.format).toBe("json");
     expect(parseDeployArgs([]).withLibrary).toBe(false);
     expect(parseDeployArgs([]).map).toBeUndefined();
+    expect(parseDeployArgs(["--upload-mib=8"]).uploadMiB).toBe(8);
+    expect(() => parseDeployArgs(["--upload-mib=0"])).toThrow();
+    expect(() => parseDeployArgs(["status", "--upload-mib=8"])).toThrow();
+    expect(
+      parseDeployArgs(["--resume", "20261010T064147309Z-a495dbcf1785-38a9b710"])
+        .resume,
+    ).toBeDefined();
+    expect(() => parseDeployArgs(["--resume", "../../current"])).toThrow();
   });
   test("rejects shell options, unsafe systemd paths, typos and misplaced flags", () => {
     for (const args of [

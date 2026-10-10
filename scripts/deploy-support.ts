@@ -7,6 +7,8 @@ export interface DeployOptions {
   port: number;
   localPort: number;
   map?: string;
+  resume?: string;
+  uploadMiB?: number;
   withLibrary: boolean;
   dryRun: boolean;
   skipChecks: boolean;
@@ -57,7 +59,18 @@ export function parseDeployArgs(args: string[]): DeployOptions {
       result[bool] = true;
       continue;
     }
-    if (!["host", "root", "port", "local-port", "map", "format"].includes(key))
+    if (
+      ![
+        "host",
+        "root",
+        "port",
+        "local-port",
+        "map",
+        "format",
+        "resume",
+        "upload-mib",
+      ].includes(key)
+    )
       throw new Error(`Unknown option: --${key}`);
     const value = equals >= 0 ? arg.slice(equals + 1) : args[++i];
     if (!value || value.startsWith("--"))
@@ -68,6 +81,16 @@ export function parseDeployArgs(args: string[]): DeployOptions {
         break;
       case "root":
         result.root = value;
+        break;
+      case "upload-mib":
+        if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1024)
+          throw new Error("--upload-mib must be 1-1024");
+        result.uploadMiB = Number(value);
+        break;
+      case "resume":
+        if (!/^[0-9]{8}T[0-9]{9}Z-[a-f0-9]{12}-[a-f0-9]{8}$/.test(value))
+          throw new Error("Invalid release ID for --resume");
+        result.resume = value;
         break;
       case "map":
         result.map = value;
@@ -102,10 +125,14 @@ export function parseDeployArgs(args: string[]): DeployOptions {
     );
   if (
     result.command !== "deploy" &&
-    (result.map || result.withLibrary || result.skipChecks)
+    (result.map ||
+      result.withLibrary ||
+      result.skipChecks ||
+      result.resume ||
+      result.uploadMiB)
   )
     throw new Error(
-      "--map, --with-library and --skip-checks apply only to deploy",
+      "--map, --with-library, --resume and --skip-checks apply only to deploy",
     );
   return result;
 }

@@ -39,6 +39,10 @@ async function main() {
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=3",
         o.host,
         command,
       ],
@@ -63,6 +67,8 @@ Usage: bun run deploy [deploy|status|logs|tunnel|rollback] [options]
   --local-port 13100    Local port for the SSH tunnel
   --map FILE.atlas      Upload and select the base map (required on first deploy)
   --with-library        Also upload ready maps/records from data/hosted
+  --resume RELEASE_ID   Resume an interrupted, never-activated release
+  --upload-mib N        Optional transfer limit in MiB/s
   --dry-run             Print the plan; no builds, network or changes
   --skip-checks         Skip local tests/typecheck; WASM is still rebuilt
   --format md|json      Result format (progress goes to stderr)
@@ -108,6 +114,8 @@ Uses a user service. No sudo, firewall changes or public announcements.
     sourceFiles: files.length,
     map: o.map ?? "keep the current base map",
     library: o.withLibrary,
+    resume: o.resume,
+    uploadMiB: o.uploadMiB,
     checks: !o.skipChecks,
     dryRun: o.dryRun,
     steps:
@@ -157,7 +165,7 @@ Uses a user service. No sudo, firewall changes or public announcements.
     report(
       JSON.parse(
         await ssh(
-          `${q(o.root + "/current/.runtime/bin/bun")} ${q(o.root + "/current/deploy/activate.ts")} rollback ${q(o.root)} ${o.port}`,
+          `flock -n ${q(o.root + "/.activation.lock")} ${q(o.root + "/current/.runtime/bin/bun")} ${q(o.root + "/current/deploy/activate.ts")} rollback ${q(o.root)} ${o.port}`,
           true,
         ),
       ),
@@ -177,11 +185,12 @@ Uses a user service. No sudo, firewall changes or public announcements.
   const stage = await mkdtemp(join(tmpdir(), "atlas-deploy-"));
   const revision = await run(["git", "rev-parse", "--short=12", "HEAD"], true);
   const id =
+    o.resume ??
     new Date().toISOString().replace(/[-:.]/g, "") +
-    "-" +
-    revision +
-    "-" +
-    randomUUID().slice(0, 8);
+      "-" +
+      revision +
+      "-" +
+      randomUUID().slice(0, 8);
   const release = `${o.root}/releases/${id}`;
   let locked = false;
   try {
@@ -244,26 +253,72 @@ Uses a user service. No sudo, firewall changes or public announcements.
       `Staged ${records.length} files, ${(records.reduce((n, f) => n + f.bytes, 0) / 1073741824).toFixed(2)} GiB. Release ${id}`,
     );
     await ssh(
-      `set -eu; umask 077; mkdir -p ${q(o.root)}; mkdir ${q(o.root + "/.deploy-lock")} || { echo 'Another deployment holds .deploy-lock; inspect before removing it.' >&2; exit 1; }; mkdir -p ${q(release)} ${q(o.root + "/shared/data")} ${q(o.root + "/shared/maps")}`,
+      `set -eu; umask 077; mkdir -p ${q(o.root)}; mkdir ${q(o.root + "/.deploy-lock")} || { echo 'Another deployment holds .deploy-lock; inspect before removing it.' >&2; exit 1; }`,
     );
     locked = true;
-    await run([
+    if (o.resume) {
+      await ssh(
+        `set -eu; flock -n ${q(o.root + "/.activation.lock")} true; test -d ${q(release)}; test ! -e ${q(release + "/deploy/activated.json")}; test "$(readlink -f ${q(o.root + "/current")} || true)" != ${q(release)}; test "$(readlink -f ${q(o.root + "/previous")} || true)" != ${q(release)}`,
+      );
+    } else {
+      await ssh(`mkdir -p ${q(o.root + "/releases")}; mkdir ${q(release)}`);
+    }
+    await ssh(
+      `mkdir -p ${q(o.root + "/shared/data")} ${q(o.root + "/shared/maps")}`,
+    );
+    const upload = [
       "rsync",
       "-rlt",
+      "--checksum",
+      "--delete",
+      "--exclude=.runtime",
+      "--exclude=target/",
+      "--exclude=node_modules/",
+      "--exclude=dist/",
+      "--exclude=.smoke-data/",
+      "--timeout=60",
+      ...(o.uploadMiB ? [`--bwlimit=${o.uploadMiB * 1024}`] : []),
+      "--rsync-path",
+      `flock -w 75 ${q(o.root + "/.upload.lock")} rsync`,
+      "--stats",
       "--partial-dir=.rsync-partial",
       "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=",
       "-e",
-      "ssh -o BatchMode=yes -o ConnectTimeout=10",
+      "ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3",
       stage + "/",
       `${o.host}:${release}/`,
-    ]);
+    ];
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await run(upload);
+        break;
+      } catch (error) {
+        if (attempt >= 3) throw error;
+        console.error(
+          `Transfer interrupted; retry ${attempt + 1}/3 reuses received data.`,
+        );
+        await Bun.sleep(2000);
+      }
+    }
     const command =
       `set -eu; cd ${q(release)}; nix-build deploy/runtime.nix --out-link .runtime >&2; ` +
       `.runtime/bin/bun deploy/activate.ts deploy ${q(o.root)} ${o.port}`;
-    report(JSON.parse(await ssh(command, true)));
+    report(
+      JSON.parse(
+        await ssh(
+          `flock -n ${q(o.root + "/.activation.lock")} bash -c ${q(command)}`,
+          true,
+        ),
+      ),
+    );
     console.error(
       `Open the demo with: bun run deploy tunnel --local-port ${o.localPort}`,
     );
+  } catch (error) {
+    console.error(
+      `To retry this unused release, repeat the deploy options with --resume ${id}.`,
+    );
+    throw error;
   } finally {
     if (locked)
       await ssh(`rmdir ${q(o.root + "/.deploy-lock")}`).catch((error) =>

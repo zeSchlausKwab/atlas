@@ -10,6 +10,8 @@ for the current OSM semantics.
 Observed over SSH on 2026-10-10: x86_64 NixOS 26.05, 30 GiB RAM, about 28 GiB
 available, 403 GiB free on the root filesystem, no swap. The existing llama-cpp
 service uses about 3.3 GiB and can use eight CPU threads. It stays independent.
+Map rendering stays on the browser/device GPU; this server handles files,
+compilation and optional CPU queries/routing. No discrete server GPU is required.
 
 Initial limits: one preparation at a time; four Cargo build jobs; build scopes
 limited to four CPU equivalents and 16 GiB RAM; serving/preparation service capped

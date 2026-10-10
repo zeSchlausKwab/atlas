@@ -250,6 +250,10 @@ async function activate(
     await run(["systemctl", "--user", "restart", "atlas.service"]);
     const health = await awaitHealth(id);
     if (old && old !== target) await link(old, join(root, "previous"));
+    await Bun.write(
+      join(target, "deploy/activated.json"),
+      JSON.stringify({ activatedAt: new Date().toISOString() }),
+    );
     return health;
   } catch (error) {
     if (switched) {
@@ -401,7 +405,12 @@ async function main() {
   );
   const target = join(root, "shared/target");
   await mkdir(target, { recursive: true });
-  await symlink(target, join(release, "target"));
+  const linkedTarget = await realpath(join(release, "target")).catch(
+    () => undefined,
+  );
+  if (linkedTarget && linkedTarget !== target)
+    throw new Error("Unexpected target directory in release");
+  if (!linkedTarget) await symlink(target, join(release, "target"));
   await run(
     [
       "systemd-run",
