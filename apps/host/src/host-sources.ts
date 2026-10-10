@@ -68,6 +68,15 @@ export async function startSources() {
         };
         card.append(button);
       }
+      if (job.state === "ready") {
+        const prepare = document.createElement("button");
+        prepare.textContent = "Prepare from this PBF";
+        prepare.onclick = () =>
+          document.dispatchEvent(
+            new CustomEvent("atlas-source-prepare", { detail: { id: job.id } }),
+          );
+        card.append(prepare);
+      }
       if (job.sha256) {
         const hash = document.createElement("p");
         hash.className = "quiet";

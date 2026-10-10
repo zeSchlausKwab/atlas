@@ -8,3 +8,5 @@ default-run = "atlas-osm-import"
 atlas-routing = { path = "../routing" }
 osmpbfreader = "0.19"
 serde_json = "1"
+memmap2 = "0.9"
+tempfile = "3"

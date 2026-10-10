@@ -56,6 +56,9 @@
           <button id="source-start" type="button" disabled>
             Download PBF to server
           </button>
+          <button id="source-corridor" type="button" disabled>
+            Vienna–Bratislava · cached PBF
+          </button>
           <button id="source-europe" type="button" disabled>
             Configure full Europe · z0–16
           </button>
@@ -309,9 +312,9 @@
             <p id="prepare-compiler-note" class="host-source-note" hidden>
               Full Europe z0–16 with routing, search and extraction is the
               target. Save this recipe now. Compilation is not yet available:
-              the regional importer must be replaced with a disk-backed,
-              partitioned compiler. Downloading the PBF alone does not remove
-              that memory limit.
+              disk-backed coordinates and partitioned detail tiles are available
+              for regional builds. Graph and search construction still need
+              continent-scale partitioning.
             </p>
             <p id="prepare-message" role="status">
               Select only the data your consumers need.

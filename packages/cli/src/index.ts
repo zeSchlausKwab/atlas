@@ -257,6 +257,7 @@ async function main() {
         "--",
         input,
         importedPath,
+        ...(selected ? ["--no-legacy-routing"] : []),
       ],
       { cwd: ROOT, stdout: "inherit", stderr: "inherit" },
     );

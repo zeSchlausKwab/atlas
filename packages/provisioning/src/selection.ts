@@ -45,7 +45,7 @@ export interface PreparationProgress {
     | "packing"
     | "indexing"
     | "verifying";
-  unit?: "blocks" | "bytes";
+  unit?: "blocks" | "bytes" | "stages";
   message: string;
   completed: number;
   total: number;

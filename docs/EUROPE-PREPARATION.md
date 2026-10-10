@@ -31,31 +31,55 @@ records its own SHA-256. These hashes identify a source snapshot; the dated sour
 does not silently change to the next weekly file.
 
 The host also offers a Europe-only download, inspected live from Geofabrik.
-The source library and existing regional import cache are currently separate:
-continent source reuse enters through the compiler work below, not through a
-pretend conversion of a raw PBF into an already usable map.
+Verified sources now appear in **Prepare a map → Data source**. The
+**Vienna–Bratislava · cached PBF** preset uses the local planet, z0–16 and all
+capabilities. No regional PBF download is needed.
+
+## Cached-source compiler slice
+
+`packages/provisioning/src/cached-build.ts` owns the build lifecycle:
+
+1. Validate the cached source receipt, immutable source identity and recipe.
+2. Smart-extract a padded regional PBF and check node references.
+3. Compile one shared routing/semantic root and z0–11 overview.
+4. Extract and compile z12–16 geometry in z9 partitions with a guard band.
+5. Copy each detail tile from its sole owning partition, copy the canonical
+   graph/search/labels/features once, verify input blocks, and assemble one archive.
+6. Select the final polygon and publish it through the existing map catalog.
+
+Both Rust importers now store sorted node coordinates in a private temporary
+file with a read-only memory map. Sparse node IDs are binary-searched; duplicate
+or unsorted IDs fail explicitly. Selected builds skip the unused legacy walking
+graph. The source PBF is never loaded as one buffer.
+
+Each completed extraction/compilation/assembly stage has a SHA-256 checkpoint.
+Stop retains completed work; resume verifies it and continues at the first
+unfinished stage. Server restarts leave a resumable failed job. Recipe/compiler
+version changes and corrupt checkpoints are refused. Closing the browser does
+not stop a build; deployment still refuses an active preparation. Checkpoints
+are removed after successful publication. Planet downloads remain independent
+systemd jobs; compilation is currently a child of the Atlas server.
+
+Regional admission limits: 16 z9 display partitions, 100,000 candidate tiles,
+and a 256 MiB extracted PBF. Input-size and disk checks stop oversized extraction;
+source storage preserves 60 GiB free. These are conservative prototype guards,
+not a guarantee of RAM use. Full graphs, semantic feature state, JSON indexes and
+the final block directory still have regional in-memory components. The 20 GiB
+service memory limit remains the backstop. Source bytes fitting on disk does
+**not** yet make full-Europe compilation available.
+
+Run `bun run verify:cached-build` for a real PBF integration test: stop after
+extraction, resume, package all capabilities, verify every final block and route
+across a display partition boundary in all three modes. Unit tests additionally
+check partition ownership, checkpoint corruption and verified-source admission.
 
 ## Remaining compiler work
 
-The present Rust display importer retains all node coordinates, relation state
-and features; the TypeScript compiler then loads one intermediate JSON and
-geojson-vt indexes. Transport import retains nodes and graphs per profile.
-Lower zoom or a smaller output cap does not bound these allocations. The HM90S
-has 30 GiB RAM; Atlas is limited to 20 GiB. A 95 GB source fitting on disk does
-not make this pipeline suitable for full Europe.
-
-The next implementation must build a disk-backed coordinate/reference index,
-stream canonical features and partition tile/semantic construction. Build shared
-graph cells from one snapshot with deterministic border identity before packaging
-regional outputs. Preserve multipolygon members, turn restrictions, heights,
-feature IDs and existing capability semantics. Record per-stage disk use and
-peak memory, allow stage resume, and publish only verified complete outputs.
-
-Then execute the saved Europe recipe against a crop of the cached planet,
-assemble the resulting packages in the normal client composer, and measure
-cross-partition client/server routing. PBF storage, temporary compiler workspace
-and final Atlas capacity must be measured separately; no full-Europe build has
-been claimed or silently started by this UI slice.
+Stream canonical feature/relationship state; partition graph construction with
+stable global edge identity; spatially partition search and geocoding; bound the
+writer's directory memory. Measure disk/RAM requirements on progressively larger
+regions. Then execute the saved full-Europe recipe. The current UI continues to
+save that recipe without claiming continent compilation is implemented.
 
 ## Live verification — 2026-10-10
 

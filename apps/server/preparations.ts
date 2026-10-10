@@ -1,3 +1,9 @@
+import { verifiedSource, verifiedSources } from "./verified-sources";
+import {
+  cachedBuildSpace,
+  planCachedBuild,
+  type VerifiedBuildSource,
+} from "../../packages/provisioning/src/cached-build";
 import { adminAccess, ADMIN_DENIED, type AdminAccess } from "./admin-access";
 import { preparationSpace } from "../../packages/provisioning/src/capacity";
 import { readStorage } from "./storage";
@@ -25,6 +31,7 @@ export interface PreparationJob {
   state: "running" | "cancelling" | "cancelled" | "failed" | "ready";
   selection: PackageSelection;
   sourcePlan?: PbfPlan;
+  cachedSource?: VerifiedBuildSource;
   progress: PreparationProgress;
   error?: string;
   size?: number;
@@ -61,9 +68,10 @@ export class Preparations {
       manager.jobs.set(job.id, job);
       if (job.state === "running" || job.state === "cancelling") {
         job.state = "failed";
-        job.error =
-          "Server stopped during preparation. Create the excerpt again.";
-        await manager.cleanup(job.id);
+        job.error = job.cachedSource
+          ? "Server stopped. Resume to reuse completed compiler stages."
+          : "Server stopped during preparation. Create the excerpt again.";
+        await manager.cleanup(job.id, !!job.cachedSource);
         await manager.persist(job);
       }
       if (
@@ -91,23 +99,57 @@ export class Preparations {
     this.writes = work.catch(console.error);
     return work;
   }
-  private async cleanup(id: string) {
-    await rm(resolve(this.directory, `${id}.work`), {
-      recursive: true,
-      force: true,
-    });
+  private async cleanup(id: string, keepWork = false) {
+    if (!keepWork)
+      await rm(resolve(this.directory, `${id}.work`), {
+        recursive: true,
+        force: true,
+      });
     for (const suffix of ["", ".part", ".payload.part"])
       await rm(this.path(id) + suffix, { force: true });
   }
-  async create(value: unknown) {
+  get sourceDirectory() {
+    return resolve(this.directory, "../sources");
+  }
+  async resume(id: string) {
+    const job = this.jobs.get(id);
+    if (!job?.cachedSource || !["failed", "cancelled"].includes(job.state))
+      throw new Error(
+        "Only stopped cached-source preparations can be resumed.",
+      );
+    return this.create(
+      { ...job.selection, cachedSourceId: job.cachedSource.id },
+      job,
+    );
+  }
+  async create(value: unknown, previous?: PreparationJob) {
     const extra = value as {
       sourcePlanId?: string;
+      cachedSourceId?: string;
       maxSourceBytes?: number;
     } | null;
     const plan = extra?.sourcePlanId
       ? this.sources.get(extra.sourcePlanId)
       : undefined;
-    if (plan) {
+    const cached = extra?.cachedSourceId
+      ? await verifiedSource(this.sourceDirectory, extra.cachedSourceId)
+      : undefined;
+    if (cached && extra?.sourcePlanId)
+      throw new Error("Choose one PBF source.");
+    if (cached) {
+      validateSelectionScope(value, WORLD_SOURCE);
+      planCachedBuild(value);
+      if (
+        previous?.cachedSource &&
+        (previous.cachedSource.sha256 !== cached.sha256 ||
+          previous.cachedSource.mtimeMs !== cached.mtimeMs)
+      )
+        throw new Error("Cached PBF changed since this build started.");
+      if (!Bun.which("osmium") || !Bun.which("cargo"))
+        throw new Error(
+          "PBF preparation requires Osmium and Cargo on the server.",
+        );
+    } else if (plan) {
       validateSelectionScope(value, WORLD_SOURCE);
       if (!planMatches(plan, value, extra!.maxSourceBytes!))
         throw new Error(
@@ -123,11 +165,13 @@ export class Preparations {
       throw new Error(
         "Another preparation is running. Wait for it or cancel it first.",
       );
-    const id = crypto.randomUUID();
+    const id = previous?.id ?? crypto.randomUUID();
     this.active = id;
     try {
       const disk = await readStorage(this.directory);
-      const needed = preparationSpace(value.maxBytes, plan?.bytes);
+      const needed = cached
+        ? cachedBuildSpace(value.maxBytes)
+        : preparationSpace(value.maxBytes, plan?.bytes);
       if (disk.availableBytes < needed)
         throw new Error(
           `Not enough server disk space: ${(needed / 1073741824).toFixed(2)} GiB estimated, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Lower the output budget or select a smaller source.`,
@@ -135,15 +179,18 @@ export class Preparations {
       const job: PreparationJob = {
         id,
         name: value.name.trim(),
-        createdAt: new Date().toISOString(),
+        createdAt: previous?.createdAt ?? new Date().toISOString(),
         state: "running",
         selection: structuredClone(value),
         sourcePlan: plan,
+        cachedSource: cached,
         progress: {
           phase: "planning",
-          message: plan
-            ? `Preparing ${plan.region.name} from OSM PBF…`
-            : "Opening the source snapshot…",
+          message: cached
+            ? "Opening verified cached PBF and saved compiler stages…"
+            : plan
+              ? `Preparing ${plan.region.name} from OSM PBF…`
+              : "Opening the source snapshot…",
           completed: 0,
           total: 0,
           readBytes: 0,
@@ -176,7 +223,7 @@ export class Preparations {
             job.manifest = data.manifest;
             job.progress.message = "Ready to serve and download.";
             job.progress.writtenBytes = data.size!;
-          } else await this.cleanup(id);
+          } else await this.cleanup(id, !!job.cachedSource);
           await this.persist(job);
         })()
           .catch((error) => {
@@ -224,6 +271,7 @@ export class Preparations {
         output: this.path(id),
         selection: job.selection,
         sourcePlan: plan,
+        cachedSource: cached,
       });
       return job;
     } catch (e) {
@@ -244,7 +292,9 @@ export class Preparations {
     if (!job) throw new Error("Unknown preparation");
     if (job.state !== "running") return job;
     job.state = "cancelling";
-    job.progress.message = "Cancelling and removing partial files…";
+    job.progress.message = job.cachedSource
+      ? "Stopping; completed stages will be kept for resume…"
+      : "Cancelling and removing partial files…";
     this.worker?.send({ type: "cancel" });
     await this.persist(job);
     return job;
@@ -281,6 +331,7 @@ export class Preparations {
           ...WORLD_SOURCE,
           ready: !!Bun.which("osmium") && !!Bun.which("cargo"),
         },
+        cachedSources: await verifiedSources(this.sourceDirectory),
         jobs: [...this.jobs.values()].sort((a, b) =>
           b.createdAt.localeCompare(a.createdAt),
         ),
@@ -296,9 +347,14 @@ export class Preparations {
       if (new TextEncoder().encode(raw).length > 16384)
         return json({ error: "Request too large" }, 413);
       const match = url.pathname.match(
-        /^\/admin\/preparations\/([a-f0-9-]{36})\/cancel$/,
+        /^\/admin\/preparations\/([a-f0-9-]{36})\/(cancel|resume)$/,
       );
-      if (match) return json(await this.cancel(match[1]!));
+      if (match)
+        return json(
+          await (match[2] === "resume"
+            ? this.resume(match[1]!)
+            : this.cancel(match[1]!)),
+        );
       if (url.pathname === "/admin/preparations/source-plan")
         return json(await this.sources.plan(JSON.parse(raw)));
       if (url.pathname !== "/admin/preparations")

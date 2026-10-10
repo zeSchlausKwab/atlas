@@ -2,6 +2,7 @@ import { openClient } from "./client-link";
 import { budgetControl, storageSize } from "./host-budget";
 import {
   preparationSpace,
+  cachedBuildSpace,
   capacityBudget,
   validBudget,
   type StorageInfo,
@@ -47,6 +48,7 @@ const outputBytes = () =>
 const sourceBytes = () =>
   el<HTMLInputElement>("source-budget").valueAsNumber * 1048576;
 function spaceNeeded() {
+  if (cached()) return cachedBuildSpace(outputBytes());
   return preparationSpace(
     outputBytes(),
     global() ? (sourcePlan?.bytes ?? sourceBytes()) : undefined,
@@ -69,13 +71,20 @@ function renderStorage() {
     const meter = el<HTMLMeterElement>("storage-meter");
     meter.max = storage!.totalBytes || 1;
     meter.value = available;
-    outputBudget?.setCapacity(capacityBudget(available, "output", global()));
+    outputBudget?.setCapacity(
+      cached()
+        ? Math.max(
+            1048576,
+            Math.floor((available - 64 * 1024 ** 3) / 6 / 1048576) * 1048576,
+          )
+        : capacityBudget(available, "output", global()),
+    );
     sourceBudget?.setCapacity(capacityBudget(available, "source", global()));
   }
   const estimate = el("storage-estimate");
   if (
     !validBudget(outputBytes()) ||
-    (global() && !validBudget(sourceBytes()))
+    (remotePbf() && !validBudget(sourceBytes()))
   ) {
     estimate.textContent = "Enter valid budgets to estimate preparation space.";
     estimate.dataset.insufficient = "false";
@@ -85,12 +94,15 @@ function renderStorage() {
   estimate.dataset.insufficient = String(
     available !== undefined && needed > available,
   );
-  estimate.textContent = `${storageSize(needed)} estimated workspace${global() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
+  estimate.textContent = `${storageSize(needed)} ${cached() ? "workspace allowance including 60 GiB reserve; cached PBF is already on disk" : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
 }
 let checking = false,
   submitting = false,
   planKey = "";
 const global = () => el<HTMLSelectElement>("data-source").value !== "installed";
+const cached = () =>
+  el<HTMLSelectElement>("data-source").value.startsWith("cached:");
+const remotePbf = () => global() && !europe() && !cached();
 const europe = () => el<HTMLSelectElement>("data-source").value === "europe";
 const scope = () => (global() ? globalScope : installedScope);
 const sourceArea = () => ({
@@ -138,22 +150,24 @@ function update() {
       "Selection changed or source plan expired. Check the PBF source again.";
   }
   const valid =
-    validBudget(outputBytes()) && (!global() || validBudget(sourceBytes()));
+    validBudget(outputBytes()) && (!remotePbf() || validBudget(sourceBytes()));
   el<HTMLButtonElement>("check-source").disabled =
     !closed || checking || !validBudget(sourceBytes());
   el<HTMLButtonElement>("submit").disabled =
     !closed ||
     submitting ||
     !valid ||
-    (global() && !europe() && !sourcePlan) ||
+    (remotePbf() && !sourcePlan) ||
     (!europe() &&
       storage !== undefined &&
       spaceNeeded() > storage.availableBytes);
   el("submit").textContent = europe()
     ? "Save Europe build recipe ↗"
-    : global()
-      ? "Download, prepare & host ↗"
-      : "Prepare & host map ↗";
+    : cached()
+      ? "Build from cached PBF & host ↗"
+      : global()
+        ? "Download, prepare & host ↗"
+        : "Prepare & host map ↗";
   el("area").textContent = closed
     ? `${points.length} corners · area ready`
     : mode === "rect"
@@ -173,9 +187,11 @@ function finish() {
     closed = true;
     mode = null;
     update();
-    el("message").textContent = global()
-      ? "Area ready. Choose the data to keep, then check the PBF source."
-      : "Area ready. Choose the data to keep, then prepare your map.";
+    el("message").textContent = cached()
+      ? "Area ready. Choose capabilities, then build from the verified PBF already on this server."
+      : global()
+        ? "Area ready. Choose the data to keep, then check the PBF source."
+        : "Area ready. Choose the data to keep, then prepare your map.";
   } catch (e) {
     if (mode === "rect") {
       points = points.slice(0, 1);
@@ -363,6 +379,23 @@ function jobs(values: PreparationJob[]) {
       card.append(links, details, select);
       library.append(card);
     } else {
+      if (job.cachedSource && ["failed", "cancelled"].includes(job.state)) {
+        const resume = text(
+          "button",
+          "Resume saved build",
+        ) as HTMLButtonElement;
+        resume.onclick = async () => {
+          resume.disabled = true;
+          try {
+            await request(`/admin/preparations/${job.id}/resume`, {});
+            await refresh();
+          } catch (e) {
+            el("message").textContent = String(e);
+            resume.disabled = false;
+          }
+        };
+        card.append(resume);
+      }
       card.append(text("p", job.error ?? job.progress.message));
       if (job.state === "running" || job.state === "cancelling") {
         const progress = document.createElement("progress");
@@ -373,13 +406,17 @@ function jobs(values: PreparationJob[]) {
           progress,
           text(
             "p",
-            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} blocks`) : ""} · ${bytes(job.progress.writtenBytes)} Atlas written`,
+            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit === "stages" ? "stages" : "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} Atlas written`,
             "quiet",
           ),
         );
         const cancel = text(
           "button",
-          job.state === "cancelling" ? "Cancelling…" : "Cancel preparation",
+          job.state === "cancelling"
+            ? "Stopping…"
+            : job.cachedSource
+              ? "Stop & keep checkpoints"
+              : "Cancel preparation",
         ) as HTMLButtonElement;
         cancel.disabled = job.state === "cancelling";
         cancel.onclick = async () => {
@@ -425,6 +462,26 @@ async function refresh() {
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
     jobs(data.jobs);
+    const select = el<HTMLSelectElement>("data-source");
+    const savedValue = select.value;
+    const sources = data.cachedSources ?? [];
+    for (const option of select.querySelectorAll('option[value^="cached:"]'))
+      option.remove();
+    for (const item of sources) {
+      const option = new Option(
+        `Cached ${item.name} · verified`,
+        `cached:${item.id}`,
+      );
+      select.append(option);
+    }
+    if ([...select.options].some((o) => o.value === savedValue))
+      select.value = savedValue;
+    const corridor = document.getElementById(
+      "source-corridor",
+    ) as HTMLButtonElement;
+    corridor.disabled = !sources.length;
+    corridor.dataset.source =
+      sources.find((s: any) => s.kind === "planet")?.id ?? sources[0]?.id ?? "";
     storage =
       typeof data.storage?.availableBytes === "number"
         ? data.storage
@@ -446,12 +503,16 @@ function configureSource() {
   for (const k of ["layers", "labels", "profiles", "queries", "features"])
     for (const row of el(k).querySelectorAll("label")) row.remove();
   fields.clear();
-  el("source").textContent = global()
-    ? "Worldwide OSM · Geofabrik extracts"
-    : source.name;
-  el("source-note").textContent = global()
-    ? "Choose an area anywhere in the supported coverage. The source check finds one covering Geofabrik region, including routing padding. OpenFreeMap supplies only the preview."
-    : `Source coverage: ${source.bounds.map((n: number) => n.toFixed(3)).join(", ")}. Prepare from this installed snapshot; OpenFreeMap is a preview only.`;
+  el("source").textContent = cached()
+    ? "Verified PBF · already on this server"
+    : global()
+      ? "Worldwide OSM · Geofabrik extracts"
+      : source.name;
+  el("source-note").textContent = cached()
+    ? "No source download. We scan the cached PBF locally, build shared routing and search, then compile detail partitions into one map. This first stage supports regional areas with a 256 MiB extracted-PBF limit; full Europe compilation remains in development."
+    : global()
+      ? "Choose an area anywhere in the supported coverage. The source check finds one covering Geofabrik region, including routing padding. OpenFreeMap supplies only the preview."
+      : `Source coverage: ${source.bounds.map((n: number) => n.toFixed(3)).join(", ")}. Prepare from this installed snapshot; OpenFreeMap is a preview only.`;
   el<HTMLInputElement>("name").value = global()
     ? "My OSM excerpt"
     : `${source.name} excerpt`;
@@ -517,10 +578,10 @@ function configureSource() {
       a.featureKinds.includes(k as FeatureKind),
       false,
     );
-  el("global-controls").hidden = !global() || europe();
+  el("global-controls").hidden = !remotePbf();
   el("compiler-note").hidden = !europe();
-  el<HTMLInputElement>("source-budget").disabled = !global();
-  el<HTMLInputElement>("source-budget").required = global() && !europe();
+  el<HTMLInputElement>("source-budget").disabled = !remotePbf();
+  el<HTMLInputElement>("source-budget").required = remotePbf();
   el("jump-controls").hidden = !global();
   el("fit").textContent = global() ? "Fit world" : "Fit source";
   const local = el<HTMLSelectElement>(
@@ -697,13 +758,19 @@ export async function startBuilder() {
       }
       return;
     }
-    if (global() && (!sourcePlan || planKey !== sourceKey())) return;
+    if (remotePbf() && (!sourcePlan || planKey !== sourceKey())) return;
     submitting = true;
     update();
     try {
       await request("/admin/preparations", {
         ...selection(),
-        ...(global()
+        ...(cached()
+          ? {
+              cachedSourceId:
+                el<HTMLSelectElement>("data-source").value.slice(7),
+            }
+          : {}),
+        ...(remotePbf()
           ? {
               sourcePlanId: sourcePlan!.id,
               maxSourceBytes: sourceArea().maxSourceBytes,
@@ -726,6 +793,45 @@ export async function startBuilder() {
       configureSource();
       await switchPreview();
     }
+  };
+  async function chooseCached(id: string, corridor = false) {
+    await refresh();
+    el<HTMLSelectElement>("data-source").value = `cached:${id}`;
+    if (!cached()) {
+      el("message").textContent = "This source is not ready yet.";
+      return;
+    }
+    configureSource();
+    if (corridor) {
+      points = [
+        [16.18, 47.98],
+        [17.28, 47.98],
+        [17.28, 48.32],
+        [16.18, 48.32],
+      ];
+      closed = true;
+      el<HTMLInputElement>("name").value = "Vienna–Bratislava · planet build";
+      el<HTMLInputElement>("budget").value = "8192";
+      el<HTMLInputElement>("budget").dispatchEvent(
+        new Event("input", { bubbles: true }),
+      );
+      el<HTMLSelectElement>("preset").value = "all";
+      for (const input of fields.values()) input.checked = !input.disabled;
+    }
+    await switchPreview();
+    if (corridor) preview?.fitArea([16.18, 47.98, 17.28, 48.32]);
+    el("message").textContent =
+      "Ready to build from the cached PBF. Completed stages can be resumed after a stop; closing this page leaves the server working.";
+    document.getElementById("prepare")!.scrollIntoView({ behavior: "smooth" });
+    update();
+  }
+  document.addEventListener(
+    "atlas-source-prepare",
+    (event) => void chooseCached((event as CustomEvent).detail.id),
+  );
+  document.getElementById("source-corridor")!.onclick = () => {
+    const id = document.getElementById("source-corridor")!.dataset.source;
+    if (id) void chooseCached(id, true);
   };
   const europeButton = document.getElementById(
     "source-europe",
@@ -811,9 +917,7 @@ export async function startBuilder() {
           !closed ||
           submitting ||
           !validBudget(outputBytes()) ||
-          (global() &&
-            !europe() &&
-            (!sourcePlan || !validBudget(sourceBytes()))) ||
+          (remotePbf() && (!sourcePlan || !validBudget(sourceBytes()))) ||
           (!europe() &&
             storage !== undefined &&
             spaceNeeded() > storage.availableBytes);

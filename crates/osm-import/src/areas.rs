@@ -149,7 +149,7 @@ fn contains(ring: &Ring, p: [f64; 2]) -> bool {
 pub fn assemble(
     relation: &Relation,
     ways: &HashMap<WayId, Vec<NodeId>>,
-    nodes: &HashMap<NodeId, [f64; 2]>,
+    nodes: &impl Fn(&NodeId) -> Option<[f64; 2]>,
 ) -> Result<Vec<Vec<Ring>>, &'static str> {
     let mut outer = Vec::new();
     let mut inner = Vec::new();
@@ -173,7 +173,7 @@ pub fn assemble(
     }
     fn coordinates(
         parts: Vec<Vec<NodeId>>,
-        nodes: &HashMap<NodeId, [f64; 2]>,
+        nodes: &impl Fn(&NodeId) -> Option<[f64; 2]>,
         positive: bool,
     ) -> Result<Vec<Ring>, &'static str> {
         stitch(parts)?
@@ -181,7 +181,7 @@ pub fn assemble(
             .map(|ids| {
                 let mut ring: Ring = ids
                     .iter()
-                    .map(|id| nodes.get(id).copied().ok_or("Missing member node"))
+                    .map(|id| nodes(id).ok_or("Missing member node"))
                     .collect::<Result<_, _>>()?;
                 let a = area(&ring);
                 if a.abs() < 1e-16 {
@@ -288,12 +288,12 @@ mod tests {
                 })
                 .collect(),
         };
-        let polygons = assemble(&relation, &ways, &nodes).unwrap();
+        let polygons = assemble(&relation, &ways, &|id| nodes.get(id).copied()).unwrap();
         assert_eq!(polygons.len(), 2);
         assert_eq!(polygons[0].len(), 2);
         assert_eq!(area(&polygons[0][0]), 16.);
         assert_eq!(area(&polygons[0][1]), -1.);
         ways.remove(&WayId(2));
-        assert!(assemble(&relation, &ways, &nodes).is_err());
+        assert!(assemble(&relation, &ways, &|id| nodes.get(id).copied()).is_err());
     }
 }

@@ -1,6 +1,7 @@
 //! Shared OSM construction and access policy for the archive compiler.
 mod areas;
 mod display;
+mod node_store;
 mod transport;
 mod transport_import;
 mod walking;

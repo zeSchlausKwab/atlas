@@ -19,6 +19,7 @@
     "data:vienna": "bun scripts/vienna-plus.ts",
     "demo:contextvm": "bun scripts/contextvm-demo.ts",
     "data:danube": "bun scripts/danube-composition.ts",
+    "verify:cached-build": "bun scripts/verify-cached-build.ts",
     "verify:composition": "bun scripts/verify-composition.ts",
     "verify:source-memory": "bun scripts/verify-source-memory.ts",
     "deploy": "bun scripts/deploy.ts",

@@ -1,3 +1,7 @@
+import {
+  importCachedPbf,
+  type VerifiedBuildSource,
+} from "../../packages/provisioning/src/cached-build";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PackageSource } from "./package-source";
@@ -20,6 +24,7 @@ process.on(
     output: string;
     selection: PackageSelection;
     sourcePlan?: PbfPlan;
+    cachedSource?: VerifiedBuildSource;
   }) => {
     if (data.type === "cancel") {
       abort.abort();
@@ -47,22 +52,31 @@ process.on(
       }
     };
     try {
-      const source = data.sourcePlan
-        ? await importPbf(
-            data.sourcePlan,
+      const source = data.cachedSource
+        ? await importCachedPbf(
+            data.cachedSource,
             data.selection,
-            join(dirname(output), "sources"),
             work,
             abort.signal,
             report,
           )
-        : data.source;
+        : data.sourcePlan
+          ? await importPbf(
+              data.sourcePlan,
+              data.selection,
+              join(dirname(output), "sources"),
+              work,
+              abort.signal,
+              report,
+            )
+          : data.source;
       file = await PackageSource.open(source);
       abort.signal.throwIfAborted();
       const reader = await new AtlasReader(file).open();
-      const selection = data.sourcePlan
-        ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
-        : data.selection;
+      const selection =
+        data.sourcePlan || data.cachedSource
+          ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
+          : data.selection;
       const prepared = await preparePackage(
         reader,
         selection,
@@ -96,7 +110,8 @@ process.on(
     } finally {
       await result?.close();
       await file?.close();
-      await rm(work, { recursive: true, force: true });
+      if (!data.cachedSource || final!.type === "ready")
+        await rm(work, { recursive: true, force: true });
     }
     if (process.connected) process.send?.(final);
     process.exit(0);

@@ -1,4 +1,4 @@
-use crate::{areas, walking};
+use crate::{areas, node_store::NodeWriter, walking};
 use atlas_routing::{Graph, Node, Segment};
 use osmpbfreader::{OsmId, OsmObj, OsmPbfReader};
 use serde_json::{json, Value};
@@ -8,9 +8,13 @@ use std::{
     io::{BufWriter, Write},
 };
 
-pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn import(
+    source: &str,
+    output: &str,
+    legacy_routing: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = OsmPbfReader::new(File::open(source)?);
-    let mut nodes = HashMap::new();
+    let mut nodes = NodeWriter::new()?;
     let mut features: Vec<Value> = Vec::new();
     let mut peaks = Vec::new();
     let mut places = Vec::new();
@@ -23,8 +27,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
     let mut relations = HashMap::new();
     let mut member_ids = HashSet::new();
     let mut member_ways = HashMap::new();
-    // Two passes bound retained state to node coordinates and selected features.
-    // This prototype is intended for small regional extracts, not planet imports.
+    // Coordinates live on disk; feature/relationship state is bounded by the input partition.
     for object in reader.iter() {
         let object = object?;
         if let OsmObj::Relation(relation) = &object {
@@ -39,7 +42,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
         }
         if let OsmObj::Node(node) = object {
             let position = [node.lon(), node.lat()];
-            nodes.insert(node.id, position);
+            nodes.push(node.id, position, [false; 3])?;
             if let Some(name) = node.tags.get("name").filter(|name| !name.trim().is_empty()) {
                 let tag = |key: &str| node.tags.get(key).map(|s| s.as_str()).unwrap_or("");
                 let kind = if !tag("place").is_empty() {
@@ -73,7 +76,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
                     locations.push(json!({"id":format!("node/{}",node.id.0),"name":name.trim(),"aliases":aliases,"kind":kind,"category":category,"coordinates":position}));
                 }
             }
-            if walking::node_blocked(&node.tags) {
+            if legacy_routing && walking::node_blocked(&node.tags) {
                 blocked_nodes.insert(node.id);
             }
             if node.tags.get("natural").map(|v| v.as_str()) == Some("peak") {
@@ -89,6 +92,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
             }
         }
     }
+    let nodes = nodes.finish()?;
     reader.rewind()?;
     for object in reader.iter() {
         if let OsmObj::Way(way) = object? {
@@ -98,7 +102,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
             let tag = |key: &str| way.tags.get(key).map(|v| v.as_str()).unwrap_or("");
             let highway = tag("highway");
             let directions = walking::directions(&way.tags);
-            if directions != 0 {
+            if legacy_routing && directions != 0 {
                 if way.nodes.iter().any(|id| !nodes.contains_key(id)) {
                     routing_skipped_ways += 1;
                 } else {
@@ -108,8 +112,8 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
                         if a == b || blocked_nodes.contains(&a) || blocked_nodes.contains(&b) {
                             continue;
                         }
-                        graph_nodes.insert(a, nodes[&a]);
-                        graph_nodes.insert(b, nodes[&b]);
+                        graph_nodes.insert(a, nodes.get(&a).unwrap().0);
+                        graph_nodes.insert(b, nodes.get(&b).unwrap().0);
                         graph_segments.push((a, b, way.id.0, directions));
                     }
                 }
@@ -149,8 +153,11 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
             } else {
                 continue;
             };
-            let coordinates: Option<Vec<[f64; 2]>> =
-                way.nodes.iter().map(|id| nodes.get(id).copied()).collect();
+            let coordinates: Option<Vec<[f64; 2]>> = way
+                .nodes
+                .iter()
+                .map(|id| nodes.get(id).map(|n| n.0))
+                .collect();
             let Some(coordinates) = coordinates else {
                 skipped_ways += 1;
                 continue;
@@ -188,7 +195,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
                 continue;
             }
         };
-        match areas::assemble(&relation, &member_ways, &nodes) {
+        match areas::assemble(&relation, &member_ways, &|id| nodes.get(id).map(|n| n.0)) {
             Ok(coordinates) => {
                 for member in &relation.refs {
                     if member.role == "outer" || member.role.is_empty() {

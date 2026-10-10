@@ -30,3 +30,8 @@ export interface StorageInfo {
   totalBytes: number;
   checkedAt: string;
 }
+
+/** Regional cached builds retain checkpoints and preserve the source-library reserve. */
+export function cachedBuildSpace(maxBytes: number) {
+  return 64 * 1024 ** 3 + maxBytes * 6;
+}

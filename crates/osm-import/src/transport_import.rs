@@ -1,6 +1,6 @@
 use crate::transport;
 use atlas_routing::{distance, Graph, Node, Segment, Turn};
-use osmpbfreader::{NodeId, OsmId, OsmObj, OsmPbfReader, Tags};
+use osmpbfreader::{OsmId, OsmObj, OsmPbfReader, Tags};
 use serde_json::json;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -88,27 +88,26 @@ mod tests {
 pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(output)?;
     let mut reader = OsmPbfReader::new(File::open(source)?);
-    let mut nodes = HashMap::<NodeId, ([f64; 2], [bool; 3])>::new();
+    let mut nodes = crate::node_store::NodeWriter::new()?;
     let mut relations = Vec::new();
     for o in reader.iter() {
         match o? {
             OsmObj::Node(n) => {
-                nodes.insert(
+                nodes.push(
                     n.id,
-                    (
-                        [n.lon(), n.lat()],
-                        [
-                            transport::blocked(&n.tags, 0),
-                            transport::blocked(&n.tags, 1),
-                            transport::blocked(&n.tags, 2),
-                        ],
-                    ),
-                );
+                    [n.lon(), n.lat()],
+                    [
+                        transport::blocked(&n.tags, 0),
+                        transport::blocked(&n.tags, 1),
+                        transport::blocked(&n.tags, 2),
+                    ],
+                )?;
             }
             OsmObj::Relation(r) if tag(&r.tags, "type") == "restriction" => relations.push(r),
             _ => {}
         }
     }
+    let nodes = nodes.finish()?;
     let mut metadata = serde_json::Map::new();
     for mode in 0..3 {
         let mut turns = Vec::new();
@@ -200,7 +199,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
                 let speed = transport::speeds(&w.tags, mode);
                 for pair in w.nodes.windows(2) {
                     let (a, b) = (pair[0], pair[1]);
-                    let (na, nb) = (nodes[&a], nodes[&b]);
+                    let (na, nb) = (nodes.get(&a).unwrap(), nodes.get(&b).unwrap());
                     if a == b || na.1[mode] || nb.1[mode] {
                         continue;
                     }
