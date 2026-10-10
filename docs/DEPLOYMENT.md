@@ -151,31 +151,54 @@ Sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
 ## Live validation record — 2026-10-10
 
 Local verification passed: TypeScript, 117 Bun tests and 42 native Rust tests,
-plus both portable WASM builds and the frontend build. Resume/rate-limit changes
-also passed focused CLI tests and TypeScript. The Nix runtime was actually built
-on the HM90S (Bun 1.3.13, Rust/Cargo 1.95.0, Osmium 1.19.1). The optional NixOS
-module was evaluated against the live configuration without applying it; it kept
-the existing model-server firewall rule and enabled the proposed Atlas rule/linger.
+plus both portable WASM builds and the frontend build. Deployment hardening also
+passed focused CLI tests (5 tests, 48 assertions) and TypeScript. The Nix runtime
+was built on the HM90S: Bun 1.3.13, Rust/Cargo 1.95.0, Osmium 1.19.1.
 
-The first 5.57 GiB deployment was interrupted during upload. Three regional
-archives and the base file arrived, with the fourth partially transferred.
-No Atlas service was activated. Model serving was still active on the last
-successful check. Candidate startup, code-only update and rollback remain to be
-verified on this host once the network is stable.
+The first deployment is complete: 5.57 GiB comprising Vienna Plus and four ready
+regional maps. A second, code-only deployment transferred 1,806,700 bytes of files,
+imported no maps and became healthy. Rollback to the first release and restoration
+of the second both passed. All five map files retained their inode, size and mtime.
+A deliberately invalid map was rejected by candidate startup before activation;
+the healthy release and previous-release pointer stayed unchanged.
 
-During a disconnect, the Mac resolved `192.168.0.179` to the server's Wi-Fi MAC
-`10:6f:d9:76:0b:f3`, while its Ethernet MAC is `1c:83:41:32:c2:53`. This is evidence
-of an interface/addressing issue consistent with ARP flux, not a confirmed complete
-network diagnosis. Ethernet-only operation or an explicit multi-interface ARP
-policy should be checked before more large transfers. Network changes were not
-made as part of deployment. See the kernel's
-[ARP behavior documentation](https://kernel.org/doc/html/latest/networking/ip-sysctl.html).
+Current application release: `20261010T071011743Z-1f66b300a009-43b82f22`
+(source revision `1f66b300a009`). First/previous release:
+`20261010T064147309Z-a495dbcf1785-38a9b710` (source revision `e00a6f38c7b1`).
+The failed disposable-map candidate is retained for inspection at
+`releases/20261010T071249405Z-1f66b300a009-abb4b320`; it is not served.
+Later documentation commits do not change the running application code.
 
-The unfinished release ID is `20261010T064147309Z-a495dbcf1785-38a9b710`.
-After checking that no upload/activation remains active and clearing any abandoned
-`.deploy-lock`, resume with:
+Verified on the server: UI/WASM assets, catalog, 206 byte ranges, native preparation
+prerequisites, a server-executed peak query through HTTP, and generation/inspection
+of the transport PBF fixture. That fixture
+produced a 7,108-byte Atlas file with 11 blocks and walking/cycling/driving graphs,
+including its driving turn restriction. The browser host console lists all four
+ready maps and server disk capacity. The normal viewer renders their composition
+and completed a Vienna–Bratislava client route; see [the baseline](DEMO-BASELINE.md).
 
-```sh
-bun run deploy --map data/vienna-plus.atlas --with-library \
-  --resume 20261010T064147309Z-a495dbcf1785-38a9b710 --upload-mib 8
-```
+At the final deployment check, Atlas was active, its service cgroup used about
+84 MiB, and about 393.4 GiB remained free. These are idle/small-fixture observations,
+not memory bounds for server routing or regional preparation. The original llama-cpp service
+was active throughout deployment/rollback checks. At 09:13:37 CEST a separate NixOS
+administration change stopped and removed that unit; the final check found
+`lemond.service` active (Lemonade model manager) and port 8080 listening. Atlas did
+not change either model service or `/etc/nixos`. ContextVM remains unconfigured. No Europe/planet download was started.
+
+### Ethernet-only recovery
+
+The Mac had resolved `192.168.0.179` to Wi-Fi MAC `10:6f:d9:76:0b:f3`, while
+Ethernet uses `1c:83:41:32:c2:53`. Clearing the stale entry alone immediately
+rediscovered the Wi-Fi MAC. A temporary, authenticated Mac ARP entry using the
+verified Ethernet MAC restored SSH. After explicit user approval, `nmcli radio
+wifi off` disabled the server radio. NetworkManager persisted `WirelessEnabled=false`;
+`eno1` retained `192.168.0.179/24` and the sole default route. The temporary Mac
+entry was removed, normal discovery returned the Ethernet MAC, and deployment
+and subsequent checks completed reliably. No persistent Mac override remains.
+See the kernel's [ARP behavior documentation](https://kernel.org/doc/html/latest/networking/ip-sysctl.html).
+
+The optional NixOS module was evaluated against the earlier live configuration without
+applying it; it preserved the model-server firewall rule. Lingering is still off,
+and port 3100 remains closed to direct LAN access. The live demo is available via
+`bun run deploy tunnel` at `http://127.0.0.1:13100/` and `/host`. The one-time
+NixOS steps above remain optional and require interactive sudo.

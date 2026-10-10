@@ -44,6 +44,13 @@ Delivery: `scripts/deploy.ts`, a Nix runtime, a systemd user service and
 `docs/DEPLOYMENT.md`. HTTPS and authentication for direct LAN browser use are a
 follow-up: an ordinary LAN HTTP origin lacks secure-context browser capabilities.
 
+The first release, code-only update, rollback, invalid-candidate rejection, browser
+composition and a Linux compiler fixture have now passed on the HM90S. See
+[deployment validation](DEPLOYMENT.md#live-validation-record--2026-10-10) and
+[the first LAN baseline](DEMO-BASELINE.md). The next slice is fetch/cache/worker
+profiling plus single-package client/server parity; full performance validation
+and the active-preparation deployment guard still need dedicated scenarios.
+
 ## 2. Capability selection and client/server parity on real network reads
 
 Use the existing four compatible packages (about 4.77 GiB total, plus the base map).
