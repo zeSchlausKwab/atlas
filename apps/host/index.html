@@ -19,92 +19,97 @@
       <div class="host-heading">
         <div>
           <p class="eyebrow">YOUR DATA. YOUR CAPABILITIES.</p>
-          <h1>A piece of the world.<br />Exactly what you need.</h1>
+          <h1>From source to served map.</h1>
         </div>
         <p>
-          Draw an area. Choose its data. Prepare a portable map on your server,
-          then serve it or take the file with you.
+          Choose a source, draw your area, decide what belongs inside. Your
+          server prepares the map and adds it to the library.
         </p>
       </div>
       <nav class="host-section-nav" aria-label="Host console sections">
-        <a href="#sources">01 / Sources</a><a href="#prepare">02 / Prepare</a
-        ><a href="#library">03 / Library</a
-        ><a href="#operations">04 / Operations</a>
+        <a href="#prepare">Prepare a map</a><a href="#builds">Builds</a
+        ><a href="#library">Map library</a><a href="#sources">Source files</a
+        ><a href="#operations">Operations</a>
       </nav>
       <p id="host-access" class="host-source-note" role="status">
         Checking administration access…
       </p>
-      <section id="sources" class="host-source-note">
-        <div class="host-list-heading">
-          <h2>Source library</h2>
-          <span class="eyebrow">DOWNLOAD ONCE / PREPARE MANY MAPS</span>
-        </div>
-        <p>
-          Keep a verified OSM PBF on this server before compiling maps.
-          Downloads can be paused and resumed, and continue when you close this
-          page.
-        </p>
-        <div class="host-actions">
-          <label
-            >Source
-            <select id="source-kind" aria-label="PBF source">
-              <option value="planet">Whole planet · OpenStreetMap</option>
-              <option value="europe">Europe · Geofabrik</option>
-            </select></label
-          >
-          <button id="source-inspect" type="button">Check download</button>
-          <button id="source-start" type="button" disabled>
-            Download PBF to server
-          </button>
-          <button id="source-corridor" type="button" disabled>
-            Vienna–Bratislava · cached PBF
-          </button>
-          <button id="source-europe" type="button" disabled>
-            Configure full Europe · z0–16
-          </button>
-        </div>
-        <p id="source-plan" role="status">
-          Check the dated source, exact size and available disk space before
-          downloading.
-        </p>
-        <p id="source-space" class="quiet"></p>
-        <div id="source-jobs" class="host-library" aria-live="polite"></div>
-        <p class="quiet">
-          A cached PBF is source data, not a rendered map. Configure Europe
-          below to build an Atlas package with your chosen capabilities using
-          disk-backed stages.
-        </p>
-      </section>
       <section id="prepare" class="host-builder">
-        <div class="host-list-heading">
-          <h2>Prepare a map</h2>
-          <span class="eyebrow">LOCAL SNAPSHOT OR WORLDWIDE OSM</span>
-        </div>
+        <section class="host-source-step" aria-labelledby="source-step-title">
+          <div class="host-step-heading">
+            <span class="host-step-number">01</span>
+            <h2 id="source-step-title">Choose your source</h2>
+          </div>
+          <fieldset class="host-source-choices">
+            <legend class="sr-only">Source type</legend>
+            <label class="host-source-choice"
+              ><input
+                type="radio"
+                name="build-source-kind"
+                value="cached"
+                checked
+              /><span
+                ><strong>PBF on this server</strong
+                ><small
+                  >Extract any area from the cached planet. No download.</small
+                ></span
+              ></label
+            >
+            <label class="host-source-choice"
+              ><input
+                type="radio"
+                name="build-source-kind"
+                value="geofabrik"
+              /><span
+                ><strong>Download a region</strong
+                ><small
+                  >Find a covering Geofabrik PBF, download it, then crop.</small
+                ></span
+              ></label
+            >
+            <label class="host-source-choice"
+              ><input
+                type="radio"
+                name="build-source-kind"
+                value="atlas"
+              /><span
+                ><strong>Existing Atlas map</strong
+                ><small
+                  >Make a smaller map from data already in your library.</small
+                ></span
+              ></label
+            >
+          </fieldset>
+          <div class="host-source-selection">
+            <label class="host-field" id="prepare-source-select-label"
+              ><span id="prepare-source-select-title">Available PBF files</span
+              ><select
+                id="prepare-data-source"
+                aria-label="Source dataset"
+              ></select
+            ></label>
+            <div class="host-source-description">
+              <strong id="prepare-source">Loading sources…</strong>
+              <p id="prepare-source-note"></p>
+              <a href="#sources" id="prepare-manage-sources"
+                >Manage source files & downloads ↓</a
+              >
+            </div>
+          </div>
+        </section>
         <div class="host-builder-grid">
           <div class="host-picker">
-            <label class="host-field"
-              >Data source<select id="prepare-data-source">
-                <option value="installed">Installed Atlas snapshot</option>
-                <option value="global">Worldwide OSM PBF · Geofabrik</option>
-                <option value="europe">Europe · full dataset</option>
-              </select></label
-            >
-            <div class="host-picker-top">
-              <label
-                >Preview
-                <select id="prepare-provider">
-                  <option value="openfreemap">OpenFreeMap · world</option>
-                  <option value="local">Local Atlas · source</option>
-                </select></label
-              ><button id="prepare-fit" type="button">Fit source</button>
+            <div class="host-step-heading">
+              <span class="host-step-number">02</span>
+              <h2>Draw your area</h2>
             </div>
-            <div class="host-jump" id="prepare-jump-controls" hidden>
-              <label class="host-field"
-                >Go to latitude, longitude<input
-                  id="prepare-coordinates"
-                  placeholder="43.735, 7.423 · Monaco"
-              /></label>
-              <button id="prepare-jump" type="button">Go to coordinates</button>
+            <div class="host-picker-top">
+              <span class="quiet">Start with an area, then refine it</span>
+              <div class="host-actions">
+                <button id="prepare-britain" type="button">
+                  Britain rectangle</button
+                ><button id="prepare-fit" type="button">Fit world</button>
+              </div>
             </div>
             <div
               id="prepare-map"
@@ -133,23 +138,47 @@
               drawing. With the map focused, Space adds its center.
             </p>
             <p id="prepare-preview-status" class="quiet" role="status"></p>
-            <div class="host-source-note">
-              <p class="eyebrow">AVAILABLE SOURCE</p>
-              <h3 id="prepare-source">Loading…</h3>
-              <p id="prepare-source-note"></p>
-            </div>
+            <details class="host-map-options">
+              <summary>Coordinates & preview options</summary>
+              <div class="host-jump" id="prepare-jump-controls">
+                <label class="host-field"
+                  >Go to latitude, longitude<input
+                    id="prepare-coordinates"
+                    placeholder="54.5, -3.0" /></label
+                ><button id="prepare-jump" type="button">Go</button>
+              </div>
+              <label class="host-field"
+                >Preview background<select id="prepare-provider">
+                  <option value="openfreemap">
+                    OpenFreeMap · preview only
+                  </option>
+                  <option value="local">Selected Atlas map</option>
+                </select></label
+              >
+              <p class="quiet">
+                The preview helps you draw. It does not supply data for your new
+                map.
+              </p>
+            </details>
           </div>
           <form id="prepare-form" class="host-prepare-form">
+            <div class="host-step-heading">
+              <span class="host-step-number">03</span>
+              <h2>Choose what’s inside</h2>
+            </div>
             <label class="host-field"
               >Map name<input id="prepare-name" required maxlength="80"
             /></label>
             <label class="host-field"
-              >Start with<select id="prepare-preset">
-                <option value="view">Just view the map</option>
+              >Capabilities preset<select id="prepare-preset">
+                <option value="view">Map display · geometry & labels</option>
+                <option value="geometry">Geometry only</option>
                 <option value="water-buildings">Water & buildings only</option>
-                <option value="all">Everything available</option>
+                <option value="all">All capabilities</option>
+                <option value="custom">Custom selection</option>
               </select></label
             >
+            <p class="quiet" id="prepare-preset-note"></p>
             <div class="host-field-pair">
               <label class="host-field"
                 >Minimum zoom<input
@@ -175,7 +204,9 @@
               <fieldset id="prepare-labels"><legend>Labels</legend></fieldset>
             </details>
             <details>
-              <summary>Routing & isochrones</summary>
+              <summary id="prepare-routing-summary">
+                Routing & isochrones
+              </summary>
               <fieldset id="prepare-profiles">
                 <legend>Travel modes</legend>
               </fieldset>
@@ -193,13 +224,15 @@
               </p>
             </details>
             <details>
-              <summary>Search & queries</summary>
+              <summary id="prepare-search-summary">Search & queries</summary>
               <fieldset id="prepare-queries">
                 <legend>Indexes to include</legend>
               </fieldset>
             </details>
             <details>
-              <summary>Extractable source features</summary>
+              <summary id="prepare-extract-summary">
+                Extractable source features
+              </summary>
               <fieldset id="prepare-features">
                 <legend>GeoJSON categories</legend>
               </fieldset>
@@ -208,35 +241,38 @@
                 display geometry.
               </p>
             </details>
-            <label class="host-field"
-              >Maximum output size (MiB)<input
-                id="prepare-budget"
-                type="number"
-                step="any"
-                value="2048"
-                min="1"
-                required
-            /></label>
-            <input
-              id="prepare-budget-slider"
-              class="host-budget-slider"
-              type="range"
-              min="0"
-              max="1000"
-              step="1"
-              aria-label="Maximum output size slider"
-              aria-describedby="prepare-budget-value"
-            />
-            <output
-              id="prepare-budget-value"
-              class="host-budget-value"
-              for="prepare-budget prepare-budget-slider"
-            ></output>
-            <p class="quiet">
-              Tiles, source objects and routing cells touching the outline can
-              extend beyond it. Search and label geometry are clipped. The
-              output is checked against this size limit.
-            </p>
+            <details class="host-limits">
+              <summary>Storage limits</summary>
+              <label class="host-field"
+                >Maximum output size (MiB)<input
+                  id="prepare-budget"
+                  type="number"
+                  step="any"
+                  value="2048"
+                  min="1"
+                  required
+              /></label>
+              <input
+                id="prepare-budget-slider"
+                class="host-budget-slider"
+                type="range"
+                min="0"
+                max="1000"
+                step="1"
+                aria-label="Maximum output size slider"
+                aria-describedby="prepare-budget-value"
+              />
+              <output
+                id="prepare-budget-value"
+                class="host-budget-value"
+                for="prepare-budget prepare-budget-slider"
+              ></output>
+              <p class="quiet">
+                Tiles, source objects and routing cells touching the outline can
+                extend beyond it. Search and label geometry are clipped. The
+                output is checked against this size limit.
+              </p>
+            </details>
             <div id="prepare-global-controls" hidden>
               <label class="host-field"
                 >Maximum source download (MiB)<input
@@ -267,7 +303,7 @@
                 PBF files stay on disk for reuse.
               </p>
               <button id="prepare-check-source" type="button" disabled>
-                Check PBF source
+                Find covering download
               </button>
               <div
                 id="prepare-source-plan"
@@ -301,6 +337,7 @@
                 it does not reserve disk space or measure RAM.
               </p>
             </section>
+            <p class="host-build-summary" id="prepare-summary"></p>
             <button
               id="prepare-submit"
               class="host-primary"
@@ -309,20 +346,13 @@
             >
               Prepare & host map ↗
             </button>
-            <p id="prepare-compiler-note" class="host-source-note" hidden>
-              Build Europe z0–16 from a verified cached PBF, with the
-              capabilities selected above. The server uses disk-backed
-              construction and saves completed stages. Free space is monitored;
-              an oversized block or a full disk stops the build without
-              publishing an incomplete map.
-            </p>
             <p id="prepare-message" role="status">
               Select only the data your consumers need.
             </p>
           </form>
         </div>
-        <div class="host-list-heading">
-          <h3>Preparation progress</h3>
+        <div id="builds" class="host-list-heading">
+          <h3>Builds & checkpoints</h3>
           <span class="quiet">Saved on this server</span>
         </div>
         <div id="prepare-jobs" aria-live="polite"></div>
@@ -341,12 +371,51 @@
             >Choose maps below, or open the full library.</span
           >
         </div>
+        <p id="prepare-library-message" role="status"></p>
         <div id="prepare-library" class="host-library"></div>
         <p class="quiet">
           Each prepared file has its own snapshot, download URL and HTTP tools.
           The source package below continues to serve the main demo.
         </p>
       </section>
+      <details id="sources" class="host-downloads">
+        <summary>
+          Source files & downloads
+          <span>Manage reusable PBF files on this server</span>
+        </summary>
+        <div class="host-list-heading">
+          <h2>PBF source files</h2>
+          <span class="eyebrow">DOWNLOAD ONCE / PREPARE MANY MAPS</span>
+        </div>
+        <p>
+          Keep a verified OSM PBF on this server before compiling maps.
+          Downloads can be paused and resumed, and continue when you close this
+          page.
+        </p>
+        <div class="host-actions">
+          <label
+            >Source
+            <select id="source-kind" aria-label="PBF source">
+              <option value="planet">Whole planet · OpenStreetMap</option>
+              <option value="europe">Europe · Geofabrik</option>
+            </select></label
+          >
+          <button id="source-inspect" type="button">Check download</button>
+          <button id="source-start" type="button" disabled>
+            Download PBF to server
+          </button>
+        </div>
+        <p id="source-plan" role="status">
+          Check the dated source, exact size and available disk space before
+          downloading.
+        </p>
+        <p id="source-space" class="quiet"></p>
+        <div id="source-jobs" class="host-library" aria-live="polite"></div>
+        <p class="quiet">
+          These files are build inputs. Download them once and select them in
+          step 1. Deleting a prepared map never deletes its source PBF.
+        </p>
+      </details>
       <section id="operations">
         <section class="host-package">
           <div>
@@ -374,6 +443,29 @@
         </footer>
       </section>
     </main>
+    <dialog id="dataset-delete-dialog" aria-labelledby="dataset-delete-title">
+      <form method="dialog">
+        <p class="eyebrow">MAP LIBRARY</p>
+        <h2 id="dataset-delete-title">Delete dataset?</h2>
+        <p id="dataset-delete-description"></p>
+        <p class="quiet">
+          The map file, its build record and any saved build checkpoints will be
+          removed. The source PBF and other maps stay on the server. This cannot
+          be undone.
+        </p>
+        <p id="dataset-delete-error" role="alert"></p>
+        <div class="host-actions">
+          <button value="cancel" autofocus>Keep dataset</button
+          ><button
+            id="dataset-delete-confirm"
+            type="button"
+            class="host-danger"
+          >
+            Delete dataset
+          </button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="/host.js"></script>
   </body>
 </html>

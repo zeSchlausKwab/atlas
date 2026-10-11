@@ -47,7 +47,11 @@ export async function startSources() {
       source.textContent = "Dated source ↗";
       source.target = "_blank";
       source.rel = "noopener";
-      card.append(h, description, progress, size, source);
+      card.append(h);
+      if (job.state === "ready") {
+        size.textContent = `${storageSize(job.bytes)} · verified PBF · reusable for multiple builds`;
+        card.append(size, source);
+      } else card.append(description, progress, size, source);
       if (job.state !== "ready") {
         const button = document.createElement("button"),
           paused = ["paused", "failed"].includes(job.state);
@@ -70,7 +74,7 @@ export async function startSources() {
       }
       if (job.state === "ready") {
         const prepare = document.createElement("button");
-        prepare.textContent = "Prepare from this PBF";
+        prepare.textContent = "Use this source";
         prepare.onclick = () =>
           document.dispatchEvent(
             new CustomEvent("atlas-source-prepare", { detail: { id: job.id } }),
@@ -85,8 +89,7 @@ export async function startSources() {
       }
       list.append(card);
     }
-    if (!jobs.length)
-      list.textContent = "No planet or Europe source downloads yet.";
+    if (!jobs.length) list.textContent = "No cached PBF files yet.";
   }
   async function refresh() {
     if (loading) return;

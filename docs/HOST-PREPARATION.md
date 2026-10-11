@@ -1,26 +1,63 @@
 # Host preparation demo
 
-Implemented 2026-10-09. Open `http://127.0.0.1:3100/host` after `bun start`.
+Updated 2026-10-11. LAN host console: `http://192.168.0.179:3100/host`.
+For local development run `bun run server`, then open `http://127.0.0.1:3100/host`.
 
-## Try it
+## Try Britain from the cached planet
 
-1. Choose **Installed Atlas snapshot** or **Worldwide OSM PBF · Geofabrik** as the data source. The default **OpenFreeMap · world** preview is served by OpenFreeMap using MapLibre, with attribution. The blue dashed outline is the installed source’s bounding box. **Fit source** returns to it. In worldwide mode the preview has no installed-source boundary; **Fit world** returns to the overview and **Go to latitude, longitude** jumps to a place (for example `43.735, 7.423` in Monaco). **Local Atlas · source** uses our own renderer and range-served archive instead; it does not need the external basemap.
-2. Choose **Rectangle** and click two opposite corners, or **Polygon**, click corners, then **Finish polygon**. Enter also finishes a polygon; Undo removes a corner; Escape stops drawing. Space adds the map center when the map is focused. **Use visible area** selects the view clipped to source bounds.
-3. Give the map a name, choose stored zoom levels, and choose its data. **Just view the map**, **Water & buildings only**, and **Everything available** are starting presets; every selection can be customized.
-4. For worldwide PBF, set **Maximum source download (MiB)** and choose **Check PBF source**. This checks the provider catalog and file metadata without downloading the PBF. Review the named region and full download size, then choose **Download, prepare & host**. For installed Atlas, choose **Prepare & host map** directly. Both start a background process. The progress view reports download bytes, extraction, compilation, packing and verification. Percentages are shown only for phases with known totals. You can refresh or leave the page; the server owns the job. Cancel removes incomplete output.
-5. The library offers **Open map**, **Download .atlas**, and **Capabilities**. Each excerpt is a separate immutable snapshot with its own HTTP range URL and operations endpoint. Completed jobs and files survive server restarts.
+Open `http://192.168.0.179:3100/host?area=britain`. The link selects the verified
+planet input and fills an editable Britain starter rectangle when that source
+is available. It never submits a build. The 32 GiB output limit is a user budget,
+not a forecast of output size. Stored zooms default to z0–16.
 
-OpenFreeMap supplies the **preview only**. Installed-source preparation reads the configured `ATLAS_FILE` (otherwise Vienna Plus / Liechtenstein), and corners must lie within it. Worldwide preparation obtains raw OSM data from Geofabrik’s extract catalog. It requires `osmium` and Cargo on the server (`brew install osmium-tool` on macOS); the UI reports when they are absent. Local Atlas preview still needs this host’s running server.
+1. **Choose the source.** Three source types replace the mixed dropdown:
+   - **PBF on this server:** a checksum-verified cached planet or regional PBF.
+     Extract an area without another download. The planet is global; a regional
+     PBF cannot supply data outside its actual coverage.
+   - **Download a region:** draw an area, inspect the covering Geofabrik region,
+     then download that whole PBF and crop it locally.
+   - **Existing Atlas map:** choose the installed base map or any ready library
+     dataset. Its existing zooms, extent and capabilities bound the new package.
+2. **Draw your area.** Click two opposite corners for a rectangle, or click
+   polygon corners then **Finish polygon** / Enter. Undo removes the last corner;
+   Escape stops drawing; Space adds the map centre when focused. The **Britain
+   rectangle** shortcut includes Ireland and nearby coasts, not just a national
+   boundary. Replace it with your own rectangle or polygon as needed.
+3. **Choose what’s inside.** Presets include map display, geometry only,
+   water/buildings, and all capabilities. Every checkbox remains editable;
+   manual edits switch the preset to Custom. Summaries show selected routing,
+   search and extraction categories even when their sections are collapsed.
+4. Review the source-to-map summary and live disk allowance. For cached planet,
+   press **Build & host map**. For Geofabrik, first **Find covering download**,
+   then review its name and size before starting. Builds run independently of
+   the browser. Stop cached-source builds with **Stop & keep checkpoints**;
+   resume them from the Builds section. No build is started by choosing a preset.
+5. The library offers open, download, capabilities, composition, **Use as source**
+   and **Delete dataset…**. Deletion asks for confirmation, removes the package,
+   its job record and saved workspace, and removes it from the public catalog.
+   Source PBFs and independent child maps remain. Running builds, their Atlas
+   inputs and the configured base map are protected. Failed/stopped build
+   workspaces can also be deleted. An interrupted deletion completes on restart.
+
+OpenFreeMap supplies only the preview. Coordinates and preview-provider options
+are under the map. Atlas mode can instead preview the selected dataset using our
+own renderer. Source-file downloading is separate maintenance, collapsed under
+**Source files & downloads**. “Europe · full dataset” was a build preset, not a
+fourth data source; it is no longer a special UI path. Europe can be drawn from
+planet or built from a verified Europe PBF through the same flow.
+
+The current Europe build is stopped with checkpoints preserved. Britain has not
+been started: the user chooses the final capabilities and starts it manually.
 
 ## Worldwide PBF acquisition
 
-A standard planet PBF has no geographic byte-range index. The worldwide option chooses the smallest covering Geofabrik region **by geographic area**, including the requested routing padding and an extra cell guard. Coverage is tested against the actual provider polygon, including holes and concavities. The whole regional PBF is downloaded before cropping; selecting fewer capabilities reduces compiled data, not this source download.
+A standard planet PBF has no geographic byte-range index. The **Download a region** option chooses the smallest covering Geofabrik region **by geographic area**, including the requested routing padding and an extra cell guard. Coverage is tested against the actual provider polygon, including holes and concavities. The whole regional PBF is downloaded before cropping; selecting fewer capabilities reduces compiled data, not this source download.
 
 The source check follows only allowlisted HTTPS redirects to `download.geofabrik.de` and pins the resolved file URL, size and ETag (or Last-Modified). Catalogs are reused for six hours and file metadata for five minutes. A quote lasts 30 minutes; changing the polygon, routing coverage or source budget requires another check. A changed remote source fails the conditional download rather than silently substituting data. Downloads stream to an owned partial file, enforce the quoted size/budget, and record SHA-256 provenance. Completed sources live in `data/hosted/sources/` and are hash-verified before reuse. They remain there for reuse; there is no cache eviction UI yet.
 
 Osmium first extracts the selection bounding box plus any routing guard, using `smart` with multipolygon/restriction completion. Reference checks precede compilation. The CLI compiles requested display layers, labels, transport modes and indexes into a temporary archive; the existing polygon preparation pipeline then applies the exact selection policy below. The final manifest retains the downloaded source URL/hash and extraction recipe. The importer still holds the cropped source in memory, and native transport import computes all three profiles before retaining selected ones. A small finished file does not imply a similarly small compilation memory footprint.
 
-This slice uses **one covering extract**, with a host-chosen source-download budget independent of the output budget. Both budgets have a 1 MiB minimum and accept larger exact values without a 2 GiB cap. A border-spanning selection may require a parent region larger than that budget and will be refused. Automated multi-region merging, user-supplied provider URLs, a locally indexed planet database and full-planet builds are not included. Selections are limited to ±85° latitude, cannot cross the antimeridian, and retain the compiler’s 500,000 candidate-tile limit. The latter is checked before download.
+The Geofabrik path uses **one covering extract**, with a host-chosen source-download budget independent of the output budget. Both budgets have a 1 MiB minimum and accept larger exact values without a 2 GiB cap. A border-spanning selection may require a parent region larger than that budget and will be refused. Automated multi-region merging, user-supplied provider URLs, a locally indexed planet database and full-planet builds are not included. Selections are limited to ±85° latitude, cannot cross the antimeridian, and retain the compiler’s 500,000 candidate-tile limit. The latter is checked before download.
 
 Vienna Plus predates this picker: `scripts/vienna-plus.ts` downloaded the 2026-10-06 Austria, Slovakia and Hungary PBFs (1,483,728,066 bytes total), cropped them with Osmium, merged the crops, and compiled the result. That recipe intentionally handles three regional inputs; the first worldwide UI path does not yet do that merge. Independently generated imports must not be assumed to share a compatible snapshot for federated routing.
 
@@ -62,13 +99,15 @@ Prepared map computation shares the existing engine and plugin registry. A bound
 | `POST /admin/preparations/source-plan` | Inspect a worldwide PBF source and return a bounded quote     |
 | `POST /admin/preparations`             | Start a validated selection                                   |
 | `POST /admin/preparations/:id/cancel`  | Cancel a running job                                          |
+| `POST /admin/preparations/:id/resume` | Resume a stopped cached-source build using checkpoints |
+| `POST /admin/preparations/:id/delete` | Delete an inactive dataset, its record and workspace |
 | `GET /catalog`                         | Installed source and ready map manifests/URLs                 |
 | `GET /maps/:id.atlas`                  | Full download or HTTP byte ranges                             |
 | `GET /maps/:id/api/capabilities`       | Actual per-package operation availability                     |
 | `POST /maps/:id/api/:operation`        | Same snapshot-pinned invocation contract as `/api/:operation` |
 | `/?map=:id`                            | Open the excerpt in the consumer                              |
 
-Administration requires a loopback peer and hostname; writes require same-origin JSON. The existing `/api/*`, `/maps/demo.atlas`, and source host policy remain compatible. The source policy switches and ContextVM MCP endpoint currently apply **only to the configured source package**. Prepared-map operations are exposed through their own HTTP APIs based on retained data. Per-map operation policy, multi-map ContextVM dispatch, Nostr announcements and Hashtree delivery remain deferred; the catalog is local HTTP discovery, not signed federation.
+Administration requires a loopback peer or explicitly configured trusted LAN origin/subnet; writes require same-origin JSON. The existing `/api/*`, `/maps/demo.atlas`, and source host policy remain compatible. The source policy switches and ContextVM MCP endpoint currently apply **only to the configured source package**. Prepared-map operations are exposed through their own HTTP APIs based on retained data. Per-map operation policy, multi-map ContextVM dispatch, Nostr announcements and Hashtree delivery remain deferred; the catalog is local HTTP discovery, not signed federation.
 
 ## Verified examples
 
@@ -88,3 +127,13 @@ Preview integration follows the [OpenFreeMap quick-start guide](https://openfree
 Source acquisition uses the [Geofabrik catalog](https://download.geofabrik.de/index-v1.json) and [Osmium smart extraction](https://docs.osmcode.org/osmium/latest/osmium-extract.html).
 
 Storage UI verification covers exact 8 GiB output / 64 GiB source budgets, slider keyboard controls, empty values, live disk statistics and refresh, quoted-size estimates, insufficient-space rejection in both UI and server, and 390 px mobile layout. This check uses recorded provider metadata; disk reporting and server preflight are live. The earlier Monaco import used the real public PBF. Provider requests can time out independently of disk checks and can be retried without downloading an unquoted source.
+
+
+## Library lifecycle verification
+
+Provisioning tests build an Atlas child from a prepared parent, reject absent
+capabilities and unavailable source IDs, protect active source maps and the base
+map, exercise the same-origin deletion endpoint, close warmed serving readers,
+verify catalog/file/compute removal, preserve the child and source files, and
+recover a deletion interrupted after its persistent tombstone. No existing LAN
+map is deleted as part of verification.

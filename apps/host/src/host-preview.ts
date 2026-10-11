@@ -33,6 +33,7 @@ export async function createPreview(
   cancel: () => void,
   status: (s: string) => void,
   world = false,
+  atlasUrl = "/maps/demo.atlas",
 ): Promise<HostPreview> {
   container.replaceChildren();
   if (provider === "local") {
@@ -40,11 +41,9 @@ export async function createPreview(
     canvas.tabIndex = 0;
     canvas.setAttribute("aria-label", "Local Atlas area picker");
     container.append(canvas);
-    const reader = await new AtlasReader(
-      new HttpSource("/maps/demo.atlas"),
-      undefined,
-      { purposes: ["map", "labels"] },
-    ).open();
+    const reader = await new AtlasReader(new HttpSource(atlasUrl), undefined, {
+      purposes: ["map", "labels"],
+    }).open();
     const map = await AtlasMap.create(canvas, reader, () => {}, status, {
       pois: false,
       streetNames: false,
@@ -179,13 +178,15 @@ export async function createPreview(
     });
     status(
       world
-        ? "OpenFreeMap preview · choose an area, then check its OSM source."
+        ? "OpenFreeMap preview only · draw your extraction area."
         : "OpenFreeMap preview · blue dashed outline = source coverage.",
     );
   });
   map.on("error", () =>
     status(
-      "Preview data could not load. Select Local Atlas to use the installed map.",
+      world
+        ? "World preview could not load. Retry the preview or use the Britain rectangle."
+        : "Preview data could not load. Select the Atlas preview to use this dataset.",
     ),
   );
   map.on("click", (e) => {

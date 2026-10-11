@@ -21,7 +21,24 @@ export class HostedLibrary {
   constructor(
     private preparations: Preparations,
     private createEngine: (reader: AtlasReader) => AtlasEngine,
-  ) {}
+  ) {
+    preparations.beforeDelete = (id) => this.remove(id);
+  }
+  async remove(id: string) {
+    const entry = this.engines.get(id),
+      file = this.files.get(id);
+    this.engines.delete(id);
+    this.files.delete(id);
+    try {
+      if (entry) {
+        const ready = await entry.value.catch(() => undefined);
+        ready?.engine.destroy();
+        ready?.engine.reader.dispose();
+      }
+    } finally {
+      if (file) await (await file.catch(() => undefined))?.close();
+    }
+  }
   private source(id: string) {
     let f = this.files.get(id);
     if (!f) {
@@ -40,6 +57,8 @@ export class HostedLibrary {
       return new Response("Map not found", { status: 404 });
     try {
       const source = await this.source(id);
+      if (this.preparations.jobs.get(id)?.state !== "ready")
+        return new Response("Map not found", { status: 404 });
       await source.assertUnchanged();
       if (match[2] === ".atlas")
         return servePackage(request, source, source.etag);

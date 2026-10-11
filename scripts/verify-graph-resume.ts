@@ -24,7 +24,10 @@ async function run(
   const output = new Response(child.stdout).arrayBuffer();
   let stopped = false,
     log = "";
-  for await (const chunk of child.stderr) {
+  const stderr = child.stderr.getReader();
+  while (true) {
+    const { value: chunk, done } = await stderr.read();
+    if (done) break;
     log += new TextDecoder().decode(chunk);
     const lines = log.split("\n");
     log = lines.pop()!;

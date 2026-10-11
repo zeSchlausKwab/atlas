@@ -16,6 +16,7 @@ import { AtlasEngine } from "../packages/operations/src/index";
 import { readRoutingCell } from "../packages/routing/src/paged";
 import { createApiHandler } from "../apps/server/api";
 import { Preparations } from "../apps/server/preparations";
+import { HostedLibrary } from "../apps/server/library";
 import { pluginFixture, polygon, water } from "./helpers/plugin-fixture";
 import { transportFixture, points } from "./helpers/transport-fixture";
 import { operationCatalog } from "../packages/format/src/capabilities";
@@ -377,3 +378,178 @@ test("display preparation removes unselected layers and clips independently sele
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("library datasets can be reused and deleted without deleting their sources or children", async () => {
+  const f = await pluginFixture(),
+    dir = await mkdtemp("/tmp/atlas-library-delete-");
+  await Bun.write(dir + "/source.atlas", f.bytes);
+  await Bun.write(dir + "/sources/planet.osm.pbf", "keep cached input");
+  const manager = await Preparations.open(
+    dir + "/hosted",
+    dir + "/source.atlas",
+    f.reader.index.manifest,
+  );
+  const library = new HostedLibrary(
+    manager,
+    (reader) => new AtlasEngine(reader),
+  );
+  try {
+    const parent = await manager.create(selection(f.reader));
+    await expect(manager.delete(parent.id)).rejects.toThrow("Stop");
+    await until(() => parent.state === "ready" || parent.state === "failed");
+    expect(parent.state).toBe("ready");
+    await manager.close();
+    const info = await (
+      await manager.handle(
+        new Request("http://localhost/admin/preparations"),
+        "127.0.0.1",
+      )
+    ).json();
+    expect(info.atlasSources[0].id).toBe(parent.id);
+    expect(info.atlasSources[0].available.featureKinds).toEqual(["water"]);
+    await expect(
+      manager.create({
+        ...selection(f.reader),
+        sourceAtlasId: crypto.randomUUID(),
+      }),
+    ).rejects.toThrow("no longer available");
+    await expect(
+      manager.create({ ...selection(f.reader), sourcePlanId: "expired" }),
+    ).rejects.toThrow("expired");
+    await expect(
+      manager.create({
+        ...selection(f.reader),
+        snapshot: parent.manifest!.snapshot,
+        sourceAtlasId: parent.id,
+        search: true,
+      }),
+    ).rejects.toThrow();
+    const child = await manager.create({
+      ...selection(f.reader),
+      name: "Child",
+      snapshot: parent.manifest!.snapshot,
+      sourceAtlasId: parent.id,
+    });
+    await expect(manager.delete(parent.id)).rejects.toThrow(
+      "active preparation",
+    );
+    await until(() => child.state === "ready" || child.state === "failed");
+    expect(child.error).toBeUndefined();
+    expect(child.state).toBe("ready");
+    expect(child.manifest!.selection?.parentSnapshot).toBe(
+      parent.manifest!.snapshot,
+    );
+    await manager.close();
+    const range = await library.handle(
+      new Request(`http://localhost/maps/${parent.id}.atlas`, {
+        headers: { Range: "bytes=0-63" },
+      }),
+    );
+    expect(range!.status).toBe(206);
+    await range!.arrayBuffer();
+    expect(
+      (await library.handle(
+        new Request(`http://localhost/maps/${parent.id}/api/capabilities`),
+      ))!.status,
+    ).toBe(200);
+    await Bun.write(
+      `${dir}/hosted/${parent.id}.work/checkpoint.json`,
+      "saved stage",
+    );
+    await Bun.write(`${manager.path(parent.id)}.part`, "partial");
+    const action = `http://localhost/admin/preparations/${parent.id}/delete`;
+    expect(
+      (
+        await manager.handle(
+          new Request(action, { method: "POST", body: "{}" }),
+          "127.0.0.1",
+        )
+      ).status,
+    ).toBe(403);
+    expect(await Bun.file(manager.path(parent.id)).exists()).toBe(true);
+    const deleted = await manager.handle(
+      new Request(action, {
+        method: "POST",
+        headers: {
+          Origin: "http://localhost",
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      }),
+      "127.0.0.1",
+    );
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ deleted: parent.id });
+    expect(manager.catalog().map((j) => j.id)).toEqual([child.id]);
+    expect(
+      (await readdir(dir + "/hosted")).some((name) =>
+        name.startsWith(parent.id),
+      ),
+    ).toBe(false);
+    expect(
+      (await library.handle(
+        new Request(`http://localhost/maps/${parent.id}.atlas`),
+      ))!.status,
+    ).toBe(404);
+    expect(
+      (await library.handle(
+        new Request(`http://localhost/maps/${parent.id}/api/capabilities`),
+      ))!.status,
+    ).toBe(404);
+    expect(
+      (await library.handle(
+        new Request(`http://localhost/maps/${child.id}/api/capabilities`),
+      ))!.status,
+    ).toBe(200);
+    expect(await Bun.file(dir + "/source.atlas").exists()).toBe(true);
+    expect(await Bun.file(dir + "/sources/planet.osm.pbf").text()).toBe(
+      "keep cached input",
+    );
+  } finally {
+    await library.close();
+    await manager.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 15000);
+
+test("interrupted dataset deletion completes after restart and the base map is protected", async () => {
+  const f = await pluginFixture(),
+    dir = await mkdtemp("/tmp/atlas-delete-restart-");
+  await Bun.write(dir + "/source.atlas", f.bytes);
+  let manager = await Preparations.open(
+    dir + "/hosted",
+    dir + "/source.atlas",
+    f.reader.index.manifest,
+  );
+  try {
+    const job = await manager.create(selection(f.reader));
+    await until(() => job.state === "ready");
+    await manager.close();
+    const protectedManager = await Preparations.open(
+      dir + "/hosted",
+      manager.path(job.id),
+      job.manifest!,
+    );
+    await expect(protectedManager.delete(job.id)).rejects.toThrow("base map");
+    await protectedManager.close();
+    manager.beforeDelete = async () => {
+      throw new Error("injected interrupted cleanup");
+    };
+    await expect(manager.delete(job.id)).rejects.toThrow("interrupted cleanup");
+    expect(manager.catalog()).toHaveLength(0);
+    expect(await Bun.file(manager.path(job.id)).exists()).toBe(true);
+    await manager.close();
+    manager = await Preparations.open(
+      dir + "/hosted",
+      dir + "/source.atlas",
+      f.reader.index.manifest,
+    );
+    expect(manager.jobs.size).toBe(0);
+    expect(await readdir(dir + "/hosted")).toEqual([]);
+    expect(await Bun.file(dir + "/source.atlas").exists()).toBe(true);
+    await expect(manager.delete("../source")).rejects.toThrow("Invalid");
+  } finally {
+    await manager.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 15000);

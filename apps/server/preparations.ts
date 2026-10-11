@@ -28,10 +28,17 @@ export interface PreparationJob {
   id: string;
   name: string;
   createdAt: string;
-  state: "running" | "cancelling" | "cancelled" | "failed" | "ready";
+  state:
+    | "running"
+    | "cancelling"
+    | "cancelled"
+    | "failed"
+    | "ready"
+    | "deleting";
   selection: PackageSelection;
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
+  sourceAtlasId?: string;
   progress: PreparationProgress;
   error?: string;
   size?: number;
@@ -40,8 +47,10 @@ export interface PreparationJob {
 export class Preparations {
   readonly sources = new PbfSources();
   readonly jobs = new Map<string, PreparationJob>();
+  beforeDelete?: (id: string) => Promise<void>;
   private worker?: Bun.Subprocess<"ignore", "ignore", "pipe">;
   private active?: string;
+  private activeSource?: string;
   private writes = Promise.resolve();
   private settling?: Promise<void>;
   private constructor(
@@ -66,6 +75,10 @@ export class Preparations {
       if (name !== `${job.id}.json`)
         throw new Error("Invalid preparation record");
       manager.jobs.set(job.id, job);
+      if (job.state === "deleting") {
+        await manager.delete(job.id);
+        continue;
+      }
       if (job.state === "running" || job.state === "cancelling") {
         job.state = "failed";
         job.error = job.cachedSource
@@ -127,6 +140,7 @@ export class Preparations {
       sourcePlanId?: string;
       cachedSourceId?: string;
       maxSourceBytes?: number;
+      sourceAtlasId?: string;
     } | null;
     const plan = extra?.sourcePlanId
       ? this.sources.get(extra.sourcePlanId)
@@ -134,8 +148,20 @@ export class Preparations {
     const cached = extra?.cachedSourceId
       ? await verifiedSource(this.sourceDirectory, extra.cachedSourceId)
       : undefined;
-    if (cached && extra?.sourcePlanId)
-      throw new Error("Choose one PBF source.");
+    if (
+      [extra?.cachedSourceId, extra?.sourcePlanId, extra?.sourceAtlasId].filter(
+        Boolean,
+      ).length > 1
+    )
+      throw new Error("Choose exactly one source.");
+    if (extra?.sourcePlanId && !plan)
+      throw new Error("Source plan expired. Check Geofabrik again.");
+    const atlas = extra?.sourceAtlasId
+      ? this.jobs.get(extra.sourceAtlasId)
+      : undefined;
+    if (extra?.sourceAtlasId && (atlas?.state !== "ready" || !atlas.manifest))
+      throw new Error("The selected Atlas dataset is no longer available.");
+    const inputPath = atlas ? this.path(atlas.id) : this.sourcePath;
     if (cached) {
       validateSelectionScope(value, WORLD_SOURCE);
       planCachedBuild(value);
@@ -160,13 +186,14 @@ export class Preparations {
           "PBF preparation requires Osmium and Cargo on the server.",
         );
       validateImportSize(plan, value);
-    } else validateSelection(value, this.source);
+    } else validateSelection(value, atlas?.manifest ?? this.source);
     if (this.active)
       throw new Error(
         "Another preparation is running. Wait for it or cancel it first.",
       );
     const id = previous?.id ?? crypto.randomUUID();
     this.active = id;
+    this.activeSource = atlas?.id;
     try {
       const disk = await readStorage(this.directory);
       const needed = cached
@@ -192,6 +219,7 @@ export class Preparations {
         selection: structuredClone(value),
         sourcePlan: plan,
         cachedSource: cached,
+        sourceAtlasId: atlas?.id,
         progress: {
           phase: "planning",
           message: cached
@@ -241,6 +269,7 @@ export class Preparations {
           })
           .finally(() => {
             this.active = undefined;
+            this.activeSource = undefined;
             this.worker = undefined;
             worker.kill();
           });
@@ -275,7 +304,7 @@ export class Preparations {
       });
       worker.send({
         type: "start",
-        source: this.sourcePath,
+        source: inputPath,
         output: this.path(id),
         selection: job.selection,
         sourcePlan: plan,
@@ -292,6 +321,7 @@ export class Preparations {
         await this.persist(job).catch(console.error);
       }
       this.active = undefined;
+      this.activeSource = undefined;
       throw e;
     }
   }
@@ -306,6 +336,29 @@ export class Preparations {
     this.worker?.send({ type: "cancel" });
     await this.persist(job);
     return job;
+  }
+  /** Persist a tombstone before unlinking so a restart completes partial deletion. */
+  async delete(id: string) {
+    const file = this.path(id);
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("Unknown dataset");
+    if (this.active === id || ["running", "cancelling"].includes(job.state))
+      throw new Error("Stop this preparation before deleting it.");
+    if (resolve(file) === resolve(this.sourcePath))
+      throw new Error(
+        "This dataset is the server's base map and cannot be deleted here.",
+      );
+    if (this.activeSource === id)
+      throw new Error(
+        "This dataset is being used by an active preparation. Stop that build first.",
+      );
+    job.state = "deleting";
+    await this.persist(job);
+    await this.beforeDelete?.(id);
+    await this.cleanup(id);
+    await rm(resolve(this.directory, `${id}.json`), { force: true });
+    this.jobs.delete(id);
+    return { deleted: id };
   }
   catalog() {
     return [...this.jobs.values()]
@@ -335,6 +388,11 @@ export class Preparations {
         })),
         source: this.source,
         available: availability(this.source),
+        atlasSources: this.catalog().map((map) => ({
+          id: map.id,
+          manifest: map.manifest,
+          available: availability(map.manifest!),
+        })),
         globalSource: {
           ...WORLD_SOURCE,
           ready: !!Bun.which("osmium") && !!Bun.which("cargo"),
@@ -355,13 +413,15 @@ export class Preparations {
       if (new TextEncoder().encode(raw).length > 16384)
         return json({ error: "Request too large" }, 413);
       const match = url.pathname.match(
-        /^\/admin\/preparations\/([a-f0-9-]{36})\/(cancel|resume)$/,
+        /^\/admin\/preparations\/([a-f0-9-]{36})\/(cancel|resume|delete)$/,
       );
       if (match)
         return json(
           await (match[2] === "resume"
             ? this.resume(match[1]!)
-            : this.cancel(match[1]!)),
+            : match[2] === "delete"
+              ? this.delete(match[1]!)
+              : this.cancel(match[1]!)),
         );
       if (url.pathname === "/admin/preparations/source-plan")
         return json(await this.sources.plan(JSON.parse(raw)));
