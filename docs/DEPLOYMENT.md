@@ -304,3 +304,27 @@ smoke checks pass. Browser verification covered geometry-only/all/custom presets
 Geofabrik/source switching, library-map reuse, deletion confirmation/cancellation,
 source-file maintenance, and the ready Britain selection. Deletion itself was
 exercised only on temporary test fixtures; no existing LAN dataset was deleted.
+
+## Live compiler progress update — 11 October 2026
+
+The Britain build `f6b452bc-2f27-42da-a74f-e41ecc596c4a` was already compiling
+when progress support landed in `ef61fab`. To preserve that worker, only
+`dist/host/{host.js,host.js.map,styles.css}` were replaced in release
+`20261011T061824389Z-e68eb93fb3f3-4ba98d18`. The original JS/CSS are retained in
+`/home/nixuser/atlas/progress-updates/ef61fab/previous-host/`.
+
+A separate transient user unit, `atlas-compiler-progress.service`, runs the
+read-only observer from `/home/nixuser/atlas/progress-updates/ef61fab/`. It uses
+about 24 MiB initially, has a 256 MiB memory limit and lowered CPU priority,
+updates the console JSON every 15 seconds, and exits when no builds are active.
+The server and preparation worker were **not restarted**. Compiler code in that
+release remains unchanged; the structured instrumentation takes effect on the
+next normal code deployment, after this build finishes or is explicitly stopped.
+The current legacy run has measured semantic and display source-batch counts;
+its uninstrumented finalization steps remain indeterminate.
+
+Verification: 151 Bun tests, TypeScript, a complete Liechtenstein z0–16 build
+with all capabilities and 34 progress stages, and the live browser console.
+At 11:09 CEST Britain was around 70% through its source-object pass (36,464,466
+objects total), with extraction, transport and source-store receipts complete.
+This was not a whole-build percentage or ETA.
