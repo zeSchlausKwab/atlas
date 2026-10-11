@@ -380,8 +380,8 @@ test("workspace composition keeps scoped queries separate from shared routing pe
   expect(() => session.peak()).toThrow("disabled");
   session.mode = "server";
   expect(session.routingAvailable).toBe(false);
-  expect(() => session.route(points[0]!, points[4]!)).toThrow("This device");
-  expect(() => session.isochrone(points[0]!, [60])).toThrow("This device");
+  expect(() => session.route(points[0]!, points[4]!)).toThrow("not available");
+  expect(() => session.isochrone(points[0]!, [60])).toThrow("not available");
   session.destroy();
   focus.dispose();
   f.reader.dispose();

@@ -71,7 +71,8 @@ export class OperationSession {
   readonly composed: boolean;
   routingBudget: RoutingBudget = {};
   get transportProfiles(): TransportMode[] {
-    if (!this.composed)
+    // Remote tools are scoped to Tool source, even inside a composition.
+    if (this.mode === "server" || !this.composed)
       return this.engine.capabilities.operations.route.parameters.profiles;
     return this.composition
       ? (["walking", "cycling", "driving"] as TransportMode[]).filter((mode) =>
@@ -84,8 +85,17 @@ export class OperationSession {
   get routingAvailable() {
     return (
       this.enabled.has("routing") &&
-      this.transportProfiles.includes(this.profile) &&
-      (!this.composed || this.mode === "device")
+      this.transportProfiles.includes(this.profile)
+    );
+  }
+  get isochroneAvailable() {
+    return (
+      this.routingAvailable &&
+      (this.mode === "device" && this.composed
+        ? !!this.composition
+        : this.engine.capabilities.operations.isochrone.parameters.profiles.includes(
+            this.profile,
+          ))
     );
   }
   setRoutingBudget(budget: RoutingBudget) {
@@ -146,6 +156,8 @@ export class OperationSession {
       this.transportOwner = undefined;
     }
     this.mode = nextMode;
+    if (!this.transportProfiles.includes(this.profile))
+      this.profile = this.transportProfiles[0] ?? "walking";
     this.enabled = new Set(enabled);
     for (const source of this.sources ?? [])
       source.reader.options.purposes = [
@@ -164,14 +176,14 @@ export class OperationSession {
     if (p && !this.enabled.has(p))
       throw new Error(`${p} is disabled in Data settings.`);
     if (this.dead) throw new Error("Package closed");
-    if (this.composed && (op === "route" || op === "isochrone")) {
+    if (
+      mode === "device" &&
+      this.composed &&
+      (op === "route" || op === "isochrone")
+    ) {
       if (!this.composition)
         throw new Error(
           this.compositionError ?? "No compatible transport maps selected.",
-        );
-      if (mode !== "device")
-        throw new Error(
-          "Cross-map routes and isochrones run on This device. Server tools are scoped to the selected source.",
         );
       return;
     }

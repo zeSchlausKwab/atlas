@@ -20,6 +20,7 @@ export class RouteControls {
   ];
   private picking: 0 | 1 | null = null;
   private busy = false;
+  private mode: "device" | "server" = "device";
   private revision = 0;
   private dead = false;
   private abort = new AbortController();
@@ -202,14 +203,26 @@ export class RouteControls {
     this.revision++;
     this.busy = false;
     this.picking = null;
+    if (this.mode !== this.operations.mode) {
+      this.mode = this.operations.mode;
+      this.map.setRoute(null);
+      this.cells.clear();
+      this.drawCells();
+      element("route-sources").replaceChildren();
+      element("route-cell-metrics").textContent = "";
+      element("route-result").hidden = true;
+      button("resume").hidden = true;
+    }
+    element<HTMLSelectElement>("route-budget").disabled =
+      this.mode === "server";
     this.supported = this.operations.routingAvailable;
     const scope = element("route-composition-scope");
     scope.hidden = !this.operations.composed;
     scope.textContent =
-      this.operations.compositionError ??
-      (this.operations.mode === "server"
-        ? "Choose This device to route across the composition. Server operations use only Tool source."
-        : `${this.operations.composition?.sources.length ?? 0} transport maps · shared graph ${this.operations.composition?.snapshot.slice(0, 12)}… · cells fetched on demand.`);
+      this.operations.mode === "server"
+        ? `Server routes use ${this.reader.index.manifest.name}. Choose This device to route across compatible maps.`
+        : (this.operations.compositionError ??
+          `${this.operations.composition?.sources.length ?? 0} transport maps · shared graph ${this.operations.composition?.snapshot.slice(0, 12)}… · cells fetched on demand.`);
     if (!this.supported) this.map.setRoute(null);
     this.update();
   }
@@ -365,7 +378,9 @@ export class RouteControls {
         button("resume").hidden = false;
       } else if (result.status === "budget-exceeded") {
         box.textContent =
-          "Search reached the configured limit. Increase Client search limit or try a shorter route. This is not a no-route result.";
+          result.execution.side === "server"
+            ? "Search reached the server’s configured limit. Try a shorter route. This is not a no-route result."
+            : "Search reached the configured limit. Increase Client search limit or try a shorter route. This is not a no-route result.";
       } else {
         box.textContent = `No eligible ${this.operations.profile} segment within ${result.limitMeters} m of ${result.endpoint === "start" ? "A" : "B"}. Pick closer to a road or path in this extract.`;
       }

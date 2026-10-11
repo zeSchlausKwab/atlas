@@ -13,6 +13,7 @@ export class ReachabilityControls {
   private origin: Position;
   private result?: Reachable;
   private busy = false;
+  private mode: "device" | "server" = "device";
   private picking = false;
   private revision = 0;
   private abort = new AbortController();
@@ -23,16 +24,10 @@ export class ReachabilityControls {
   ) {
     const b = operations.reader.index.manifest.bounds;
     this.origin =
-      operations.composed ||
       operations.reader.index.manifest.name === "Vienna Plus"
         ? [16.3605, 48.2145]
         : [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
     const select = el<HTMLSelectElement>("transport-profile");
-    select.value = operations.profile;
-    for (const option of select.options)
-      option.disabled = !operations.transportProfiles.includes(
-        option.value as TransportMode,
-      );
     select.addEventListener(
       "change",
       () => {
@@ -101,12 +96,18 @@ export class ReachabilityControls {
     )[value]!;
   }
   refresh() {
-    const supported =
-      !!(
-        this.operations.composition ||
-        this.operations.reader.index.manifest.transport ||
-        this.operations.reader.index.manifest.routing?.cells
-      ) && this.operations.routingAvailable;
+    if (this.mode !== this.operations.mode) {
+      this.mode = this.operations.mode;
+      this.clear();
+      return;
+    }
+    const select = el<HTMLSelectElement>("transport-profile");
+    select.value = this.operations.profile;
+    for (const option of select.options)
+      option.disabled = !this.operations.transportProfiles.includes(
+        option.value as TransportMode,
+      );
+    const supported = this.operations.isochroneAvailable;
     for (const id of ["origin", "calculate", "compare"])
       btn(id).disabled = !supported || this.busy;
     btn("compare").disabled ||=
