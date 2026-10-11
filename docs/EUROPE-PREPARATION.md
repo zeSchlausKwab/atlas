@@ -273,3 +273,20 @@ has no trustworthy restart cursor and cannot be reused. The original Europe
 job ID and recipe are retained so restarting reuses the verified extraction.
 Reference parity and forced-stop tests pass; continent-scale throughput and
 completion still need the resumed run's measurements.
+
+Deployed `4c4ce366e3a2` as release
+`20261011T055516301Z-4c4ce366e3a2-42eaf353`, then resumed the original job through
+its **Resume saved build** control. The extraction remains 42,525,664,610 bytes
+with its original 2026-10-10T17:59:55.195Z modification time. Both checksum scans
+passed. At 05:59:55 UTC the new graph compiler was running its reference scan,
+5.1% complete, reporting approximately eight minutes left in that stage and a
+fresh durable checkpoint. This is not an overall build ETA or a graph-throughput
+comparison: coordinate lookup begins in the subsequent graph partitioning stage.
+Atlas and `lemond.service` were both active; roughly 230 GiB was free before
+removing the obsolete graph spool.
+
+Validation: 145 Bun tests; Rust workspace tests plus the new coordinate recovery
+test; TypeScript and host build; six forced native stops/resumes; 242 routing
+cells byte-identical to the regional compiler; 5,339 display tiles and all
+semantic parity checks passed. The host browser showed the new stage percentage,
+ETA, checkpoint timestamp and stop/resume control.
