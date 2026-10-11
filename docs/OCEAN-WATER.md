@@ -80,3 +80,51 @@ Uniform sea tiles contain only a few coordinates, but still have an entry for
 every covered tile. A future format can represent uniform coverage or share
 payloads. This repair intentionally uses today's fully supported layout. Measure
 root-directory transfer separately from water geometry when evaluating it.
+
+## Britain repair measured on 2026-10-11
+
+- Original: 14,563,483,681 bytes, snapshot
+  `39c0392ea1a04ccb835d1e39adb0c5402d80d1185a3a00272eaf9e54cb28db6e`.
+- With ocean: 14,929,960,780 bytes (+366,477,099 bytes / 349.5 MiB / 2.52%),
+  snapshot `cbc7046bada82b941847de1083c3bf80540d955f3c4d74cad523bf8c491cbef0`.
+- 6,354,137 ocean tile contributions; about 13,300 tiles/s, 550–625 MiB process
+  RSS during tiling on the Ryzen 4900HS. Page-cache memory is additional.
+- 38 geographic coverage checks passed at z4–16. All 20,789 non-water directory
+  hashes are preserved. The complete 14,051,501,949-byte original data region has
+  an identical streaming hash in both files. Transport metadata is unchanged.
+- Coast source: `water-polygons-split-4326.zip`, 906,194,294 bytes,
+  SHA-256 `d0a3001e3846929110a7f7865377413a01daee293af2a5fa5ba3b8e59389b0b4`,
+  provider Last-Modified 2026-10-11 03:46:48 UTC. The planet PBF is dated 2026-10-05.
+
+The output is staged at
+`/home/nixuser/atlas/shared/data/coastlines/britain-with-ocean.atlas`.
+Publication was held because Europe job `f338f58d-7554-41c8-8424-56d841fb3d25`
+was actively compiling. The existing service and Europe build were not restarted.
+Candidate release `20261011T172841055Z-29c45b8c2b46-942d8bcf` passed deployment
+candidate checks but was not activated. Reuse it with `bun run deploy --resume
+20261011T172841055Z-29c45b8c2b46-942d8bcf` after there is no active preparation.
+A snapshot-guarded, backup-preserving publication helper is staged beside the
+output as `publish-britain-ocean.js`; it requires the service stopped and no
+running/cancelling job records. Do not interrupt Europe without the user's choice.
+
+Additional checks on the original Britain snapshot (whose operation payloads are
+preserved by this repair):
+
+- Client/server landmark search (`Admiralty Arch`), reverse geocoding, and a
+  1/3-minute walking isochrone agree. Highest peak query returns Ben Nevis, 1345m.
+- Walking across Westminster Bridge: 353.6m; client/server coordinates and cost
+  agree. Cycling and driving from Charing Cross to the London Eye: 2417.9m and
+  1854.3m respectively, also identical between client and server.
+- **Open issue:** walking from `[-0.1275,51.5075]` to `[-0.1195,51.5034]` returns
+  no-route after 60 states on both runtimes (snapped ways 1391137814 and 50149963).
+  Cycling between `[-0.1235,51.5009]` and `[-0.1200,51.50055]` also returns
+  no-route (snapped ways 1254907848 and 127170405). Investigate disconnected
+  components / endpoint alternatives; these checks do not prove unrestricted
+  routing quality.
+- **Open issue:** `London` still exceeds the 64 MiB decoded search-read budget.
+  Intersecting every query gram now removes unnecessary candidate-page reads,
+  covered by a regression test, but common real matches are still scattered.
+  A compact place-name / relevance index is the next search improvement; simply
+  raising the memory budget would hide the layout problem.
+- 167 Bun tests and TypeScript checks passed; client assets rebuilt. Visual
+  browser verification was unavailable because the Mac was locked.

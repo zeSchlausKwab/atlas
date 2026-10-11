@@ -119,18 +119,14 @@ if (process.argv[3]) {
     old.index.header.fileLength - old.index.header.payloadOffset;
   async function digest(file: string, offset: number) {
     const hash = new Bun.CryptoHasher("sha256");
-    const stream = Bun.file(file)
-      .slice(offset, offset + length)
-      .stream()
-      .getReader();
-    try {
-      while (true) {
-        const { value, done } = await stream.read();
-        if (done) break;
-        hash.update(value);
-      }
-    } finally {
-      stream.releaseLock();
+    const source = Bun.file(file);
+    for (let at = 0; at < length; at += 8 * 1024 ** 2) {
+      const end = Math.min(length, at + 8 * 1024 ** 2);
+      const chunk = await source.slice(offset + at, offset + end).bytes();
+      assert.equal(chunk.length, end - at, "Complete integrity-check read");
+      hash.update(chunk);
+      if (end % 1024 ** 3 === 0 || end === length)
+        console.error(`Verified payload bytes: ${end}/${length}`);
     }
     return hash.digest("hex");
   }
