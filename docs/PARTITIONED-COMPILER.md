@@ -133,3 +133,33 @@ the independent regional compiler. The shared coordinate regression records page
 accesses inside the actual lookup: the old implementation touched ten pages for
 the probe; the new implementation touches one. This is a locality bound, not a
 claim of a tenfold whole-build speedup.
+
+### Semantic, display and archive progress
+
+TypeScript compiler passes now emit the same structured `ATLAS_PROGRESS` events
+as routing: named locations, source objects, grouped streets, search records and
+postings, search/reverse cells, semantic/display packing, display geometry,
+building-height statistics, archive directory/payload writing and stage checksums.
+Totals come from SQLite counts or actual bytes. Display resume counts rows before
+the committed `(cell,rowid)` cursor; row IDs can have gaps and are not totals.
+A rolling three-minute throughput window provides an approximate **current-pass**
+ETA after 15 seconds of new work. Stage changes and counter regression reset it.
+No stage percentage is treated as a whole-build percentage.
+
+For a compiler already running on older code, `scripts/observe-compilation.ts`
+can read its job messages, completed-stage receipts and source SQLite counts. It
+never edits checkpoints or holds a database connection between samples. It writes
+only a small JSON observation file for the host console, every 15 seconds, and
+exits when no jobs remain active. Unknown legacy sub-stages stay indeterminate.
+The console accepts observations only for the exact running job and discards them
+after 45 seconds. This bridge permits a static console update without restarting
+an expensive build; subsequent normal deployments use the new compiler events.
+
+```sh
+bun scripts/observe-compilation.ts /path/to/data/hosted /path/to/dist/host/compiler-progress.json
+```
+
+The bridge is optional and temporary. Native progress remains the fallback when
+it is absent or stale. A normal deployment is still blocked while preparations
+are active. Updating the console alone does not replace an already-running
+compiler or change its recovery guarantees.

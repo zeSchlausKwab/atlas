@@ -1,3 +1,7 @@
+import {
+  currentObservation,
+  type CompilerObservation,
+} from "../../../packages/provisioning/src/compiler-observation";
 import { approximateDuration } from "../../../packages/provisioning/src/compiler-progress";
 import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
@@ -433,7 +437,16 @@ function updateComposition() {
     : "Choose maps below, or open the full library.";
 }
 let lastJobs = "";
+let observations = new Map<string, CompilerObservation>();
+let nextObservationRead = 0;
 function jobs(values: PreparationJob[]) {
+  const views = new Map<string, CompilerObservation>();
+  values = values.map((job) => {
+    const view = currentObservation(observations.get(job.id), job);
+    if (!view) return job;
+    views.set(job.id, view);
+    return { ...job, progress: view.progress };
+  });
   activeBuild = values.some((j) => ["running", "cancelling"].includes(j.state));
   for (const id of composition)
     if (!values.some((j) => j.id === id && j.state === "ready"))
@@ -529,6 +542,19 @@ function jobs(values: PreparationJob[]) {
         card.append(resume);
       }
       card.append(text("p", job.error ?? job.progress.message));
+      const view = views.get(job.id);
+      if (view) {
+        const stages = text("ol", "", "build-stage-list");
+        for (const stage of view.stages) {
+          const item = text(
+            "li",
+            `${stage.state === "done" ? "✓" : stage.state === "active" ? "●" : "○"} ${stage.label}`,
+          );
+          item.dataset.state = stage.state;
+          stages.append(item);
+        }
+        card.append(stages);
+      }
       if (job.state === "running" || job.state === "cancelling") {
         const progress = document.createElement("progress");
         progress.max =
@@ -552,7 +578,7 @@ function jobs(values: PreparationJob[]) {
           card.append(
             text(
               "p",
-              `${p.stageIndex ? `Routing stage ${p.stageIndex} of ${p.stageCount} · ` : ""}${p.stagePercent !== undefined ? `${p.stagePercent.toFixed(1)}% · ` : ""}${p.etaSeconds !== undefined ? `Approximately ${approximateDuration(p.etaSeconds)} left in this stage` : "Estimating time for this stage…"}`,
+              `${p.stageIndex ? `Routing stage ${p.stageIndex} of ${p.stageCount} · ` : ""}${p.stagePercent !== undefined ? `${p.stagePercent.toFixed(1)}% of this pass · ` : ""}${p.etaSeconds !== undefined ? `Approximately ${approximateDuration(p.etaSeconds)} left in this stage` : p.total ? "Estimating remaining time from throughput…" : "Working · this step has no reliable total yet"}`,
               "quiet",
             ),
           );
@@ -567,7 +593,7 @@ function jobs(values: PreparationJob[]) {
           card.append(
             text(
               "p",
-              "Time estimates cover the current stage. Source features, search, display tiles and final packing follow routing.",
+              "Percentage and ETA apply to this pass only. Later passes have different costs; a reliable whole-build ETA is not available yet.",
               "quiet",
             ),
           );
@@ -625,6 +651,29 @@ async function refresh() {
     const r = await fetch("/admin/preparations");
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
+    // An optional read-only bridge can observe a compiler started before structured progress existed.
+    // Its absence is normal; a stale bridge never replaces the server's current job state.
+    if (
+      Date.now() >= nextObservationRead &&
+      data.jobs.some((j: PreparationJob) => j.state === "running")
+    ) {
+      nextObservationRead = Date.now() + 15000;
+      try {
+        const r = await fetch("/compiler-progress.json", {
+          signal: AbortSignal.timeout(2500),
+        });
+        if (r.status === 404) nextObservationRead = Date.now() + 60000;
+        if (r.ok) {
+          const value = await r.json();
+          if (value.schema === 1 && Array.isArray(value.observations))
+            observations = new Map(
+              value.observations.map((v: CompilerObservation) => [v.id, v]),
+            );
+        }
+      } catch {
+        /* Native job progress remains available. */
+      }
+    }
     jobs(data.jobs);
     const identity = JSON.stringify([cachedSources, atlasSources]);
     cachedSources = data.cachedSources ?? [];

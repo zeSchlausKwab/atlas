@@ -34,3 +34,19 @@ test("resume credits existing scratch without reducing disk reserve or output al
   expect(cachedBuildSpace(128 * gib, true, 40 * gib)).toBe(212 * gib);
   expect(cachedBuildSpace(128 * gib, true, 100 * gib)).toBe(188 * gib);
 });
+
+test("semantic and packaging counters use measurable units", () => {
+  for (const unit of [
+    "objects",
+    "records",
+    "terms",
+    "blocks",
+    "bytes",
+    "cells",
+  ])
+    expect(compilerProgress(line({ unit }))?.stagePercent).toBe(25);
+  expect(compilerProgress(line({ unit: "guesses" }))).toBeUndefined();
+  expect(
+    compilerProgress(line({ completed: 0, total: 0 }))?.stagePercent,
+  ).toBeUndefined();
+});

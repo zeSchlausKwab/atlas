@@ -43,18 +43,22 @@ export class SourceGeocoding {
     }
     return distance <= 10000 ? best : undefined;
   };
-  async addNodes(signal?: AbortSignal) {
+  async addNodes(signal?: AbortSignal, progress?: (done: number) => void) {
     let count = 0;
     for (const { json } of this.source
       .query<{ json: string }, []>("SELECT json FROM locations ORDER BY id")
       .iterate()) {
       signal?.throwIfAborted();
-      if (++count % 10000 === 0) await new Promise((r) => setTimeout(r, 0));
       for (const r of buildGeocoding([JSON.parse(json)], empty, {
         nearby: this.nearby,
       }).locations.records)
         this.output.addLocation(r);
+      if (++count % 10000 === 0) {
+        progress?.(count);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
+    progress?.(count);
   }
   addFeatures(features: FeatureCollection) {
     const { locations, streets } = buildGeocoding([], features, {
@@ -85,7 +89,12 @@ export class SourceGeocoding {
     for (const r of locations.records) this.output.addLocation(r);
     for (const s of streets.streets) this.output.addStreet(s);
   }
-  async finish(signal?: AbortSignal) {
+  get groupCount() {
+    return this.groups
+      .query<{ n: number }, []>("SELECT count(*) AS n FROM groups")
+      .get()!.n;
+  }
+  async finish(signal?: AbortSignal, progress?: (done: number) => void) {
     let count = 0;
     this.groups.run("COMMIT");
     for (const { json } of this.groups
@@ -93,8 +102,12 @@ export class SourceGeocoding {
       .iterate()) {
       signal?.throwIfAborted();
       this.output.addLocation(JSON.parse(json));
-      if (++count % 10000 === 0) await new Promise((r) => setTimeout(r, 0));
+      if (++count % 10000 === 0) {
+        progress?.(count);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
+    progress?.(count);
   }
   close() {
     this.groups.close();

@@ -77,11 +77,20 @@ export class BlockSpool {
   json(key: string, value: unknown) {
     this.add(key, encoder.encode(JSON.stringify(value)));
   }
+  get blockCount() {
+    return this.db
+      .query<
+        { n: number },
+        []
+      >("SELECT count(DISTINCT key) AS n FROM fragments")
+      .get()!.n;
+  }
   async write(
     writer: BlockWriter,
     signal: AbortSignal,
-    progress: (key: string) => void,
+    progress: (key: string, completed: number) => void,
   ) {
+    let completed = 0;
     for (const { key } of this.db
       .query<
         { key: string },
@@ -89,7 +98,6 @@ export class BlockSpool {
       >("SELECT DISTINCT key FROM fragments ORDER BY key")
       .iterate()) {
       signal.throwIfAborted();
-      progress(key);
       const parts: Uint8Array[] = [];
       let length = 0;
       for (const { data } of this.db
@@ -159,6 +167,7 @@ export class BlockSpool {
       else if (key.startsWith("labels/settlements/")) decodePlaces(bytes);
       else if (key.startsWith("labels/")) decodeLabels(bytes);
       await writer.add({ key, bytes, features });
+      progress(key, ++completed);
     }
   }
   close() {

@@ -32,7 +32,17 @@ test("disk directory preserves all blocks across multiple leaves and rejects dup
     await expect(
       writer.add({ key: "tile/water/6/0/1", bytes }),
     ).rejects.toThrow();
-    await writer.finish(m);
+    const progress: { stage: string; done: number; total: number }[] = [];
+    await writer.finish(m, undefined, (stage, done, total) =>
+      progress.push({ stage, done, total }),
+    );
+    expect(
+      progress.filter((p) => p.stage === "directory").map((p) => p.done),
+    ).toEqual([0, 1, 2]);
+    const payload = progress.filter((p) => p.stage === "payload");
+    expect(payload[0]!.done).toBe(0);
+    expect(payload.at(-1)!.done).toBe(payload.at(-1)!.total);
+    expect(payload.at(-1)!.total).toBeGreaterThan(512);
     const r = await new AtlasReader(
       new FileSource(Bun.file(dir + "/map.atlas")),
     ).open();

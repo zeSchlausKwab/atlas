@@ -14,6 +14,7 @@ import {
   MAX_SEARCH_PAGE,
   type Term,
 } from "./paging";
+import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const encoder = new TextEncoder();
 /** External-memory search construction. Input records may arrive in arbitrary order. */
 export class PagedSearchBuilder {
@@ -90,6 +91,7 @@ export class PagedSearchBuilder {
     writer: BlockWriter,
     options = { search: true, reverse: true },
     signal?: AbortSignal,
+    progress: (message: string) => void = () => {},
   ) {
     this.db.run("COMMIT");
     const write = async (key: string, value: unknown, features = 0) => {
@@ -102,6 +104,15 @@ export class PagedSearchBuilder {
     let records = 0,
       recordPage = 0;
     if (options.search) {
+      const recordProgress = measuredProgress(
+        progress,
+        "search-records",
+        "Building search name index",
+        this.db
+          .query<{ n: number }, []>("SELECT count(*) AS n FROM locations")
+          .get()!.n,
+        "records",
+      );
       this.db.run("BEGIN");
       let chunk: Location[] = [];
       const insert = this.db.query("INSERT INTO postings VALUES(?,?,?)");
@@ -123,6 +134,7 @@ export class PagedSearchBuilder {
           insert.run(termBucket(term), term, records);
         }
         records++;
+        if (records % 10000 === 0) recordProgress(records);
         chunk.push(r);
         if (chunk.length === RECORDS_PER_PAGE) {
           await write(
@@ -139,7 +151,18 @@ export class PagedSearchBuilder {
           { schema: "locations-v1", records: chunk },
           chunk.length,
         );
+      recordProgress(records);
       this.db.run("COMMIT");
+      const postingProgress = measuredProgress(
+        progress,
+        "search-postings",
+        "Packing search postings",
+        this.db
+          .query<{ n: number }, []>("SELECT count(*) AS n FROM postings")
+          .get()!.n,
+        "records",
+      );
+      let posted = 0;
       let postingPage = 0,
         bucket = -1,
         catalog: Term[] = [];
@@ -189,6 +212,8 @@ export class PagedSearchBuilder {
           });
           term.pages++;
         }
+        posted += row.count;
+        postingProgress(posted);
         catalog.push(term);
         if (catalog.length > 10000)
           throw new Error("Search term hash bucket is too large");
@@ -196,6 +221,19 @@ export class PagedSearchBuilder {
       if (bucket >= 0)
         await write(termKey(bucket), { schema: "terms-v1", terms: catalog });
       const n = 2 ** STREET_ZOOM;
+      let completedCells = 0;
+      const cellsProgress = measuredProgress(
+        progress,
+        "search-cells",
+        "Packing location search cells",
+        this.db
+          .query<
+            { n: number },
+            []
+          >("SELECT count(DISTINCT cell) AS n FROM locations")
+          .get()!.n,
+        "cells",
+      );
       for (const { cell } of this.db
         .query<
           { cell: number },
@@ -221,6 +259,7 @@ export class PagedSearchBuilder {
           { schema: "locations-v1", records: values },
           values.length,
         );
+        cellsProgress(++completedCells);
       }
       await write(
         "search/locations",
@@ -236,6 +275,19 @@ export class PagedSearchBuilder {
     let streets = 0;
     if (options.reverse) {
       const n = 2 ** STREET_ZOOM;
+      let completedCells = 0;
+      const cellsProgress = measuredProgress(
+        progress,
+        "reverse-cells",
+        "Packing nearest-street cells",
+        this.db
+          .query<
+            { n: number },
+            []
+          >("SELECT count(DISTINCT cell) AS n FROM streets")
+          .get()!.n,
+        "cells",
+      );
       for (const { cell } of this.db
         .query<
           { cell: number },
@@ -261,6 +313,7 @@ export class PagedSearchBuilder {
           { schema: "streets-v1", streets: values },
           values.length,
         );
+        cellsProgress(++completedCells);
       }
       streets = this.db
         .query<{ n: number }, []>("SELECT count(DISTINCT id) AS n FROM streets")

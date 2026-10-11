@@ -9,6 +9,7 @@ import { selectedCell } from "../../offline/src/geometry";
 import { encodeTile } from "./tile-codec";
 import { displayMinZoom } from "./display";
 import { BlockSpool } from "./block-spool";
+import { measuredProgress } from "../../provisioning/src/compiler-progress";
 /** Reuse the existing geometry codec and simplifier, with a bounded source batch and depth-first tile walk. */
 export async function partitionTiles(
   source: Database,
@@ -20,10 +21,34 @@ export async function partitionTiles(
   const box = bounds(selection.polygon),
     nw = project(box[0], box[3]),
     se = project(box[2], box[1]);
+  const startCursor = spool.cursor,
+    stride = 2 ** 32;
+  const total = source
+    .query<{ n: number }, []>("SELECT count(*) AS n FROM features")
+    .get()!.n;
+  let scanned = startCursor
+    ? source
+        .query<
+          { n: number },
+          [number, number, number]
+        >("SELECT count(*) AS n FROM features WHERE cell<? OR (cell=? AND rowid<=?)")
+        .get(
+          Math.floor(startCursor / stride),
+          Math.floor(startCursor / stride),
+          startCursor % stride,
+        )!.n
+    : 0;
+  const report = measuredProgress(
+    progress,
+    "display-geometry",
+    "Generating display tiles (source objects)",
+    total,
+    "objects",
+    scanned,
+  );
   let batch: Feature[] = [],
     size = 0,
-    last = spool.cursor,
-    batches = 0;
+    last = spool.cursor;
   async function flush() {
     if (!batch.length) return;
     spool.begin();
@@ -89,14 +114,12 @@ export async function partitionTiles(
     spool.checkpoint(last);
     batch = [];
     size = 0;
-    batches++;
-    progress(`Display batch ${batches} saved (source cursor ${last})`);
+    report(scanned, true);
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   // The cell index already orders by (cell,rowid); keyset resume avoids sorting
   // continent-sized geometry blobs into another temporary table.
-  const stride = 2 ** 32,
-    start = spool.cursor,
+  const start = spool.cursor,
     cell = Math.floor(start / stride),
     rowid = start % stride;
   const rows = source.prepare<
@@ -111,6 +134,7 @@ export async function partitionTiles(
       if (row.rowid >= stride)
         throw new Error("Source object identity limit exceeded");
       last = row.cell * stride + row.rowid;
+      scanned++;
       const bytes = Bun.gunzipSync(row.data as Uint8Array<ArrayBuffer>);
       if (bytes.length > 32 * 1024 * 1024)
         throw new Error("One source geometry exceeds the 32 MiB tiling budget");
@@ -124,6 +148,7 @@ export async function partitionTiles(
       if (size >= 4 * 1024 * 1024 || batch.length >= 5000) await flush();
     }
     await flush();
+    report(scanned);
   } finally {
     rows.finalize();
   }

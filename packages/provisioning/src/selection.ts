@@ -45,7 +45,15 @@ export interface PreparationProgress {
     | "packing"
     | "indexing"
     | "verifying";
-  unit?: "blocks" | "bytes" | "stages" | "ways" | "cells";
+  unit?:
+    | "blocks"
+    | "bytes"
+    | "stages"
+    | "ways"
+    | "cells"
+    | "objects"
+    | "records"
+    | "terms";
   stage?: string;
   stageIndex?: number;
   stageCount?: number;

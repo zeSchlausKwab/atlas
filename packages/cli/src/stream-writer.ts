@@ -101,6 +101,11 @@ export class StreamWriter implements BlockWriter {
   async finish(
     manifest: Omit<Manifest, "snapshot">,
     beforeCopy?: (bytes: number) => Promise<void>,
+    progress?: (
+      stage: "directory" | "payload",
+      completed: number,
+      total: number,
+    ) => void,
   ) {
     this.db.run("COMMIT");
     const pages: IndexPage[] = [],
@@ -118,6 +123,15 @@ export class StreamWriter implements BlockWriter {
     const groups = this.db.query<{ page: string }, []>(
       "SELECT DISTINCT page FROM blocks WHERE page<>'' ORDER BY page",
     );
+    const pageTotal = progress
+      ? this.db
+          .query<
+            { n: number },
+            []
+          >("SELECT count(DISTINCT page) AS n FROM blocks WHERE page<>''")
+          .get()!.n
+      : 0;
+    progress?.("directory", 0, pageTotal);
     for (const { page } of groups.iterate()) {
       const blocks: Block[] = [];
       for (const row of this.db
@@ -147,6 +161,7 @@ export class StreamWriter implements BlockWriter {
       });
       await writeAll(this.file, bytes, RESERVE + this.length);
       this.length += bytes.length;
+      progress?.("directory", pages.length, pageTotal);
       // Current format root has a 64 MiB encoded cap. Fail before unbounded descriptor growth.
       if (pages.length > 180000 || this.length > this.maxBytes)
         throw new Error("Archive directory/output budget exceeded");
@@ -161,6 +176,7 @@ export class StreamWriter implements BlockWriter {
     // Move the payload left in bounded forward chunks. The destination is always
     // behind the next unread source byte, so overlapping ranges cannot corrupt it.
     // This needs no second full archive's worth of free disk space.
+    progress?.("payload", 0, this.length);
     const chunk = new Uint8Array(4 * 1024 * 1024);
     for (let offset = 0; offset < this.length; ) {
       const length = Math.min(chunk.length, this.length - offset);
@@ -177,6 +193,7 @@ export class StreamWriter implements BlockWriter {
         prefix.length + offset,
       );
       offset += bytesRead;
+      progress?.("payload", offset, this.length);
     }
     await writeAll(this.file, prefix, 0);
     await this.file.truncate(size);

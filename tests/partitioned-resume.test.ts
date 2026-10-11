@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { compilerProgress } from "../packages/provisioning/src/compiler-progress";
 import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { BlockSpool } from "../packages/cli/src/block-spool";
@@ -86,9 +87,9 @@ test("interrupted display build resumes durable batches without missing or dupli
   try {
     const stop = new AbortController();
     await expect(
-      partitionTiles(source, resumed, selection, stop.signal, () =>
-        stop.abort(),
-      ),
+      partitionTiles(source, resumed, selection, stop.signal, (line) => {
+        if ((compilerProgress(line)?.completed ?? 0) > 0) stop.abort();
+      }),
     ).rejects.toThrow();
     expect(resumed.cursor).toBeGreaterThan(0);
     const checkpoint = resumed.cursor;
@@ -98,13 +99,16 @@ test("interrupted display build resumes durable batches without missing or dupli
     resumed.close();
     resumed = new BlockSpool(dir + "/resume.sqlite", "fixture");
     expect(resumed.cursor).toBe(checkpoint);
+    const resumedProgress: number[] = [];
     await partitionTiles(
       source,
       resumed,
       selection,
       new AbortController().signal,
-      () => {},
+      (line) => resumedProgress.push(compilerProgress(line)!.completed!),
     );
+    expect(resumedProgress[0]).toBeGreaterThan(0);
+    expect(resumedProgress.at(-1)).toBe(5001);
     await partitionTiles(
       source,
       reference,

@@ -28,6 +28,7 @@ import { inside, bounds, selectedCell } from "../../offline/src/geometry";
 import { clipLine } from "../../provisioning/src/prepare";
 import type { PackageSelection } from "../../provisioning/src/selection";
 import { runCompiler } from "../../provisioning/src/process";
+import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const VERSION = 3;
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
@@ -129,12 +130,19 @@ export async function compilePartitioned(o: PartitionedOptions) {
     await space();
     const path = join(o.work, name),
       receipt = state.completed[name];
+    const verify = () => {
+      const report = measuredProgress(
+        progress,
+        `verify-${name}`,
+        `Verifying ${name}`,
+        Bun.file(path).size,
+        "bytes",
+      );
+      return fileHash(path, (done) => report(done), signal);
+    };
     if (receipt) {
       const file = Bun.file(path);
-      if (
-        file.size !== receipt.size ||
-        (await fileHash(path)) !== receipt.sha256
-      )
+      if (file.size !== receipt.size || (await verify()) !== receipt.sha256)
         throw new Error(`Completed stage ${name} changed on disk`);
       progress(`Reusing ${name}`);
       return path;
@@ -144,7 +152,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
     signal.throwIfAborted();
     state.completed[name] = {
       size: Bun.file(path).size,
-      sha256: await fileHash(path),
+      sha256: await verify(),
     };
     const temporary = statePath + ".part";
     await Bun.write(temporary, JSON.stringify(state));
@@ -161,7 +169,22 @@ export async function compilePartitioned(o: PartitionedOptions) {
     const w = await new StreamWriter(path, s.maxBytes).open();
     try {
       const manifest = await build(w);
-      await w.finish(manifest, space);
+      const label = path.split("/").at(-1)!;
+      let current = "",
+        report: (done: number) => void;
+      await w.finish(manifest, space, (step, done, total) => {
+        if (current !== step) {
+          current = step;
+          report = measuredProgress(
+            progress,
+            `archive-${step}-${label}`,
+            `${step === "directory" ? "Writing directory for" : "Finalizing payload for"} ${label}`,
+            total,
+            step === "directory" ? "blocks" : "bytes",
+          );
+        }
+        report(done);
+      });
     } catch (e) {
       await w.abort();
       throw e;
@@ -345,7 +368,22 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 featureCount = 0;
               try {
                 spool.begin();
-                if (s.search || s.pois) await semantic.addNodes(signal);
+                if (s.search || s.pois) {
+                  const total = source!
+                    .query<
+                      { n: number },
+                      []
+                    >("SELECT count(*) AS n FROM locations")
+                    .get()!.n;
+                  const report = measuredProgress(
+                    progress,
+                    "semantic-nodes",
+                    "Adding named locations and POIs",
+                    total,
+                    "records",
+                  );
+                  await semantic.addNodes(signal, report);
+                }
                 if (s.placeNames)
                   for (const { json } of source!
                     .query<
@@ -390,6 +428,18 @@ export async function compilePartitioned(o: PartitionedOptions) {
                     );
                   }
                 let count = 0;
+                const featureTotal = source!
+                  .query<
+                    { n: number },
+                    []
+                  >("SELECT count(*) AS n FROM features")
+                  .get()!.n;
+                const featureProgress = measuredProgress(
+                  progress,
+                  "semantic-features",
+                  "Building search, labels and selectable features",
+                  featureTotal,
+                );
                 for (const { data } of source!
                   .query<
                     { data: Uint8Array },
@@ -421,23 +471,39 @@ export async function compilePartitioned(o: PartitionedOptions) {
                         featureCount++;
                       }
                   if (++count % 5000 === 0) {
-                    progress(`Semantic source objects: ${count}`);
+                    featureProgress(count);
                     spool.checkpoint(count);
                     spool.begin();
                     await space();
                     await new Promise((r) => setTimeout(r, 0));
                   }
                 }
-                await semantic.finish(signal);
+                featureProgress(count);
+                const groupsProgress = measuredProgress(
+                  progress,
+                  "semantic-streets",
+                  "Finalizing named street groups",
+                  semantic.groupCount,
+                  "records",
+                );
+                await semantic.finish(signal, groupsProgress);
                 spool.checkpoint(count);
                 if (s.search || s.reverse)
                   await search.finish(
                     writer,
                     { search: s.search, reverse: s.reverse },
                     signal,
+                    progress,
                   );
-                await spool.write(writer, signal, (key) =>
-                  progress(`Packing ${key}`),
+                const packing = measuredProgress(
+                  progress,
+                  "semantic-packing",
+                  "Packing labels and selectable features",
+                  spool.blockCount,
+                  "blocks",
+                );
+                await spool.write(writer, signal, (_key, done) =>
+                  packing(done),
                 );
                 if (s.placeNames)
                   await writer.add({
@@ -497,8 +563,15 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 spool = new BlockSpool(spoolPath, identity);
               try {
                 await partitionTiles(source!, spool, s, signal, progress);
-                await spool.write(writer, signal, (key) =>
-                  progress(`Packing ${key}`),
+                const packing = measuredProgress(
+                  progress,
+                  "display-packing",
+                  "Packing display tiles",
+                  spool.blockCount,
+                  "blocks",
+                );
+                await spool.write(writer, signal, (_key, done) =>
+                  packing(done),
                 );
                 const heights = {
                   tagged: 0,
@@ -506,7 +579,19 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   missing: 0,
                   maxMeters: 0,
                 };
-                if (s.layers.includes("buildings"))
+                if (s.layers.includes("buildings")) {
+                  const heightsProgress = measuredProgress(
+                    progress,
+                    "building-heights",
+                    "Collecting building height statistics",
+                    source!
+                      .query<
+                        { n: number },
+                        []
+                      >("SELECT count(*) AS n FROM features WHERE class=2")
+                      .get()!.n,
+                  );
+                  let heightCount = 0;
                   for (const { data } of source!
                     .query<
                       { data: Uint8Array },
@@ -531,7 +616,13 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       h.height,
                       h.minHeight,
                     );
+                    if (++heightCount % 10000 === 0) {
+                      heightsProgress(heightCount);
+                      await new Promise((r) => setTimeout(r, 0));
+                    }
                   }
+                  heightsProgress(heightCount);
+                }
                 return {
                   ...base,
                   tileLayers: s.layers,
@@ -567,7 +658,20 @@ export async function compilePartitioned(o: PartitionedOptions) {
     await archive(o.output, async (writer) => {
       let manifest = { ...base },
         caps = new Set<string>();
+      const totalBytes = artifacts.reduce(
+        (sum, path) => sum + state.completed[path.split("/").at(-1)!]!.size,
+        0,
+      );
+      let copied = 0;
+      const packing = measuredProgress(
+        progress,
+        "assembly",
+        "Assembling final Atlas package (input bytes)",
+        totalBytes,
+        "bytes",
+      );
       for (const path of artifacts) {
+        let payloadCopied = 0;
         const reader = await new AtlasReader(
           new FileSource(Bun.file(path)),
         ).open();
@@ -584,11 +688,16 @@ export async function compilePartitioned(o: PartitionedOptions) {
               rawLength: undefined,
               bytes: await reader.block(block.key),
             });
+            copied += block.length;
+            payloadCopied += block.length;
+            packing(copied);
             reader.cache.delete(block.key);
           }
         } finally {
           reader.dispose();
         }
+        copied += Bun.file(path).size - payloadCopied;
+        packing(copied);
       }
       // Base counters in later stage manifests must not overwrite semantic counts.
       for (const path of artifacts) {
