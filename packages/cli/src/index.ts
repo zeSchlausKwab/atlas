@@ -10,6 +10,7 @@ import { addTransport, upgradeTransport } from "./transport";
 import { copyTransport } from "./shared-transport";
 import { PLACE_LABEL_KEY, encodePlaces } from "../../labels/src/places";
 import { encodeTile } from "./tile-codec";
+import { compactDisplayTile } from "./display-tile";
 import { buildingHeight } from "../../format/src/heights";
 import { MAP_LAYERS, layerForClass } from "../../format/src/index";
 import { splitTile } from "../../format/src/tiles";
@@ -433,7 +434,9 @@ async function main() {
                   )),
             );
             if (!features.length) continue;
-            for (const part of splitTile(encodeTile(features)))
+            for (const part of splitTile(
+              compactDisplayTile(encodeTile(features), z),
+            ))
               if (!selected || selected.layers.includes(part.layer))
                 await writer.add({
                   key: `tile/${part.layer}/${z}/${x}/${y}`,

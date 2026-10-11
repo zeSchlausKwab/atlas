@@ -6,6 +6,7 @@ import type { PackageSelection } from "../../provisioning/src/selection";
 import { bounds, selectedCell } from "../../offline/src/geometry";
 import { encodeTile } from "./tile-codec";
 import { displayMinZoom } from "./display";
+import { compactDisplayTile } from "./display-tile";
 /** Same tiling and output order for the sequential path and each parallel batch. */
 export function renderTileBatch(
   features: Feature[],
@@ -63,7 +64,9 @@ export function renderTileBatch(
           (f) => z >= displayMinZoom(f.tags ?? {}),
         );
         if (visible.length)
-          for (const part of splitTile(encodeTile(visible)))
+          for (const part of splitTile(
+            compactDisplayTile(encodeTile(visible), z),
+          ))
             emit(`tile/${part.layer}/${z}/${x}/${y}`, part.bytes);
       }
       const t = internals.tiles[id(z, x, y)];

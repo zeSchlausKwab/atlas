@@ -4,6 +4,7 @@ import { decodeLabels } from "../../labels/src/index";
 import { decodePlaces } from "../../labels/src/places";
 import { decodeFeatures } from "../../features/src/index";
 import { tileRecords } from "../../format/src/tiles";
+import { compactDisplayTile } from "./display-tile";
 const encoder = new TextEncoder(),
   decoder = new TextDecoder();
 /** A durable fragment spool: commits make a complete source batch resumable. */
@@ -125,7 +126,10 @@ export class BlockSpool {
           [string]
         >("SELECT data FROM fragments WHERE key=? ORDER BY seq")
         .iterate(key)) {
-        const bytes = Bun.gunzipSync(data as Uint8Array<ArrayBuffer>);
+        const raw = Bun.gunzipSync(data as Uint8Array<ArrayBuffer>);
+        const bytes = key.startsWith("tile/")
+          ? compactDisplayTile(raw, Number(key.split("/")[2]))
+          : raw;
         length += bytes.length;
         if (length > 64 * 1024 * 1024)
           throw new Error(
@@ -146,9 +150,13 @@ export class BlockSpool {
           .sort((a, b) => a.class - b.class);
         features = records.length;
         if (records.reduce((n, r) => n + r.points, 0) > 3000000)
-          throw new Error(`Tile ${key} exceeds its point limit`);
+          throw new Error(
+            `Tile ${key} exceeds its 3,000,000-point limit after display filtering; finer display partitioning is required`,
+          );
         if (features > 500000)
-          throw new Error(`Tile ${key} exceeds its feature limit`);
+          throw new Error(
+            `Tile ${key} exceeds its 500,000-feature limit after display filtering; finer display partitioning is required`,
+          );
         bytes = new Uint8Array(
           8 + records.reduce((n, r) => n + r.bytes.length, 0),
         );
@@ -185,7 +193,9 @@ export class BlockSpool {
       if (key.startsWith("features/")) decodeFeatures(bytes);
       else if (key.startsWith("labels/settlements/")) decodePlaces(bytes);
       else if (key.startsWith("labels/")) decodeLabels(bytes);
-      await writer.add({ key, bytes, features });
+      // Entirely invisible display tiles need no directory entry or payload.
+      if (!key.startsWith("tile/") || features > 0)
+        await writer.add({ key, bytes, features });
       progress(key, ++completed);
     }
   }
