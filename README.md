@@ -2,7 +2,7 @@
 
 An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
 
-This is a working prototype, not a finalized format or a MapLibre compatibility implementation. No MapLibre, remote basemap tiles, commercial map API, or planet download is used.
+This is a working prototype, not a finalized format or a MapLibre compatibility implementation. The consumer uses its own WASM renderer and reads Atlas files directly. The host preview uses OpenFreeMap; source preparation supports regional or cached planet PBFs.
 
 ## Run it
 
@@ -61,6 +61,12 @@ bun run start
 ```
 
 The server prefers Vienna Plus when present. **Draw your offline world** selects a polygon and creates a smaller `.atlas` file on this device or the server, with clipped routing/search and complete intersecting display tiles. Save it, reload the cached app shell offline and open the file. [Boundary semantics and offline instructions](docs/VIENNA-PLUS.md#draw-your-offline-world).
+
+## Coastal regions
+
+Sea polygons require a separate coastline-assembly step alongside inland OSM water.
+The [ocean-water CLI and verification recipe](docs/OCEAN-WATER.md) can augment an
+existing coastal package while preserving its routing, search and other layers.
 
 ## Four components
 
