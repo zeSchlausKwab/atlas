@@ -310,20 +310,15 @@ export class AtlasGeocoder {
       };
     };
     const recordCount = this.catalog!.records;
-    let selected = [chosen];
-    if (chosen.count > MAX_CANDIDATES) {
-      const tokenBest = q.split(" ").map(
-        (t) =>
-          queryGrams(t)
-            .map((g) => terms.get(namePrefix + g)!)
-            .sort((a, b) => a.count - b.count)[0]!,
-      );
-      selected = [
-        ...new Map([chosen, ...tokenBest].map((t) => [t.term, t])).values(),
-      ]
-        .sort((a, b) => a.count - b.count)
-        .slice(0, 4);
-    }
+    // Every query gram is a necessary condition, including for a single word.
+    // Choosing just one can scatter false positives over thousands of record
+    // pages and exhaust the byte budget far below MAX_CANDIDATES. Intersect
+    // compact postings first; ranking still checks complete names and context.
+    const selected = [
+      ...new Map(
+        [...terms.values()].map((t) => [`${t.start}/${t.count}/${t.pages}`, t]),
+      ).values(),
+    ].sort((a, b) => a.count - b.count);
     const streams = selected.map(cursor);
     let target = 0;
     outer: while (true) {

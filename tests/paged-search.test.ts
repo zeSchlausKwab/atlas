@@ -234,3 +234,66 @@ test("broad name/context postings intersect without loading all candidates", asy
   await expect(geocoder.search("alpha")).rejects.toThrow("too broad");
   reader.dispose();
 });
+
+test("single-word search intersects grams even below the candidate-count ceiling", async () => {
+  const { termKey, termBucket, ordinalKey } = await import(
+    "../packages/geocoding/src/paging"
+  );
+  const blocks: { key: string; bytes: Uint8Array }[] = [];
+  // Each individual gram has false positives on different record pages. Only
+  // record zero contains the complete name. Unrelated pages need not be read.
+  for (const [i, term] of ["n:lon", "n:ond", "n:ndo", "n:don"].entries()) {
+    blocks.push({
+      key: termKey(termBucket(term)),
+      bytes: encode({
+        schema: "terms-v1",
+        terms: [{ term, count: 2, start: i, pages: 1 }],
+      }),
+    });
+    blocks.push({
+      key: ordinalKey("postings", i),
+      bytes: encode({ schema: "postings-v1", ids: [0, (i + 1) * 256] }),
+    });
+  }
+  blocks.push({
+    key: "search/locations",
+    bytes: encode({
+      schema: "locations-paged-v1",
+      names: true,
+      records: 1280,
+      pages: 5,
+    }),
+  });
+  blocks.push({
+    key: ordinalKey("records", 0),
+    bytes: encode({
+      schema: "locations-v1",
+      records: Array.from({ length: 256 }, (_, i) => ({
+        id: `node/${i}`,
+        name: i === 0 ? "London" : "Other",
+        aliases: [],
+        kind: "place",
+        category: "city",
+        coordinates: [0, 52],
+      })),
+    }),
+  });
+  const reader = await new AtlasReader(
+    new FileSource(
+      new Blob([
+        await encodePackage(
+          { ...m, capabilities: ["location-search"] },
+          blocks,
+          { paged: true },
+        ),
+      ]),
+    ),
+  ).open();
+  try {
+    const result = await new AtlasGeocoder(reader).search("London");
+    expect(result.matches.map((r) => r.name)).toEqual(["London"]);
+    expect(result.total).toBe(1);
+  } finally {
+    reader.dispose();
+  }
+});
