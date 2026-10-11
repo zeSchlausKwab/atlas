@@ -7,9 +7,17 @@ the new semantic roots; geometry and routing codecs are unchanged.
 
 ## Graph construction
 
-`transport-partitioned` reads coordinates into a sorted file-backed node table,
-then spools edges and restrictions in SQLite. Each profile is processed and
-cleared before the next. Segment ordinals follow the canonical source way/node
+`transport-partitioned` first scans routing references and restrictions into a
+file-backed node-membership bitmap and SQLite. It then retains only coordinates
+referenced by at least one transport mode. Coordinates are sorted into 4 KiB
+pages (240 × 17-byte records plus padding), with an in-memory fence key per page.
+A lookup searches the resident fences and touches one coordinate page, avoiding
+a binary search across a continent-sized mapping. The fence costs 8 bytes per
+240 retained nodes; the membership bitmap is capped at 4 GiB. Input must have
+non-negative node IDs and the usual nodes/ways/relations type order.
+
+Each profile spools edges in SQLite, then converts them to compressed cells and
+reuses the edge pages before the next profile. Segment ordinals follow the canonical source way/node
 order, independent of spatial partitioning. Node IDs join cells and ordinals
 remove overlap duplicates. Costs retain f64 precision until the codec's upward
 f32 rounding. All supported directions, barriers and via-node restrictions use
@@ -59,7 +67,7 @@ The legacy peak array remains readable.
 ## Resource bounds and checkpoints
 
 SQLite caches are 16–64 MiB per connection, with temporary state on disk. Node
-coordinates occupy 17 bytes each; file-backed mappings can still contribute to
+coordinates occupy about 17.07 bytes each including alignment; file-backed mappings can still contribute to
 resident/cgroup memory. Source tiling batches target 4 MiB or 5,000 features,
 with a 32 MiB maximum individual source geometry. Relation assembly has limits
 of 32 nesting levels, 100,000 nested relations, 64 MiB compressed relation data
@@ -75,6 +83,21 @@ cells to 16 MiB. The archive metadata root remains capped at 64 MiB, with a
 180,000-directory-page construction guard. Reaching a limit fails the job with
 its completed stages intact rather than publishing a partial dataset.
 
+Graph checkpoints use SQLite WAL with FULL synchronization. At PBF blob
+boundaries (after roughly five seconds or 128 blobs, whichever comes first),
+they commit the source byte cursor, canonical segment counters, restriction
+counts and inserted edges together. A single expensive blob/cell can take longer.
+Membership and coordinate files are flushed before their matching cursor commit.
+Resume truncates uncommitted coordinate appends and rolls back uncommitted SQLite
+writes. Encoded cells and their removed edges commit together; completed profiles
+are retained and replayed to the final archive after a stop. Scratch is removed
+only after the transport archive has a durable stage receipt. The old pre-cursor
+`routing-spool.sqlite` cannot be recovered and is discarded on migration.
+
+Graph identity includes the compiler schema, canonical source path, size,
+mtime and the input SHA-256 provided by the normal compiler. The CLI's standalone
+native verification mode uses path/size/mtime when no hash is supplied.
+
 Stage identity includes the source SHA-256, selection recipe and compiler
 version. Completed stages are verified before reuse. Atomic SQLite batch commits
 couple display fragments to their source cursor. Publication writes to a partial
@@ -83,7 +106,30 @@ fsyncs and atomically renames. The old output survives a failed replacement.
 
 The host preserves 60 GiB free, with a further 2 GiB stop margin while building.
 Its large-build admission allowance is output budget + 64 GiB scratch + 60 GiB
-reserve. It is deliberately described as a minimum, not a measured Europe
+reserve. On resume, existing extraction bytes are credited against the scratch
+allowance; reserve and output allowance remain intact. It is deliberately described as a minimum, not a measured Europe
 workspace estimate. The first continental run must measure peak disk use and
 memory, completion, coverage and long-distance routing before we claim Europe
 is supported without these prototype limits.
+
+## Progress and recovery verification
+
+The host shows a measured current-stage percentage, units (bytes, ways or cells),
+last checkpoint time and an approximate current-stage ETA after five seconds of
+samples. ETA is calculated from work done in this attempt, not the original job
+creation time, and is reset on resume/stage transitions. The eight routing stages
+are reference scan, coordinate scan, then graph partitioning/cell encoding for
+each of walking, cycling and driving. Source features, semantic/search building,
+display tiles and final assembly follow; routing percent is not overall percent.
+No whole-build ETA is claimed before these stages have measured timings.
+Source-store and semantic construction still have stage-level recovery; display
+fragments have batch recovery. Checksum verification restarts its scan after a stop.
+
+`bun run verify:graph-resume` kills the real compiler six times across reference,
+coordinate, graph and cell stages. It also injects an uncommitted coordinate
+append, checks byte-identical final stream/replay and rejects changed source
+identity. `bun run verify:partitioned-graph` checks all 242 fixture cells against
+the independent regional compiler. The shared coordinate regression records page
+accesses inside the actual lookup: the old implementation touched ten pages for
+the probe; the new implementation touches one. This is a locality bound, not a
+claim of a tenfold whole-build speedup.

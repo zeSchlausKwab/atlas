@@ -55,7 +55,21 @@ export async function compilePartitioned(o: PartitionedOptions) {
       : abort.signal;
   await mkdir(o.work, { recursive: true });
   await mkdir(dirname(o.output), { recursive: true });
-  const inputHash = await fileHash(o.input),
+  const inputHash = await fileHash(
+      o.input,
+      (completed, total) =>
+        progress(
+          "ATLAS_PROGRESS " +
+            JSON.stringify({
+              stage: "input-verification",
+              message: "Verifying compiler input",
+              completed,
+              total,
+              unit: "bytes",
+            }),
+        ),
+      signal,
+    ),
     identity = new Bun.CryptoHasher("sha256")
       .update(JSON.stringify({ version: VERSION, inputHash, selection: s }))
       .digest("hex");
@@ -203,6 +217,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
               s.profiles,
               signal,
               progress,
+              inputHash,
             );
             for (const mode of s.profiles)
               Object.assign(transport.profiles[mode]!, counts[mode]);
@@ -211,6 +226,17 @@ export async function compilePartitioned(o: PartitionedOptions) {
           }),
         ),
       );
+    if (state.completed["transport.atlas"]) {
+      for (const name of [
+        "routing-v2.sqlite",
+        "routing-v2.sqlite-wal",
+        "routing-v2.sqlite-shm",
+        "routing-needed.bits",
+        "routing-coordinates.bin",
+      ])
+        await rm(join(o.work, name), { force: true });
+    }
+
     const needsSem =
       s.featureKinds.length ||
       s.search ||

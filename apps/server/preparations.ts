@@ -170,7 +170,15 @@ export class Preparations {
     try {
       const disk = await readStorage(this.directory);
       const needed = cached
-        ? cachedBuildSpace(value.maxBytes, !!planCachedBuild(value).partitioned)
+        ? cachedBuildSpace(
+            value.maxBytes,
+            !!planCachedBuild(value).partitioned,
+            previous
+              ? Bun.file(
+                  resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
+                ).size
+              : 0,
+          )
         : preparationSpace(value.maxBytes, plan?.bytes);
       if (disk.availableBytes < needed)
         throw new Error(

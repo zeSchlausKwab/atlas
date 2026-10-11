@@ -255,3 +255,21 @@ free at launch. The progress card and `osmium` process confirmed extraction was
 running (6% at observation); this percentage is extraction progress, not total
 build completion. Continental compilation, final size and peak resource use
 remain unverified until the job completes.
+
+## Coordinate lookup recovery — 2026-10-11
+
+The first Europe attempt was stopped at the user's request. At approximately
+05:38 UTC it had reached 15.5 million eligible walking ways / 154 million
+segments after roughly twelve hours. The 39.605 GiB area extraction completed;
+no whole graph profile had completed. Its private 63.684 GiB coordinate mapping
+was causing random page faults under the service's 16 GiB memory-high limit:
+about 4.8 TB physical reads and 36.6 million major faults, with about 69 KiB/s
+PBF cursor advance in a 162-second sample. Disk space was not exhausted.
+
+The replacement uses page-aligned indexed coordinate lookup for every importer,
+routing-only coordinate retention and durable graph blob/cell checkpoints.
+The original extraction receipt and source are retained. The old graph spool
+has no trustworthy restart cursor and cannot be reused. The original Europe
+job ID and recipe are retained so restarting reuses the verified extraction.
+Reference parity and forced-stop tests pass; continent-scale throughput and
+completion still need the resumed run's measurements.

@@ -15,6 +15,7 @@ export async function addPartitionedTransport(
   modes: readonly TransportMode[] = TRANSPORT_MODES,
   signal = new AbortController().signal,
   progress: (message: string) => void = console.log,
+  sourceHash = "",
 ): Promise<TransportMetadata> {
   signal.throwIfAborted();
   const child = spawn(
@@ -22,7 +23,11 @@ export async function addPartitionedTransport(
     [input, work],
     {
       cwd: ROOT,
-      env: { ...process.env, TMPDIR: work },
+      env: {
+        ...process.env,
+        TMPDIR: work,
+        ATLAS_GRAPH_SOURCE_HASH: sourceHash,
+      },
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     },

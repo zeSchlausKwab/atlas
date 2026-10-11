@@ -1,3 +1,4 @@
+import { approximateDuration } from "../../../packages/provisioning/src/compiler-progress";
 import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
 import { budgetControl, storageSize } from "./host-budget";
@@ -424,10 +425,35 @@ function jobs(values: PreparationJob[]) {
           progress,
           text(
             "p",
-            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit === "stages" ? "stages" : "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} ${job.progress.unit === "stages" ? "saved stage data" : "Atlas written"}`,
+            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit ?? "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} ${job.cachedSource ? "saved stage data" : "Atlas written"}`,
             "quiet",
           ),
         );
+        if (job.progress.stage) {
+          const p = job.progress;
+          card.append(
+            text(
+              "p",
+              `${p.stageIndex ? `Routing stage ${p.stageIndex} of ${p.stageCount} · ` : ""}${p.stagePercent !== undefined ? `${p.stagePercent.toFixed(1)}% · ` : ""}${p.etaSeconds !== undefined ? `Approximately ${approximateDuration(p.etaSeconds)} left in this stage` : "Estimating time for this stage…"}`,
+              "quiet",
+            ),
+          );
+          if (p.checkpointAt)
+            card.append(
+              text(
+                "p",
+                `Checkpoint saved ${new Date(p.checkpointAt).toLocaleTimeString()} · Resume continues from the last committed batch.`,
+                "quiet",
+              ),
+            );
+          card.append(
+            text(
+              "p",
+              "Time estimates cover the current stage. Source features, search, display tiles and final packing follow routing.",
+              "quiet",
+            ),
+          );
+        }
         const cancel = text(
           "button",
           job.state === "cancelling"

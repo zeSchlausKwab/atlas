@@ -140,14 +140,18 @@ export class BuildCheckpoints {
       0,
     );
   }
-  async reusable(name: string) {
+  async reusable(
+    name: string,
+    progress?: (done: number, total: number) => void,
+    signal?: AbortSignal,
+  ) {
     const saved = this.state.completed[name],
       path = join(this.directory, name);
     if (!saved) return false;
     // An altered completed artifact is not silently mixed with downstream artifacts.
     if (
       (await stat(path)).size !== saved.bytes ||
-      (await fileHash(path)) !== saved.sha256
+      (await fileHash(path, progress, signal)) !== saved.sha256
     )
       throw new Error(
         `Completed build artifact ${name} changed on disk. Start a new preparation.`,

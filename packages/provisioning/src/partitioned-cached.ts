@@ -10,6 +10,7 @@ import { compilePartitioned } from "../../cli/src/partitioned";
 import { runCompiler } from "./process";
 import { SOURCE_RESERVE } from "./source-cache";
 import type { PackageSelection, PreparationProgress } from "./selection";
+import { compilerProgress } from "./compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export async function importPartitionedCached(
   source: VerifiedBuildSource,
@@ -50,6 +51,7 @@ export async function importPartitionedCached(
       unit: "stages",
       readBytes: 0,
       writtenBytes: cp.savedBytes,
+      ...compilerProgress(message),
     });
   const abort = new AbortController();
   let failure: Error | undefined;
@@ -65,7 +67,18 @@ export async function importPartitionedCached(
   };
   const timer = setInterval(() => void check().catch(() => {}), 2000);
   try {
-    if (!(await cp.reusable(name))) {
+    progress("Verifying the saved extraction before reuse…", "verifying");
+    const hashProgress = (done: number, total: number) =>
+      report({
+        phase: "verifying",
+        message: "Verifying saved extraction checksum",
+        completed: done,
+        total,
+        unit: "bytes",
+        readBytes: done,
+        writtenBytes: cp.savedBytes,
+      });
+    if (!(await cp.reusable(name, hashProgress, signal))) {
       await check();
       progress(
         "Extracting selected area from the verified local PBF (three passes)…",

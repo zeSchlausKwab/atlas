@@ -45,7 +45,13 @@ export interface PreparationProgress {
     | "packing"
     | "indexing"
     | "verifying";
-  unit?: "blocks" | "bytes" | "stages";
+  unit?: "blocks" | "bytes" | "stages" | "ways" | "cells";
+  stage?: string;
+  stageIndex?: number;
+  stageCount?: number;
+  elapsedSeconds?: number;
+  etaSeconds?: number;
+  checkpointAt?: string;
   stagePercent?: number;
   message: string;
   completed: number;

@@ -32,8 +32,17 @@ export interface StorageInfo {
 }
 
 /** Regional cached builds retain checkpoints and preserve the source-library reserve. */
-export function cachedBuildSpace(maxBytes: number, partitioned = false) {
+export function cachedBuildSpace(
+  maxBytes: number,
+  partitioned = false,
+  reusedScratchBytes = 0,
+) {
   // Minimum admission allowance; actual expansion is checked throughout every stage.
-  if (partitioned) return 124 * 1024 ** 3 + maxBytes;
+  if (partitioned)
+    return (
+      60 * 1024 ** 3 +
+      Math.max(0, 64 * 1024 ** 3 - Math.max(0, reusedScratchBytes)) +
+      maxBytes
+    );
   return 64 * 1024 ** 3 + maxBytes * 6;
 }

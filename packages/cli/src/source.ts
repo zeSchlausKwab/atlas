@@ -1,10 +1,30 @@
-import { open, rename, rm, mkdir } from "node:fs/promises";
+import { open, rename, rm, mkdir, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
-export async function fileHash(path: string) {
+export async function fileHash(
+  path: string,
+  progress?: (done: number, total: number) => void,
+  signal?: AbortSignal,
+) {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  const total = (await stat(path)).size;
+  let done = 0,
+    reported = 0;
+  progress?.(0, total);
+  for await (const chunk of createReadStream(path, {
+    highWaterMark: 4 * 1024 * 1024,
+  })) {
+    signal?.throwIfAborted();
+    hash.update(chunk);
+    done += chunk.length;
+    if (Date.now() - reported > 1000) {
+      progress?.(done, total);
+      reported = Date.now();
+    }
+  }
+  signal?.throwIfAborted();
+  progress?.(done, total);
   return hash.digest("hex");
 }
 /** Stream source bytes and hash them without an ArrayBuffer the size of the input. */
