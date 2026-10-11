@@ -284,3 +284,23 @@ published after checking the provider MD5 and recording SHA-256. Downloads retai
 60 GiB free space. Source files and job/recipe records live in `shared/data/sources/`.
 Partial files are reused only with exact byte-range and source identity checks.
 See [Europe preparation](EUROPE-PREPARATION.md) for current compiler readiness.
+
+## Britain workflow handoff — 2026-10-11
+
+Deployed release `20261011T061824389Z-e68eb93fb3f3-4ba98d18` (code `e68eb93`,
+following implementation `960f890`). Open
+`http://192.168.0.179:3100/host?area=britain` for the cached-planet starter:
+Britain-area rectangle, z0–16, 32 GiB output ceiling, editable capability preset.
+The link does not start a job. The user explicitly requested manual start.
+The rectangle includes parts of Ireland and neighbouring coasts; it can be replaced.
+
+Europe job `f338f58d-7554-41c8-8424-56d841fb3d25` is cancelled with its extraction
+and compiler checkpoints retained. Five prepared maps remain available. The
+verified 88.7 GiB planet stays cached. Atlas and the independent Lemond model
+service are active. About 244.7 GiB was free after deployment.
+
+Validation: 147 Bun tests, TypeScript check, host bundle and deployment candidate
+smoke checks pass. Browser verification covered geometry-only/all/custom presets,
+Geofabrik/source switching, library-map reuse, deletion confirmation/cancellation,
+source-file maintenance, and the ready Britain selection. Deletion itself was
+exercised only on temporary test fixtures; no existing LAN dataset was deleted.
