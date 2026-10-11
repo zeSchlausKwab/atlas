@@ -339,3 +339,19 @@ or firewall/systemd changes are needed. The default is up to six compiler
 workers; `ATLAS_COMPILER_WORKERS=1..8` in `shared/server.env` changes the next
 service instance's budget. The existing six-core CPU quota still covers all
 children. Details and local benchmarks: [parallel compiler](PARALLEL-COMPILER.md).
+
+## Britain tile-overflow recovery — 11 October 2026
+
+After the legacy Britain worker failed during display packing, release
+`20261011T110321533Z-85e049be1af6-5f859238` was deployed normally (clean code
+commit `85e049b`). No running compiler was interrupted. Candidate checks passed
+for health, host assets, WASM, catalog, byte ranges and preparation prerequisites.
+Local validation passed 163 Bun tests, 46 Rust tests and the TypeScript check.
+
+The Britain job `f6b452bc-2f27-42da-a74f-e41ecc596c4a` was resumed through its
+normal administrative endpoint. Its extracted PBF, transport, source store,
+semantic archive and display fragments remain in place. Recovery verifies saved
+receipts, then repacks the display archive with the coarse-geometry fix. The
+parallel compiler and structured pass progress are now also deployed. No library
+maps or cached sources were deleted; approximately 213 GiB remained free.
+See [the reproduction and recovery notes](BRITAIN-TILE-RECOVERY.md).

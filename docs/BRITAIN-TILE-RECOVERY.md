@@ -15,7 +15,7 @@ but did not scale to country-sized inputs.
 ## Fix
 
 `compactDisplayTile` applies an explicit display policy at z0–12: remove land/water
-polygon exteriors smaller than one pixel of area on a 512px tile, together with
+polygon exteriors smaller than one pixel of area on a 512px tile (half a pixel per axis at the viewer’s native 256px tile scale), together with
 their holes. Retained exteriors and their nonzero holes keep their original bytes.
 This uses the exterior/hole winding emitted by geojson-vt, not a test of a whole
 multipolygon's net area. Detail tiles from z13 upward, buildings/heights, lines and
