@@ -274,7 +274,9 @@ function update() {
     el("summary").textContent = !sourceReady()
       ? "Choose an available source to continue."
       : !closed
-        ? "Draw an area or use the Britain rectangle, then choose its capabilities."
+        ? global()
+          ? "Draw an area or use the Britain rectangle, then choose its capabilities."
+          : "Draw an area inside the selected Atlas map, then choose its capabilities."
         : `${cached() ? cachedSource()!.name : remotePbf() ? (sourcePlan?.region.name ?? "Geofabrik") : selectedManifest().name} → ${s.name || "Untitled map"} · z${s.minZoom}–${s.maxZoom} · ${s.layers.length} geometry layers · ${s.profiles.length ? s.profiles.join(" / ") + " routing" : "routing off"} · ${queries.length ? queries.join(" / ") : "search & queries off"} · ${s.featureKinds.length} selectable feature types.`;
   }
   el("area").textContent = closed
@@ -312,6 +314,9 @@ function clear() {
   mode = null;
   closed = false;
   update();
+  el("message").textContent = global()
+    ? "Draw an area or use the Britain rectangle. Choose capabilities before starting."
+    : "Draw an area within this Atlas map. Only its available data can be included.";
 }
 function pick(p: [number, number]) {
   if (!mode) return;
