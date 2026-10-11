@@ -77,6 +77,25 @@ export class BlockSpool {
   json(key: string, value: unknown) {
     this.add(key, encoder.encode(JSON.stringify(value)));
   }
+  /** Import a completed private worker batch into the caller's transaction, preserving fragment order. */
+  appendFrom(path: string) {
+    const input = new Database(path, { readonly: true });
+    try {
+      input.run(
+        "PRAGMA query_only=ON; PRAGMA cache_size=-4096; PRAGMA temp_store=FILE",
+      );
+      const put = this.db.query("INSERT INTO fragments VALUES(?,?,?)");
+      for (const row of input
+        .query<
+          { key: string; data: Uint8Array },
+          []
+        >("SELECT key,data FROM fragments ORDER BY seq")
+        .iterate())
+        put.run(row.key, ++this.sequence, row.data);
+    } finally {
+      input.close();
+    }
+  }
   get blockCount() {
     return this.db
       .query<

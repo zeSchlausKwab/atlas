@@ -30,100 +30,112 @@ const selection: PackageSelection = {
   paddingCells: 0,
   maxBytes: 50 * 1024 ** 2,
 };
-test("interrupted display build resumes durable batches without missing or duplicate geometry", async () => {
-  const dir = await mkdtemp("/tmp/atlas-tile-resume-");
-  const source = new Database(":memory:");
-  source.run(
-    "CREATE TABLE features(cell INTEGER,data BLOB); CREATE INDEX cells ON features(cell)",
-  );
-  const put = source.query("INSERT INTO features VALUES(?,?)");
-  source.transaction(() => {
-    for (let id = 0; id < 5001; id++) {
-      const x = 9.501 + (id % 100) * 0.0001,
-        y = 47.131 + Math.floor(id / 100) * 0.0001;
-      put.run(
-        10 + (id % 2),
-        Bun.gzipSync(
-          new TextEncoder().encode(
-            JSON.stringify({
-              type: "Feature",
-              properties: {
-                id: `way/${id}`,
-                class: 2,
-                tags: { building: "yes" },
-              },
-              geometry: {
-                type: "Polygon",
-                coordinates: [
-                  [
-                    [x, y],
-                    [x + 0.00005, y],
-                    [x + 0.00005, y + 0.00005],
-                    [x, y],
+for (const [workers, resumeWorkers] of [
+  [1, 3],
+  [3, 1],
+])
+  test(`interrupted display build (${workers} → ${resumeWorkers} workers) resumes durable batches without missing or duplicate geometry`, async () => {
+    const dir = await mkdtemp("/tmp/atlas-tile-resume-");
+    const source = new Database(":memory:");
+    source.run(
+      "CREATE TABLE features(cell INTEGER,data BLOB); CREATE INDEX cells ON features(cell)",
+    );
+    const put = source.query("INSERT INTO features VALUES(?,?)");
+    source.transaction(() => {
+      for (let id = 0; id < 5001; id++) {
+        const x = 9.501 + (id % 100) * 0.0001,
+          y = 47.131 + Math.floor(id / 100) * 0.0001;
+        put.run(
+          10 + (id % 2),
+          Bun.gzipSync(
+            new TextEncoder().encode(
+              JSON.stringify({
+                type: "Feature",
+                properties: {
+                  id: `way/${id}`,
+                  class: 2,
+                  tags: { building: "yes" },
+                },
+                geometry: {
+                  type: "Polygon",
+                  coordinates: [
+                    [
+                      [x, y],
+                      [x + 0.00005, y],
+                      [x + 0.00005, y + 0.00005],
+                      [x, y],
+                    ],
                   ],
-                ],
-              },
-            }),
+                },
+              }),
+            ),
           ),
-        ),
-      );
-    }
-  })();
-  const collect = async (spool: BlockSpool) => {
-    const blocks: InputBlock[] = [];
-    await spool.write(
-      {
-        add: async (b) => {
-          blocks.push(b);
+        );
+      }
+    })();
+    const collect = async (spool: BlockSpool) => {
+      const blocks: InputBlock[] = [];
+      await spool.write(
+        {
+          add: async (b) => {
+            blocks.push(b);
+          },
         },
-      },
-      new AbortController().signal,
-      () => {},
-    );
-    return blocks;
-  };
-  let resumed = new BlockSpool(dir + "/resume.sqlite", "fixture");
-  const reference = new BlockSpool(dir + "/reference.sqlite", "fixture");
-  try {
-    const stop = new AbortController();
-    await expect(
-      partitionTiles(source, resumed, selection, stop.signal, (line) => {
-        if ((compilerProgress(line)?.completed ?? 0) > 0) stop.abort();
-      }),
-    ).rejects.toThrow();
-    expect(resumed.cursor).toBeGreaterThan(0);
-    const checkpoint = resumed.cursor;
-    // Simulate a crash with an uncommitted fragment: reopening must roll it back.
-    resumed.begin();
-    resumed.json("query/uncommitted", ["never publish"]);
-    resumed.close();
-    resumed = new BlockSpool(dir + "/resume.sqlite", "fixture");
-    expect(resumed.cursor).toBe(checkpoint);
-    const resumedProgress: number[] = [];
-    await partitionTiles(
-      source,
-      resumed,
-      selection,
-      new AbortController().signal,
-      (line) => resumedProgress.push(compilerProgress(line)!.completed!),
-    );
-    expect(resumedProgress[0]).toBeGreaterThan(0);
-    expect(resumedProgress.at(-1)).toBe(5001);
-    await partitionTiles(
-      source,
-      reference,
-      selection,
-      new AbortController().signal,
-      () => {},
-    );
-    const actual = await collect(resumed),
-      expected = await collect(reference);
-    expect(actual.length).toBeGreaterThan(0);
-    expect(actual).toEqual(expected);
-  } finally {
-    resumed.close();
-    reference.close();
-    source.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-}, 30000);
+        new AbortController().signal,
+        () => {},
+      );
+      return blocks;
+    };
+    let resumed = new BlockSpool(dir + "/resume.sqlite", "fixture");
+    const reference = new BlockSpool(dir + "/reference.sqlite", "fixture");
+    try {
+      const stop = new AbortController();
+      await expect(
+        partitionTiles(
+          source,
+          resumed,
+          selection,
+          stop.signal,
+          (line) => {
+            if ((compilerProgress(line)?.completed ?? 0) > 0) stop.abort();
+          },
+          workers,
+        ),
+      ).rejects.toThrow();
+      expect(resumed.cursor).toBeGreaterThan(0);
+      const checkpoint = resumed.cursor;
+      // Simulate a crash with an uncommitted fragment: reopening must roll it back.
+      resumed.begin();
+      resumed.json("query/uncommitted", ["never publish"]);
+      resumed.close();
+      resumed = new BlockSpool(dir + "/resume.sqlite", "fixture");
+      expect(resumed.cursor).toBe(checkpoint);
+      const resumedProgress: number[] = [];
+      await partitionTiles(
+        source,
+        resumed,
+        selection,
+        new AbortController().signal,
+        (line) => resumedProgress.push(compilerProgress(line)!.completed!),
+        resumeWorkers,
+      );
+      expect(resumedProgress[0]).toBeGreaterThan(0);
+      expect(resumedProgress.at(-1)).toBe(5001);
+      await partitionTiles(
+        source,
+        reference,
+        selection,
+        new AbortController().signal,
+        () => {},
+      );
+      const actual = await collect(resumed),
+        expected = await collect(reference);
+      expect(actual.length).toBeGreaterThan(0);
+      expect(actual).toEqual(expected);
+    } finally {
+      resumed.close();
+      reference.close();
+      source.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30000);

@@ -328,3 +328,14 @@ with all capabilities and 34 progress stages, and the live browser console.
 At 11:09 CEST Britain was around 70% through its source-object pass (36,464,466
 objects total), with extraction, transport and source-store receipts complete.
 This was not a whole-build percentage or ETA.
+
+## Parallel compiler rollout
+
+The parallel compiler is committed locally for the next normal deployment. Do
+not activate it during the current Britain build: that would restart the worker.
+After the build finishes (or the user explicitly stops it), `bun run deploy`
+ships the source worker scripts with the normal server release. No new packages
+or firewall/systemd changes are needed. The default is up to six compiler
+workers; `ATLAS_COMPILER_WORKERS=1..8` in `shared/server.env` changes the next
+service instance's budget. The existing six-core CPU quota still covers all
+children. Details and local benchmarks: [parallel compiler](PARALLEL-COMPILER.md).

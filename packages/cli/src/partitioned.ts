@@ -1,3 +1,4 @@
+import { compilerWorkers } from "../../compiler/src/settings";
 import { Database } from "bun:sqlite";
 import { mkdir, rm, statfs } from "node:fs/promises";
 import { join, dirname } from "node:path";
@@ -45,9 +46,11 @@ export interface PartitionedOptions {
   signal?: AbortSignal;
   progress?: (message: string) => void;
   reserveBytes?: number;
+  workers?: number;
 }
 /** Whole-source identity and durable stage artifacts; no per-partition graph identities. */
 export async function compilePartitioned(o: PartitionedOptions) {
+  const workers = compilerWorkers(o.workers);
   const s = o.selection,
     progress = o.progress ?? console.log,
     abort = new AbortController(),
@@ -491,7 +494,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 if (s.search || s.reverse)
                   await search.finish(
                     writer,
-                    { search: s.search, reverse: s.reverse },
+                    { search: s.search, reverse: s.reverse, workers },
                     signal,
                     progress,
                   );
@@ -562,7 +565,14 @@ export async function compilePartitioned(o: PartitionedOptions) {
               const spoolPath = join(o.work, "display-fragments.sqlite"),
                 spool = new BlockSpool(spoolPath, identity);
               try {
-                await partitionTiles(source!, spool, s, signal, progress);
+                await partitionTiles(
+                  source!,
+                  spool,
+                  s,
+                  signal,
+                  progress,
+                  workers,
+                );
                 const packing = measuredProgress(
                   progress,
                   "display-packing",

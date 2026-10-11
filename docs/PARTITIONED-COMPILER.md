@@ -163,3 +163,12 @@ The bridge is optional and temporary. Native progress remains the fallback when
 it is absent or stale. A normal deployment is still blocked while preparations
 are active. Updating the console alone does not replace an already-running
 compiler or change its recovery guarantees.
+
+### Multi-core execution
+
+Search-index construction and display batches now support bounded worker
+processes. The default is up to six, configurable with `--workers 1..8` or
+`ATLAS_COMPILER_WORKERS`. One preserves the sequential reference. Workers write
+private scratch files; deterministic merging keeps output and resume cursors
+stable. See [parallel compiler details](PARALLEL-COMPILER.md) for resource
+limits, recovery behavior, measured results and stages that remain serial.

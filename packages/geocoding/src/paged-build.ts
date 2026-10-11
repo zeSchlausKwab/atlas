@@ -1,3 +1,4 @@
+import { parallelNameIndex } from "./parallel-index";
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 import type { BlockWriter } from "../../cli/src/stream-writer";
@@ -89,7 +90,10 @@ export class PagedSearchBuilder {
   }
   async finish(
     writer: BlockWriter,
-    options = { search: true, reverse: true },
+    options: { search: boolean; reverse: boolean; workers?: number } = {
+      search: true,
+      reverse: true,
+    },
     signal?: AbortSignal,
     progress: (message: string) => void = () => {},
   ) {
@@ -104,122 +108,135 @@ export class PagedSearchBuilder {
     let records = 0,
       recordPage = 0;
     if (options.search) {
-      const recordProgress = measuredProgress(
-        progress,
-        "search-records",
-        "Building search name index",
-        this.db
-          .query<{ n: number }, []>("SELECT count(*) AS n FROM locations")
-          .get()!.n,
-        "records",
-      );
-      this.db.run("BEGIN");
-      let chunk: Location[] = [];
-      const insert = this.db.query("INSERT INTO postings VALUES(?,?,?)");
-      for (const { json } of this.db
-        .query<{ json: string }, []>("SELECT json FROM locations ORDER BY id")
-        .iterate()) {
-        signal?.throwIfAborted();
-        const r: Location = JSON.parse(json);
-        if (records >= 2 ** 32)
-          throw new Error("Search record identity overflow");
-        const terms = grams(
-          [r.name, ...r.aliases, r.context ?? ""].map(normalize).join(" "),
+      if ((options.workers ?? 1) > 1) {
+        const result = await parallelNameIndex(
+          this.db,
+          this.path,
+          writer,
+          options.workers!,
+          signal,
+          progress,
         );
-        for (const term of terms) insert.run(termBucket(term), term, records);
-        for (const gram of grams(
-          [r.name, ...r.aliases].map(normalize).join(" "),
-        )) {
-          const term = "n:" + gram;
-          insert.run(termBucket(term), term, records);
+        records = result.records;
+        recordPage = result.pages;
+      } else {
+        const recordProgress = measuredProgress(
+          progress,
+          "search-records",
+          "Building search name index",
+          this.db
+            .query<{ n: number }, []>("SELECT count(*) AS n FROM locations")
+            .get()!.n,
+          "records",
+        );
+        this.db.run("BEGIN");
+        let chunk: Location[] = [];
+        const insert = this.db.query("INSERT INTO postings VALUES(?,?,?)");
+        for (const { json } of this.db
+          .query<{ json: string }, []>("SELECT json FROM locations ORDER BY id")
+          .iterate()) {
+          signal?.throwIfAborted();
+          const r: Location = JSON.parse(json);
+          if (records >= 2 ** 32)
+            throw new Error("Search record identity overflow");
+          const terms = grams(
+            [r.name, ...r.aliases, r.context ?? ""].map(normalize).join(" "),
+          );
+          for (const term of terms) insert.run(termBucket(term), term, records);
+          for (const gram of grams(
+            [r.name, ...r.aliases].map(normalize).join(" "),
+          )) {
+            const term = "n:" + gram;
+            insert.run(termBucket(term), term, records);
+          }
+          records++;
+          if (records % 10000 === 0) recordProgress(records);
+          chunk.push(r);
+          if (chunk.length === RECORDS_PER_PAGE) {
+            await write(
+              ordinalKey("records", recordPage++),
+              { schema: "locations-v1", records: chunk },
+              chunk.length,
+            );
+            chunk = [];
+          }
         }
-        records++;
-        if (records % 10000 === 0) recordProgress(records);
-        chunk.push(r);
-        if (chunk.length === RECORDS_PER_PAGE) {
+        if (chunk.length)
           await write(
             ordinalKey("records", recordPage++),
             { schema: "locations-v1", records: chunk },
             chunk.length,
           );
-          chunk = [];
-        }
-      }
-      if (chunk.length)
-        await write(
-          ordinalKey("records", recordPage++),
-          { schema: "locations-v1", records: chunk },
-          chunk.length,
+        recordProgress(records);
+        this.db.run("COMMIT");
+        const postingProgress = measuredProgress(
+          progress,
+          "search-postings",
+          "Packing search postings",
+          this.db
+            .query<{ n: number }, []>("SELECT count(*) AS n FROM postings")
+            .get()!.n,
+          "records",
         );
-      recordProgress(records);
-      this.db.run("COMMIT");
-      const postingProgress = measuredProgress(
-        progress,
-        "search-postings",
-        "Packing search postings",
-        this.db
-          .query<{ n: number }, []>("SELECT count(*) AS n FROM postings")
-          .get()!.n,
-        "records",
-      );
-      let posted = 0;
-      let postingPage = 0,
-        bucket = -1,
-        catalog: Term[] = [];
-      // GROUP BY follows the on-disk primary key; only one bucket/catalog and one posting page are resident.
-      for (const row of this.db
-        .query<
-          { bucket: number; term: string; count: number },
-          []
-        >("SELECT bucket,term,count(*) AS count FROM postings GROUP BY bucket,term ORDER BY bucket,term")
-        .iterate()) {
-        if (bucket !== row.bucket) {
-          if (bucket >= 0)
-            await write(termKey(bucket), {
-              schema: "terms-v1",
-              terms: catalog,
-            });
-          bucket = row.bucket;
-          catalog = [];
-        }
-        const term: Term = {
-          term: row.term,
-          count: row.count,
-          start: postingPage,
-          pages: 0,
-        };
-        let ids: number[] = [];
-        for (const { rid } of this.db
+        let posted = 0;
+        let postingPage = 0,
+          bucket = -1,
+          catalog: Term[] = [];
+        // GROUP BY follows the on-disk primary key; only one bucket/catalog and one posting page are resident.
+        for (const row of this.db
           .query<
-            { rid: number },
-            [number, string]
-          >("SELECT rid FROM postings WHERE bucket=? AND term=? ORDER BY rid")
-          .iterate(bucket, row.term)) {
-          ids.push(rid);
-          if (ids.length === POSTINGS_PER_PAGE) {
+            { bucket: number; term: string; count: number },
+            []
+          >("SELECT bucket,term,count(*) AS count FROM postings GROUP BY bucket,term ORDER BY bucket,term")
+          .iterate()) {
+          if (bucket !== row.bucket) {
+            if (bucket >= 0)
+              await write(termKey(bucket), {
+                schema: "terms-v1",
+                terms: catalog,
+              });
+            bucket = row.bucket;
+            catalog = [];
+          }
+          const term: Term = {
+            term: row.term,
+            count: row.count,
+            start: postingPage,
+            pages: 0,
+          };
+          let ids: number[] = [];
+          for (const { rid } of this.db
+            .query<
+              { rid: number },
+              [number, string]
+            >("SELECT rid FROM postings WHERE bucket=? AND term=? ORDER BY rid")
+            .iterate(bucket, row.term)) {
+            ids.push(rid);
+            if (ids.length === POSTINGS_PER_PAGE) {
+              await write(ordinalKey("postings", postingPage++), {
+                schema: "postings-v1",
+                ids,
+              });
+              term.pages++;
+              ids = [];
+            }
+          }
+          if (ids.length) {
             await write(ordinalKey("postings", postingPage++), {
               schema: "postings-v1",
               ids,
             });
             term.pages++;
-            ids = [];
           }
+          posted += row.count;
+          postingProgress(posted);
+          catalog.push(term);
+          if (catalog.length > 10000)
+            throw new Error("Search term hash bucket is too large");
         }
-        if (ids.length) {
-          await write(ordinalKey("postings", postingPage++), {
-            schema: "postings-v1",
-            ids,
-          });
-          term.pages++;
-        }
-        posted += row.count;
-        postingProgress(posted);
-        catalog.push(term);
-        if (catalog.length > 10000)
-          throw new Error("Search term hash bucket is too large");
+        if (bucket >= 0)
+          await write(termKey(bucket), { schema: "terms-v1", terms: catalog });
       }
-      if (bucket >= 0)
-        await write(termKey(bucket), { schema: "terms-v1", terms: catalog });
       const n = 2 ** STREET_ZOOM;
       let completedCells = 0;
       const cellsProgress = measuredProgress(
