@@ -5,7 +5,10 @@ import {
   type VerifiedBuildSource,
 } from "../../packages/provisioning/src/cached-build";
 import { adminAccess, ADMIN_DENIED, type AdminAccess } from "./admin-access";
-import { preparationSpace } from "../../packages/provisioning/src/capacity";
+import {
+  preparationSpace,
+  cachedResumeSpace,
+} from "../../packages/provisioning/src/capacity";
 import { readStorage } from "./storage";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -196,20 +199,23 @@ export class Preparations {
     this.activeSource = atlas?.id;
     try {
       const disk = await readStorage(this.directory);
+      const partitioned = !!cached && !!planCachedBuild(value).partitioned;
+      const extractedBytes =
+        previous && cached
+          ? Bun.file(
+              resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
+            ).size
+          : 0;
       const needed = cached
-        ? cachedBuildSpace(
-            value.maxBytes,
-            !!planCachedBuild(value).partitioned,
-            previous
-              ? Bun.file(
-                  resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
-                ).size
-              : 0,
-          )
+        ? previous
+          ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
+          : cachedBuildSpace(value.maxBytes, partitioned)
         : preparationSpace(value.maxBytes, plan?.bytes);
       if (disk.availableBytes < needed)
         throw new Error(
-          `Not enough server disk space: ${(needed / 1073741824).toFixed(2)} GiB estimated, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Lower the output budget or select a smaller source.`,
+          previous
+            ? `Not enough server disk space to resume: ${(needed / 1073741824).toFixed(2)} GiB minimum restart allowance, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Free space and resume the saved build.`
+            : `Not enough server disk space: ${(needed / 1073741824).toFixed(2)} GiB estimated, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Lower the output budget or select a smaller source.`,
         );
       const job: PreparationJob = {
         id,

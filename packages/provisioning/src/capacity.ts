@@ -1,4 +1,10 @@
 export const MIB = 1024 * 1024;
+const GIB = 1024 ** 3;
+/** Shared host policy: source downloads, compiler guards and UI use one reserve. */
+export const DISK_RESERVE = 10 * GIB;
+export const BUILD_STOP_MARGIN = 2 * GIB;
+export const BUILD_DISK_FLOOR = DISK_RESERVE + BUILD_STOP_MARGIN;
+const CACHED_SCRATCH_ALLOWANCE = 64 * GIB;
 /** Budgets are byte counts, not a format or product size cap. */
 export function validBudget(value: unknown): value is number {
   return (
@@ -40,9 +46,22 @@ export function cachedBuildSpace(
   // Minimum admission allowance; actual expansion is checked throughout every stage.
   if (partitioned)
     return (
-      60 * 1024 ** 3 +
-      Math.max(0, 64 * 1024 ** 3 - Math.max(0, reusedScratchBytes)) +
+      DISK_RESERVE +
+      Math.max(0, CACHED_SCRATCH_ALLOWANCE - Math.max(0, reusedScratchBytes)) +
       maxBytes
     );
-  return 64 * 1024 ** 3 + maxBytes * 6;
+  return DISK_RESERVE + 4 * GIB + maxBytes * 6;
+}
+
+/** Restart headroom, not a whole-build size prediction. Only a stopped partitioned
+ * build with a saved extraction qualifies. Its worker verifies checkpoints and
+ * monitors free space throughout; maxBytes still caps every output archive. */
+export function cachedResumeSpace(
+  maxBytes: number,
+  partitioned: boolean,
+  extractedBytes: number,
+) {
+  return partitioned && extractedBytes > 0
+    ? BUILD_DISK_FLOOR + Math.min(maxBytes, CACHED_SCRATCH_ALLOWANCE)
+    : cachedBuildSpace(maxBytes, partitioned);
 }

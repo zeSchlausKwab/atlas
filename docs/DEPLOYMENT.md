@@ -281,7 +281,7 @@ with a bundled worker under shared data, a 1 GiB memory limit and lower CPU
 priority. They survive a map-server deployment/restart. A machine restart retains
 the partial file; use Resume download in the host console. The completed file is
 published after checking the provider MD5 and recording SHA-256. Downloads retain
-60 GiB free space. Source files and job/recipe records live in `shared/data/sources/`.
+10 GiB free space. Source files and job/recipe records live in `shared/data/sources/`.
 Partial files are reused only with exact byte-range and source identity checks.
 See [Europe preparation](EUROPE-PREPARATION.md) for current compiler readiness.
 

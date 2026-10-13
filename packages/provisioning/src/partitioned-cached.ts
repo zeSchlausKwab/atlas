@@ -1,3 +1,4 @@
+import { BUILD_DISK_FLOOR, DISK_RESERVE, BUILD_STOP_MARGIN } from "./capacity";
 import { mkdir, rename, rm, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +9,6 @@ import {
 } from "./cached-build";
 import { compilePartitioned } from "../../cli/src/partitioned";
 import { runCompiler } from "./process";
-import { SOURCE_RESERVE } from "./source-cache";
 import type { PackageSelection, PreparationProgress } from "./selection";
 import { compilerProgress } from "./compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -57,9 +57,9 @@ export async function importPartitionedCached(
   let failure: Error | undefined;
   const check = async () => {
     const fs = await statfs(work);
-    if (fs.bavail * fs.bsize < SOURCE_RESERVE + 2 * 1024 ** 3) {
+    if (fs.bavail * fs.bsize < BUILD_DISK_FLOOR) {
       failure = new Error(
-        "Preparation paused to preserve 60 GiB free. Free space and resume the saved stages.",
+        `Preparation paused to preserve ${DISK_RESERVE / 1024 ** 3} GiB free plus a ${BUILD_STOP_MARGIN / 1024 ** 3} GiB stopping buffer. Free space and resume the saved stages.`,
       );
       abort.abort();
       throw failure;
@@ -133,7 +133,7 @@ export async function importPartitionedCached(
       work: join(work, "compiler"),
       selection: s,
       signal: AbortSignal.any([signal, abort.signal]),
-      reserveBytes: SOURCE_RESERVE + 2 * 1024 ** 3,
+      reserveBytes: BUILD_DISK_FLOOR,
       progress: (message) => {
         if (message.startsWith("Saved")) completed++;
         progress(message);

@@ -8,6 +8,8 @@ import { openClient } from "./client-link";
 import { budgetControl, storageSize } from "./host-budget";
 import {
   preparationSpace,
+  DISK_RESERVE,
+  BUILD_STOP_MARGIN,
   cachedBuildSpace,
   capacityBudget,
   validBudget,
@@ -142,8 +144,8 @@ function renderStorage() {
             1048576,
             Math.floor(
               (largeSelection()
-                ? available - 124 * 1024 ** 3
-                : (available - 64 * 1024 ** 3) / 6) / 1048576,
+                ? available - cachedBuildSpace(0, true)
+                : (available - cachedBuildSpace(0)) / 6) / 1048576,
             ) * 1048576,
           )
         : capacityBudget(available, "output", global()),
@@ -169,7 +171,7 @@ function renderStorage() {
   estimate.dataset.insufficient = String(
     available !== undefined && needed > available,
   );
-  estimate.textContent = `${storageSize(needed)} ${cached() ? "minimum workspace allowance including 60 GiB reserve; actual free space is monitored throughout compilation" : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
+  estimate.textContent = `${storageSize(needed)} ${cached() ? `minimum workspace allowance including ${storageSize(DISK_RESERVE)} reserve; compilation stops ${storageSize(BUILD_STOP_MARGIN)} above it` : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
 }
 let checking = false,
   submitting = false,

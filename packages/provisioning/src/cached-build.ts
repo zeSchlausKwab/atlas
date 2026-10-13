@@ -1,3 +1,4 @@
+import { BUILD_DISK_FLOOR, DISK_RESERVE, BUILD_STOP_MARGIN } from "./capacity";
 import { importPartitionedCached } from "./partitioned-cached";
 import { mkdir, readdir, rename, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import {
 import { DiskWriter } from "../../cli/src/disk-writer";
 import { fileHash } from "../../cli/src/source";
 import { WORLD_SOURCE, importBounds } from "./global-source";
-import { SOURCE_RESERVE, type CachedSource } from "./source-cache";
+import type { CachedSource } from "./source-cache";
 import {
   validateSelectionScope,
   type PackageSelection,
@@ -229,9 +230,9 @@ export async function importCachedPbf(
     });
   async function space() {
     const fs = await statfs(work);
-    if (fs.bavail * fs.bsize < SOURCE_RESERVE + 2 * GIB)
+    if (fs.bavail * fs.bsize < BUILD_DISK_FLOOR)
       throw new Error(
-        "Build stopped to preserve 60 GiB of free disk space. Completed stages are saved; free space and resume.",
+        `Build stopped to preserve ${DISK_RESERVE / 1024 ** 3} GiB free plus a ${BUILD_STOP_MARGIN / 1024 ** 3} GiB stopping buffer. Completed stages are saved; free space and resume.`,
       );
   }
   async function runStage(

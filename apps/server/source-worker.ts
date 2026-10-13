@@ -30,7 +30,9 @@ try {
           : "Downloading to server disk. Leaving the page does not interrupt this job.");
       const disk = await statfs(dirname(record));
       if (disk.bavail * disk.bsize < SOURCE_RESERVE)
-        throw new Error("Paused to preserve 60 GiB of free disk space");
+        throw new Error(
+          `Paused to preserve ${SOURCE_RESERVE / 1024 ** 3} GiB of free disk space`,
+        );
       delete job.error;
       await save();
     },

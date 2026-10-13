@@ -104,13 +104,22 @@ couple display fragments to their source cursor. Publication writes to a partial
 file, validates the directory, compacts payload offsets in bounded chunks,
 fsyncs and atomically renames. The old output survives a failed replacement.
 
-The host preserves 60 GiB free, with a further 2 GiB stop margin while building.
-Its large-build admission allowance is output budget + 64 GiB scratch + 60 GiB
-reserve. On resume, existing extraction bytes are credited against the scratch
-allowance; reserve and output allowance remain intact. It is deliberately described as a minimum, not a measured Europe
-workspace estimate. The first continental run must measure peak disk use and
-memory, completion, coverage and long-distance routing before we claim Europe
-is supported without these prototype limits.
+The host preserves 10 GiB free, with a further 2 GiB stop margin while building.
+Source downloads, compiler guards and UI estimates share the reserve policy in
+`packages/provisioning/src/capacity.ts`. New large builds require output budget +
+64 GiB scratch + the reserve as a minimum admission allowance.
+
+A stopped partitioned build with a saved extraction instead requires the 12 GiB
+compiler floor plus up to 64 GiB restart headroom (bounded by the output ceiling).
+This permits incremental progress without reserving the full output ceiling
+again. The worker still verifies checkpoints, enforces the unchanged archive
+size limit and continuously checks actual disk space. It can stop again later;
+restart admission does not promise enough space to finish. Missing extractions
+and the regional compiler retain their original full admission calculation.
+
+The first continental run must measure peak disk use and memory, completion,
+coverage and long-distance routing before we claim Europe is supported without
+these prototype limits.
 
 ## Progress and recovery verification
 

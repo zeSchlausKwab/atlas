@@ -129,7 +129,7 @@ export class SourceCache {
         Math.max(0, source.bytes - offset) + SOURCE_RESERVE
       )
         throw new Error(
-          "Not enough disk space for the remaining PBF plus a 60 GiB reserve",
+          `Not enough disk space for the remaining PBF plus a ${SOURCE_RESERVE / 1024 ** 3} GiB reserve`,
         );
       const record = join(this.directory, source.id + ".json");
       const job: SourceJob = {

@@ -1,6 +1,10 @@
 import { test, expect } from "bun:test";
 import {
   MIB,
+  DISK_RESERVE,
+  BUILD_DISK_FLOOR,
+  cachedResumeSpace,
+  cachedBuildSpace,
   capacityBudget,
   preparationSpace,
   validBudget,
@@ -56,4 +60,20 @@ test("free-space inspection reads the real filesystem and reports unavailable vo
   await expect(
     readStorage(`/tmp/nonexistent-atlas-volume-${crypto.randomUUID()}`),
   ).rejects.toThrow();
+});
+
+test("saved partitioned builds restart with headroom instead of reserving the entire output ceiling again", () => {
+  const gib = 1024 ** 3;
+  expect(DISK_RESERVE).toBe(10 * gib);
+  expect(BUILD_DISK_FLOOR).toBe(12 * gib);
+  expect(cachedResumeSpace(128 * gib, true, 40 * gib)).toBe(76 * gib);
+  // The observed Europe case has 97 GiB free: enough to restart, not a promise to finish.
+  expect(cachedResumeSpace(128 * gib, true, 40 * gib)).toBeLessThan(97 * gib);
+  expect(cachedBuildSpace(128 * gib, true)).toBeGreaterThan(97 * gib);
+  expect(cachedResumeSpace(gib, true, 40 * gib)).toBe(13 * gib);
+  // Missing extraction and the legacy regional compiler retain their full admission checks.
+  expect(cachedResumeSpace(128 * gib, true, 0)).toBe(
+    cachedBuildSpace(128 * gib, true),
+  );
+  expect(cachedResumeSpace(gib, false, 40 * gib)).toBe(cachedBuildSpace(gib));
 });

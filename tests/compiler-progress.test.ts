@@ -30,9 +30,9 @@ test("stage progress preserves measured ETA and does not invent one during warmu
 });
 test("resume credits existing scratch without reducing disk reserve or output allowance", () => {
   const gib = 1024 ** 3;
-  expect(cachedBuildSpace(128 * gib, true)).toBe(252 * gib);
-  expect(cachedBuildSpace(128 * gib, true, 40 * gib)).toBe(212 * gib);
-  expect(cachedBuildSpace(128 * gib, true, 100 * gib)).toBe(188 * gib);
+  expect(cachedBuildSpace(128 * gib, true)).toBe(202 * gib);
+  expect(cachedBuildSpace(128 * gib, true, 40 * gib)).toBe(162 * gib);
+  expect(cachedBuildSpace(128 * gib, true, 100 * gib)).toBe(138 * gib);
 });
 
 test("semantic and packaging counters use measurable units", () => {

@@ -25,7 +25,7 @@ than a reduced overview, and authorized predownloading the planet PBF.
 When using the planet, the Europe preset extracts the provider's bounding
 rectangle, including adjacent regions. It is **not a political Europe boundary**.
 The saved 128 GiB output cap is a budget, not a prediction. The admission check
-requires output budget + 64 GiB workspace + 60 GiB reserve. This is a minimum
+requires output budget + 64 GiB workspace + 10 GiB reserve. This is a minimum
 allowance, not a continental disk-use estimate; actual space is checked during
 work and the job stops if it approaches the reserve. A cached PBF alone is not
 a rendered map.

@@ -20,7 +20,7 @@ These are protective defaults, not measured Atlas capacity guarantees. Monitor
 the entire service cgroup, not only the parent Bun process. An OOM kill is a
 failed job, never successful partial coverage.
 
-Keep at least 60 GiB free as a proposed operational reserve. Track source cache,
+Keep at least 10 GiB free as a proposed operational reserve. Track source cache,
 temporary workspace, final packages and Nix/Cargo caches separately. The current
 preparation estimate is approximate and does not enforce that reserve yet. Do not
 infer planet output size from compressed PBF size or the four regional files.
