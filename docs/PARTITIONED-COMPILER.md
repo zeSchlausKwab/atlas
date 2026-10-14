@@ -181,3 +181,34 @@ processes. The default is up to six, configurable with `--workers 1..8` or
 private scratch files; deterministic merging keeps output and resume cursors
 stable. See [parallel compiler details](PARALLEL-COMPILER.md) for resource
 limits, recovery behavior, measured results and stages that remain serial.
+
+### Source-store recovery (October 2026)
+
+The source geometry stage now uses a rollback journal with FULL synchronization.
+PBF blob boundaries commit the byte cursor, counters and SQL writes together,
+roughly every five seconds or 128 blobs. Coordinate appends are synchronized
+before that commit and truncated back to the saved count on resume. Multipolygon
+assembly saves its last relation ID; duplicate outer-way removal commits batches
+of 10,000 IDs. Coordinate scratch is released after area assembly. Index creation
+is atomic but restarts that individual operation if interrupted. A structural
+SQLite check runs before the completed source stage receives its archive receipt.
+
+Source identity binds the compiler schema, input path, size, mtime and supplied
+SHA-256. Old unreceipted source databases have no safe cursor and are rebuilt;
+completed transport/semantic/display archives retain their existing receipts.
+Source passes report their own progress and approximate ETA. SQLite diagnostics
+and the current OSM object ID are retained if a native operation fails.
+
+`bun run verify:source-resume` kills the real importer in five phases and checks
+rollback, coordinate truncation, source-table parity, completed replay, and
+changed-input rejection. Run `cargo build --release -p atlas-osm-import --bins`
+first. `bun run verify:source-store` checks parity with the regional importer.
+
+The Europe run reported SQLITE_CORRUPT after 104.6 million ways on October 13.
+A full read-only `quick_check(10)` of its 38.35 GiB source database returned `ok`;
+a write probe on an isolated copy also succeeded. Those checks do not establish
+the original trigger or prove table/index correspondence. No kernel errors were
+found and 119 GiB was available after failure. A separate regression reproduces
+corruption when an unjournaled transaction spills updates and fails; journaled
+transactions fix that demonstrated recovery defect. This hardening is not proof
+that the historical failure's root cause has been identified.

@@ -33,7 +33,8 @@
     "verify:source-store": "bun scripts/verify-source-store.ts",
     "verify:partitioned-build": "bun scripts/verify-partitioned-build.ts",
     "verify:graph-resume": "bun scripts/verify-graph-resume.ts",
-    "benchmark:compiler": "bun scripts/benchmark-compiler.ts"
+    "benchmark:compiler": "bun scripts/benchmark-compiler.ts",
+    "verify:source-resume": "bun scripts/verify-source-resume.ts"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

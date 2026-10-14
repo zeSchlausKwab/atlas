@@ -282,7 +282,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
           ROOT,
           signal,
           progress,
-          { ...process.env, TMPDIR: o.work },
+          { ...process.env, TMPDIR: o.work, ATLAS_SOURCE_HASH: inputHash },
         );
       });
       source = new Database(path, { readonly: true });
