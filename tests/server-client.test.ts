@@ -16,6 +16,7 @@ let frontend: ReturnType<typeof Bun.serve> | undefined;
 let serverUrl: string;
 let stderr: Promise<string> | undefined;
 let bytes: Uint8Array;
+let defaultServerUrl: string;
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "atlas-separate-apps-"));
@@ -24,7 +25,18 @@ beforeAll(async () => {
   fixture.engine.destroy();
   await Bun.write(join(directory, "fixture.atlas"), bytes);
   await buildBrowserApp("host");
-  const clientDirectory = await buildBrowserApp("client");
+  const savedServer = process.env.ATLAS_SERVER_URL;
+  delete process.env.ATLAS_SERVER_URL;
+  let clientDirectory: string;
+  try {
+    clientDirectory = await buildBrowserApp("client");
+    defaultServerUrl = (
+      await Bun.file(join(clientDirectory, "client-config.json")).json()
+    ).serverUrl;
+  } finally {
+    if (savedServer === undefined) delete process.env.ATLAS_SERVER_URL;
+    else process.env.ATLAS_SERVER_URL = savedServer;
+  }
   backend = Bun.spawn([process.execPath, "apps/server/index.ts"], {
     env: {
       ...process.env,
@@ -86,6 +98,10 @@ afterAll(async () => {
   await backend?.exited;
   await stderr;
   if (directory) await rm(directory, { recursive: true, force: true });
+});
+
+test("fresh client build connects to localhost without a remote server setting", () => {
+  expect(defaultServerUrl).toBe("http://127.0.0.1:3100/");
 });
 
 test("separate HTTP apps: client serves only its shell, backend exposes data and host console", async () => {

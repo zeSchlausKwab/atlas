@@ -1,54 +1,74 @@
-# Atlas / geo-format
+# Atlas
 
 An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. The consumer uses its own WASM renderer and reads Atlas files directly. The host preview uses OpenFreeMap; source preparation supports regional or cached planet PBFs.
 
-## Run it
+## Run locally
 
-The map server and consumer are independent apps. The server owns map files,
-preparation jobs, the public API and its host console. The consumer is a static
-HTML/JS/WASM build: its browser reads the remote server directly, with no API proxy.
+No remote Atlas server, account, SSH access, Nostr relay or planet download is
+required. The client and map server run as separate processes on your own machine.
+Initial setup needs internet access for dependencies and a small Liechtenstein OSM
+extract (a few MiB). After setup, viewing, routing, search, extraction and the
+local host preview work without external services.
 
-For the deployed mini PC, start the independent client:
+Prerequisites: **Bun 1.3+**, **stable Rust/Cargo with rustup**, **wasm-pack**, and a
+native C/C++ build toolchain. On macOS use Xcode Command Line Tools; on Debian or
+Ubuntu use `build-essential` and `pkg-config`. macOS and Linux are supported;
+Windows users should use WSL2. Install wasm-pack with `cargo install wasm-pack --locked`.
 
 ```sh
-bun install
+git clone https://github.com/zeSchlausKwab/atlas.git
+cd atlas
+bun install --frozen-lockfile
+bun run setup
+bun run demo
+```
+
+Open **http://127.0.0.1:5173/** for the map or
+**http://127.0.0.1:3100/host** for the host console. `Ctrl+C` stops both apps.
+`setup` installs the WASM target, compiles a z0–16 sample with all three transport
+profiles, search, labels and selectable geometry, then builds the WASM and browser
+apps. It reuses the completed sample on later runs. The first Rust build can take
+several minutes. Source files, maps and local state live in ignored `data/`.
+The sample is `data/local-demo.atlas`; the combined demo uses
+`data/local-demo-state/` for its host library and settings.
+
+The host console starts with **Existing Atlas map** and the **Selected Atlas map**
+preview when no cached PBF is available. Draw an area and choose capabilities to
+prepare an excerpt locally. **OpenFreeMap** is an optional online preview;
+**Download a region**, source downloads and remote catalogs also require internet.
+Importing arbitrary areas from PBF in the host console additionally needs
+`osmium-tool`; sample setup and excerpts from an existing Atlas map do not.
+
+To run the two apps separately after setup:
+
+```sh
+# Terminal 1: map server and host console
+ATLAS_FILE=data/local-demo.atlas bun run server
+# Terminal 2: client, defaults to the local server
 bun run dev
 ```
 
-Open **http://127.0.0.1:5173/**. The client defaults to the direct LAN server
-**http://192.168.0.179:3100/**; map viewing and remote tools need no SSH tunnel.
-Port 3100 must be enabled with the [LAN firewall setup](docs/DEPLOYMENT.md#lan-firewall-setup).
-Change **Client composer → Primary map server**, use a
-`?server=https://maps.example/` link, or set `ATLAS_SERVER_URL` when building/running
-the client. Its catalog, map ranges and server operations all use that address.
-The configured demo host console is **http://192.168.0.179:3100/host**.
-Administration defaults to local-only on other servers; the demo explicitly trusts
-its LAN origin/subnet. `bun run deploy tunnel` remains available for local access.
-
-For a fully local setup, prerequisites are Bun, Rust/Cargo, `wasm-pack`, and the
-`wasm32-unknown-unknown` target:
-
-```sh
-bun install
-rustup target add wasm32-unknown-unknown
-bun run setup
-bun run server                     # server + host console on 3100
-# In another terminal:
-ATLAS_SERVER_URL=http://127.0.0.1:3100 bun run dev
-```
-
-`setup` downloads a dated ~3.3 MiB Liechtenstein PBF and builds the package and WASM.
-`dev` builds the client and serves it on 5173; after frontend edits run
+`dev` rebuilds the client before serving; after frontend edits run
 `bun run build:client` and refresh. `bun run dev:server` watches server code.
-Rust changes require `bun run build:wasm` followed by the relevant browser build.
-Restart the server after replacing a map file. `PORT` and `HOST` apply independently
-to each process; `ATLAS_FILE` and `ATLAS_DATA_DIR` belong to the server only.
+Rust changes require `bun run build:wasm` followed by `bun run build:web`.
+Restart the server after replacing its map file.
+
+Optional configuration is documented in [.env.example](.env.example). To use your
+own package: `ATLAS_FILE=/path/to/map.atlas bun run demo`. If ports are busy, use
+`ATLAS_SERVER_PORT=3200 ATLAS_CLIENT_PORT=5273 bun run demo`.
+`HOST` and `PORT` apply independently when starting apps separately.
+
+For an optional remote server, use **Client composer → Primary map server**, a
+`?server=https://maps.example/` link, or
+`ATLAS_SERVER_URL=https://maps.example/ bun run dev`. Saved browser compositions
+and explicit view URLs retain their chosen servers; use the composer to switch
+back to localhost if you previously used another host.
 
 `dist/client/` is also a complete static website, including workers, WASM, plugins
 and `client-config.json`. It can be hosted independently without Bun, OSM source
-files or server code. See [server/client boundaries and configuration](docs/SERVER-CLIENT.md).
+files or server code. See [server/client configuration](docs/SERVER-CLIENT.md).
 
 ## Vienna Plus and offline drawing
 
@@ -263,7 +283,7 @@ Integer zoom transitions retain the current visible geometry until the next deta
 
 ## Hosting and federation discussion
 
-[Hosting, ContextVM tools and composed maps](docs/HOSTING-DISCUSSION.md) defines the proposed dataset/package/offer/view split, host UI, capability semantics and shared-snapshot Vienna–Bratislava proof. The host console now prepares and serves multiple excerpts with independently selected capabilities. Its three-step console chooses a cached PBF, a covering Geofabrik download, or an existing Atlas map, then an area and capabilities. It has an OpenFreeMap/local Atlas picker, background progress/checkpoints, and a persistent library with dataset deletion. The [Britain starter](http://192.168.0.179:3100/host?area=britain) fills an editable rectangle from the cached planet without starting a build. The worldwide OSM option finds a covering Geofabrik PBF, shows its full download size, downloads/crops it locally with Osmium, and compiles selected capabilities; source and output budgets are independent. Disk-aware sliders and exact inputs set arbitrary source/output budgets. The initial importer uses one covering region, not geographic byte reads from a planet PBF. [Try host preparation](docs/HOST-PREPARATION.md). ContextVM currently serves the configured source; multi-map ContextVM dispatch, announcements and federation remain future work.
+[Hosting, ContextVM tools and composed maps](docs/HOSTING-DISCUSSION.md) defines the proposed dataset/package/offer/view split, host UI, capability semantics and shared-snapshot Vienna–Bratislava proof. The host console now prepares and serves multiple excerpts with independently selected capabilities. Its three-step console chooses a cached PBF, a covering Geofabrik download, or an existing Atlas map, then an area and capabilities. It has an OpenFreeMap/local Atlas picker, background progress/checkpoints, and a persistent library with dataset deletion. The [Britain starter](http://127.0.0.1:3100/host?area=britain) fills an editable rectangle from the cached planet without starting a build. The worldwide OSM option finds a covering Geofabrik PBF, shows its full download size, downloads/crops it locally with Osmium, and compiles selected capabilities; source and output budgets are independent. Disk-aware sliders and exact inputs set arbitrary source/output budgets. The initial importer uses one covering region, not geographic byte reads from a planet PBF. [Try host preparation](docs/HOST-PREPARATION.md). ContextVM currently serves the configured source; multi-map ContextVM dispatch, announcements and federation remain future work.
 
 [Extensible capabilities and plugins](docs/EXTENSIONS.md) develops the open operation registry, plugin SDK, data/build extensions and ContextVM tool projection. The first trusted TypeScript slice is working: a generic **Tools** tab, fingerprinted **Largest lakes** plugin, local/server comparison, GeoJSON selection/export and persisted **Host console** switches. [Try it or author a plugin](docs/PLUGIN-DEMO.md). Run `bun run demo:contextvm` for a real MCP/ContextVM round trip over an isolated local Nostr relay.
 

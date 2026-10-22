@@ -1,5 +1,5 @@
 {
-  "name": "geo-format",
+  "name": "atlas",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "cli": "bun packages/cli/src/index.ts",
     "data:fetch": "bun run cli fetch",
     "data:build": "bun run cli generate",
-    "setup": "bun run data:fetch && bun run data:build && bun run build",
+    "setup": "bun scripts/setup-local.ts",
     "test": "bun test",
     "test:rust": "cargo test --workspace",
     "typecheck": "tsc --noEmit",
@@ -34,7 +34,8 @@
     "verify:partitioned-build": "bun scripts/verify-partitioned-build.ts",
     "verify:graph-resume": "bun scripts/verify-graph-resume.ts",
     "benchmark:compiler": "bun scripts/benchmark-compiler.ts",
-    "verify:source-resume": "bun scripts/verify-source-resume.ts"
+    "verify:source-resume": "bun scripts/verify-source-resume.ts",
+    "demo": "bun scripts/local-demo.ts"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

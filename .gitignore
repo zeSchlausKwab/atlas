@@ -11,3 +11,8 @@ packages/renderer/pkg/*
 
 packages/routing/pkg/*
 !packages/routing/pkg/.gitkeep
+
+# Machine-specific endpoints and credentials
+.env
+.env.*
+!.env.example

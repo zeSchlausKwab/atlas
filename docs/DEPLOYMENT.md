@@ -21,7 +21,7 @@ bun run deploy rollback
 bun run deploy tunnel
 ```
 
-Start the separate client with `bun run dev` and open **http://127.0.0.1:5173/**.
+Start the separate client with `ATLAS_SERVER_URL=http://192.168.0.179:3100 bun run dev` and open **http://127.0.0.1:5173/**.
 It connects directly to **http://192.168.0.179:3100/** after the LAN firewall setup
 below. The server root returns service metadata, not the consumer app. The client
 remains hosted on localhost so browser hashing, persistent caches and service

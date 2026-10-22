@@ -25,8 +25,14 @@ const mapPath = process.env.ATLAS_FILE
       dataDir,
       (await Bun.file(resolve(dataDir, "vienna-plus.atlas")).exists())
         ? "vienna-plus.atlas"
-        : "liechtenstein.atlas",
+        : (await Bun.file(resolve(dataDir, "liechtenstein.atlas")).exists())
+          ? "liechtenstein.atlas"
+          : "local-demo.atlas",
     );
+if (!(await Bun.file(mapPath).exists()))
+  throw new Error(
+    `Missing map: ${mapPath}. Run bun run setup, or set ATLAS_FILE to an existing .atlas file.`,
+  );
 const snapshot = await PackageSource.open(mapPath);
 const etag = snapshot.etag;
 const pluginAssets = await buildPlugins(root);

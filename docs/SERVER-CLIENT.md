@@ -25,14 +25,16 @@ flowchart LR
   Server --> Files["Persistent .atlas library"]
 ```
 
-The client at `http://127.0.0.1:5173` defaults to the mini PC directly at
-`http://192.168.0.179:3100`. Public map delivery and operations use Ethernet; no SSH
-tunnel or client-app API proxy is involved. Enable the LAN-only firewall rule using
-[the prepared installer](DEPLOYMENT.md#lan-firewall-setup).
+The client defaults to `http://127.0.0.1:3100/`. Run `bun run setup` once,
+then `bun run demo` to start both applications locally. The host preview uses the
+installed Atlas map on fresh installations. No remote map server or relay is
+required. Initial dependency/source downloads and the optional OpenFreeMap
+preview require internet access.
 
-`bun run deploy tunnel` remains an optional administration path, exposing the
-mini PC's port 3100 as `http://127.0.0.1:13100` on the Mac. The host console defaults to loopback-only administration. This demo server now
-explicitly permits its trusted LAN origin/subnet; see the configuration below.
+To use the existing LAN deployment instead, explicitly run
+`ATLAS_SERVER_URL=http://192.168.0.179:3100 bun run dev`, or connect to it through
+the client composer. `bun run deploy tunnel` remains an optional administration
+path. See [deployment setup](DEPLOYMENT.md#lan-firewall-setup).
 
 The backend root and `/health` identify `atlas-server`. It serves `/host`, public
 `/catalog`, `/maps/...`, `/api/...` and local administration endpoints. Consumer
@@ -44,7 +46,7 @@ for the backend catalog, API, map and administration paths.
 
 | Setting | Where | Default / use |
 | --- | --- | --- |
-| `ATLAS_SERVER_URL` | Client build or static server | `http://192.168.0.179:3100/`; written to or served as `/client-config.json` |
+| `ATLAS_SERVER_URL` | Client build or static server | `http://127.0.0.1:3100/`; written to or served as `/client-config.json` |
 | `?server=...` | Consumer URL | Overrides configuration; Composer's connection form writes this |
 | `ATLAS_CLIENT_URL` | Map server | `http://127.0.0.1:5173/`; destination for host-library links |
 | `ATLAS_CORS_ORIGINS` | Map server | `*` for public map consumers; optional comma-separated exact HTTP(S) origins |
@@ -82,6 +84,9 @@ TLS or authentication configuration, or publish Nostr announcements.
 
 ## Build and deployment
 
+- `bun run setup` prepares the local sample and builds both apps.
+- `bun run demo` builds browser assets and runs both apps on loopback; Ctrl+C stops both.
+- `ATLAS_SERVER_PORT` / `ATLAS_CLIENT_PORT` override the demo ports together with its URLs.
 - `bun run build:client` creates the standalone static consumer.
 - `bun run dev` builds and serves that consumer; rebuild after frontend edits.
 - `bun run client` serves an already-built consumer.

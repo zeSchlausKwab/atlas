@@ -884,6 +884,13 @@ export async function startBuilder() {
   source = data.source;
   installedScope = { ...source, available: data.available };
   globalScope = data.globalSource;
+  // A fresh installation has an Atlas sample, but no cached planet source.
+  if (!cachedSources.length)
+    document.querySelector<HTMLInputElement>(
+      'input[name="build-source-kind"][value="atlas"]',
+    )!.checked = true;
+  if (sourceKind() === "atlas")
+    el<HTMLSelectElement>("provider").value = "local";
   populateSources();
   initialized = true;
   configureSource();
