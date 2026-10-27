@@ -1,4 +1,5 @@
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
@@ -313,8 +314,61 @@ export function mountChat(
       byteBaseline.current = tools.sourceBytes;
       setDataBytes(0);
     };
+    const exportJson = () =>
+      safely(() => {
+        const dump = agent.exportConversation({
+          model: { provider: "DeepSeek", model: "deepseek-flash" },
+          camera: map.camera,
+          layers: tools.layers.getSnapshot(),
+          sourceBytes: tools.sourceBytes - byteBaseline.current,
+        });
+        const url = URL.createObjectURL(
+          new Blob([JSON.stringify(dump, null, 2)], {
+            type: "application/json",
+          }),
+        );
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `atlas-chat-${dump.exportedAt.replace(/[:.]/g, "-")}.json`;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
     return (
       <AssistantRuntimeProvider runtime={runtime}>
+        {layers.some((l) => l.legend.length) &&
+          map.canvas.parentElement &&
+          createPortal(
+            <details
+              className="chat-map-legend"
+              open
+              aria-label="Map visualization legend"
+            >
+              <summary>
+                Map legend{" "}
+                <span>{layers.filter((l) => l.legend.length).length}</span>
+              </summary>
+              <div>
+                {layers
+                  .filter((l) => l.legend.length)
+                  .map((l) => (
+                    <section key={l.id}>
+                      <strong>{l.title}</strong>
+                      <ul>
+                        {l.legend.map((entry, i) => (
+                          <li key={i}>
+                            <i style={{ background: entry.color }} />
+                            <span>{entry.label}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ))}
+              </div>
+            </details>,
+            map.canvas.parentElement,
+          )}
         <div className="chat-heading">
           <h2>Ask this place.</h2>
           <div className="chat-status">
@@ -393,6 +447,16 @@ export function mountChat(
                   }
                 >
                   Walk across the two maps <span>↗</span>
+                </button>
+                <button
+                  disabled={!available}
+                  onClick={() =>
+                    void agent.send(
+                      "Color the buildings in the analysis area by height: under 10 m, 10–20 m, 20–30 m, and 30 m or more; unknown heights in gray. Add a legend with counts and units. Label only the five tallest buildings with their heights and distinguish estimates. Reuse the cached workspace.",
+                    )
+                  }
+                >
+                  Paint the skyline <span>↗</span>
                 </button>
                 <button
                   disabled={!available}
@@ -498,6 +562,13 @@ export function mountChat(
         </details>
         <div className="chat-footer">
           <span>Cached results stay until you start a new chat.</span>
+          <button
+            disabled={!state.messages.length}
+            onClick={exportJson}
+            title="Download messages, reasoning, tool traces, timings, map context and drawings"
+          >
+            Export JSON ↓
+          </button>
           <button
             disabled={state.running}
             onClick={() => void clear().catch((e) => setProblem(String(e)))}

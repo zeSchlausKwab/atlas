@@ -24,7 +24,9 @@ Vienna test area** shortcut. Try:
 **Thinking** shows the provider's streamed reasoning in a collapsible scroller.
 Each tool card exposes the exact name, arguments, response, duration and source
 bytes. Arguments and responses expand independently. The desktop sidebar is 20%
-wider. **Drawings** lists independently removable layers.
+wider. **Drawings** lists independently removable layers. **Paint the skyline** demonstrates
+height classes, unknown values, labels and a map legend. **Export JSON** downloads
+an evaluation snapshot of the whole current conversation, even during a reply.
 
 **Stop** aborts model requests and tool work, prevents late map changes, and
 terminates a running code worker even during a tight loop. Completed drawings
@@ -71,7 +73,7 @@ Reasoning text is model output, not proof; inspect actual tool responses.
 | `run_code` | Custom synchronous JavaScript over cached result snapshots in QuickJS |
 | `search`, `reverse` | Address/place candidates and nearest retained street; truncation is disclosed |
 | `route`, `isochrone` | Composed walking/cycling/driving computation in WASM; returns geometry references |
-| `map_draw`, `map_view`, `map_undo` | Draw locally resolved results, fit or remove layers |
+| `map_draw`, `map_style`, `map_view`, `map_undo` | Draw and style locally resolved results, restyle retained geometry, fit or remove layers |
 | `workspace_release` | Release pinned rows and invalidate their results |
 
 Workspace IDs and result IDs differ: call `workspace_query` on a workspace first,
@@ -114,6 +116,87 @@ emit({
 return { total: rows.length, tall: tall.length,
   unknown: rows.filter(row => row.heightMeters == null).length };
 ```
+
+## Data visualization
+
+`map_draw` accepts a result reference and a portable, declarative `style`. Geometry
+stays on the device. `run_code` can derive bins, rankings, grids or normalized values
+and emit them as ordinary GeoJSON properties. The renderer reads only explicitly
+bound properties; it does not evaluate style scripts or execute source tags.
+
+```json
+{
+  "result": "geo-result-reference",
+  "title": "Building heights · metres",
+  "color": "#858c88",
+  "style": {
+    "colorProperty": "fill",
+    "labelProperty": "label",
+    "fillOpacity": 0.65,
+    "strokeWidth": 0.8,
+    "labelSize": 13
+  },
+  "legend": [
+    { "label": "Under 20 m", "color": "#37839a" },
+    { "label": "20 m or more", "color": "#be5438" },
+    { "label": "Unknown height", "color": "#858c88" }
+  ]
+}
+```
+
+Each feature supplies a six-digit hex `fill` and optional text/number `label` in
+this example. Missing colors use the layer fallback; missing labels stay hidden.
+Bind `radiusProperty` for proportional markers, or use constant `pointRadius`.
+Radii, line widths and label sizes are screen pixels; fill opacity is 0–1.
+For circles whose **area** represents a quantity, calculate radius proportional
+to its square root. Legends should specify units, class boundaries and unknowns.
+
+For numbered stops, emit Point features with a `stop` property and use
+`{ "labelProperty": "stop", "labelPlacement": "center", "pointRadius": 12 }`.
+Nearby labels try alternative positions with leader lines. Dense labels may be
+hidden until zooming in; geometry is retained. Polygon/line label anchors use
+screen bounds and are not entrance locations. Labels have halos; numbered badges
+have a contrasting rim. These are camera-projected 2D overlays, not 3D extrusions.
+
+`map_style({ layer, style: { fillOpacity: 0.3, labelSize: 15 } })` changes an
+existing drawing with **zero source reads**. Omitted fields remain unchanged;
+styles merge, a null property binding clears it, and a supplied legend replaces
+the previous one (`[]` removes it). Changing the constant color leaves an active
+colorProperty binding in effect; clear that binding to use a uniform color.
+Invalid style/feature values fail atomically before a layer changes.
+
+The collapsible map legend is accessible HTML. A layer can contain many colors
+and labels, so a tour no longer needs one layer per stop. Its style, legend and
+full drawn GeoJSON are included in the conversation export.
+
+## Conversation export for evaluation
+
+**Export JSON** creates a local `atlas-chat-<timestamp>.json` with format
+`atlas-chat-conversation`, version `1`. It contains:
+
+- Session ID, timestamps, current state and cumulative turn/round/tool counts.
+- User/assistant messages and provider-reported reasoning, including partial text.
+- Every recorded tool's ID, name, exact argument string, parsed arguments,
+  response/error, start/end times, duration and latest progress message.
+- Each turn's exact system context and tool schemas, wire messages, per-model-call
+  timing, status and reported token usage. Failed/cancelled calls remain visible.
+- Current dataset identities/capabilities, analysis bounds, camera, source-read
+  count, and all current drawing layers with GeoJSON, style and legend.
+
+For each round, reconstruct the model request using the turn's `system`, its
+`tools`, and the first `inputMessages` of all flattened turn `messages`. History
+is stored once rather than copied for every model round. UI messages separately
+retain partial streams and tool timings. Totals count recorded operations;
+provider usage may be absent for interrupted requests.
+
+The credential proxy's API key and request headers never enter this browser
+snapshot. The export does contain the user's conversation and geographic context.
+It is an evaluation record, not an importable saved session or an offline Atlas
+archive. Undrawn cached source rows are not embedded; result references are local
+to the session. Removed drawings remain described in tool history but are absent
+from the current layer snapshot. Export before reloading or starting a new chat.
+
+See [creative demo prompts and follow-up tools](AI-CHAT-PROMPTS.md).
 
 ## Limits and memory
 
@@ -174,3 +257,17 @@ the camera, not editable source features or true 3D extrusions.
 
 References: [assistant-ui](https://www.assistant-ui.com/docs/runtimes/custom/external-store),
 [DeepSeek thinking and tool history](https://api-docs.deepseek.com/guides/thinking_mode/).
+
+Visualization/export checks additionally cover zero-valued labels, style fallback
+for unknowns, atomic restyling, close-stop label displacement, reconstructable
+model inputs, failed argument strings, cancellation, and detached export snapshots.
+A browser test paints 3,260 real Vienna building footprints, labels the five
+tallest, renders nearby numbered markers and a legend, restyles with provider
+reads blocked, and downloads the complete JSON conversation.
+
+The live DeepSeek visualization check completed two turns and nine tools: one
+3,260-feature thematic layer, five height labels and a count-bearing legend. It
+read 2,030,359 source bytes initially and zero on the opacity/label-size follow-up.
+The exported JSON retained ten model rounds, all nine tool traces and the styled
+geometry. The model corrected an initial code-level geometry lookup on its own;
+this illustrates why keeping intermediate calls and results is useful for evaluation.

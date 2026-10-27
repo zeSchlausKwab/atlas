@@ -19,6 +19,11 @@ import { WorkerRouter } from "../worker-router";
 import { ChatDataClient } from "./data-client";
 import { ChatLayers } from "./layers";
 import { CodeClient } from "./code-client";
+import {
+  colorSchema,
+  drawingStyleSchema,
+  legendSchema,
+} from "../../../../packages/chat/src/drawing-style";
 const ref = { type: "string", minLength: 1, maxLength: 100 };
 const profile = { enum: ["walking", "cycling", "driving"] };
 const text = { type: "string", minLength: 1, maxLength: 120 };
@@ -93,7 +98,7 @@ const specs: Array<[string, string, Record<string, unknown>]> = [
   ],
   [
     "map_draw",
-    "Draw a result reference, or a small authored GeoJSON FeatureCollection. Resolves shapes locally without sending them through the model. Returns a removable layer ID.",
+    "Draw a cached result or authored GeoJSON. Supports per-feature colors, marker radii and text/number labels via style property bindings, plus a legend. For categories/height bands/grids use run_code to emit computed properties (e.g. fill, label, radius), then bind colorProperty/labelProperty/radiusProperty. Use center labels and pointRadius:12 for numbered stops in ONE layer. Sizes are screen pixels. Dense labels declutter; geometry remains. Returns a removable layer ID.",
     objectSchema(
       {
         result: ref,
@@ -103,9 +108,25 @@ const specs: Array<[string, string, Record<string, unknown>]> = [
             "Small authored drawing only. Use result references for source objects.",
         },
         title: { type: "string", minLength: 1, maxLength: 80 },
-        color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        color: colorSchema,
+        style: drawingStyleSchema,
+        legend: legendSchema,
       },
       ["title"],
+    ),
+  ],
+  [
+    "map_style",
+    "Restyle an existing chat layer without fetching or recomputing geometry. Omitted fields stay unchanged; style is merged, null property bindings are removed, legend replaces the previous legend ([] clears it). Use for opacity, sizes, label changes or switching existing property bindings; new computed values need run_code and a new drawing.",
+    objectSchema(
+      {
+        layer: ref,
+        title: { type: "string", minLength: 1, maxLength: 80 },
+        color: colorSchema,
+        style: drawingStyleSchema,
+        legend: legendSchema,
+      },
+      ["layer"],
     ),
   ],
   [
@@ -178,7 +199,15 @@ export class ChatTools implements AgentTools {
       routingAvailable: !!this.router,
       layers: this.layers
         .getSnapshot()
-        .map(({ id, title, count, result }) => ({ id, title, count, result })),
+        .map(({ id, title, count, result, color, style, legend }) => ({
+          id,
+          title,
+          count,
+          result,
+          color,
+          style,
+          legend,
+        })),
       limitations: [
         "Coverage is retained source data, not real-world completeness.",
         "Missing values are unknown.",
@@ -284,7 +313,17 @@ export class ChatTools implements AgentTools {
         ? await this.data.call("__resolve", { result: i.result }, signal)
         : { collection: i.geojson };
       signal.throwIfAborted();
-      result = this.layers.add(saved.collection, i.title, i.color, i.result);
+      result = this.layers.add(
+        saved.collection,
+        i.title,
+        i.color,
+        i.result,
+        i.style,
+        i.legend,
+      );
+    } else if (name === "map_style") {
+      const { layer, ...update } = i;
+      result = this.layers.restyle(layer, update);
     } else if (name === "map_undo") {
       signal.throwIfAborted();
       result = this.layers.undo(i.layer);

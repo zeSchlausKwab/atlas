@@ -3192,3 +3192,18 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 .chat-tool[open] > summary::before { content: "▾"; }
 .chat-tool > summary > span { flex: 1; }
 .chat-tool code { font: 11px var(--mono); }
+
+/* Chat-authored cartography stays readable above the map and works on small screens. */
+.chat-footer { flex-wrap: wrap; }
+.chat-footer > span { flex: 1 1 100%; }
+.chat-footer button { white-space: nowrap; }
+.chat-map-legend { position: absolute; right: 18px; bottom: 62px; z-index: 8; width: min(260px, calc(100% - 36px)); color: var(--ink); background: #faf9f0f2; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 20px #263c3314; font: 12px/1.5 "Avenir Next", sans-serif; }
+.chat-map-legend summary { padding: 12px 14px; color: var(--green); font-weight: 600; cursor: pointer; }
+.chat-map-legend summary > span { float: right; color: var(--muted); }
+.chat-map-legend > div { max-height: min(34vh, 320px); overflow: auto; overscroll-behavior: contain; padding: 0 14px 12px; }
+.chat-map-legend section + section { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+.chat-map-legend strong { font-size: 12px; }
+.chat-map-legend ul { padding: 0; margin: 6px 0 0; list-style: none; }
+.chat-map-legend li { display: flex; align-items: center; gap: 9px; margin: 4px 0; overflow-wrap: anywhere; }
+.chat-map-legend i { width: 12px; height: 12px; flex-shrink: 0; border-radius: 2px; border: 1px solid #00000012; }
+@media (max-width: 800px) { .chat-map-legend { bottom: 80px; width: min(220px, calc(100% - 36px)); } }
