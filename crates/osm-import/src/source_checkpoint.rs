@@ -26,7 +26,7 @@ impl State {
     pub fn open(db: &Connection, source: &str) -> Result<Self, Error> {
         let meta = std::fs::metadata(source)?;
         let identity = serde_json::to_string(&(
-            1,
+            2,
             std::fs::canonicalize(source)?,
             meta.len(),
             meta.modified()?.duration_since(UNIX_EPOCH)?.as_nanos(),

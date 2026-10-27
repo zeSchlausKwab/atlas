@@ -41,7 +41,8 @@ export class OperationHost {
         this.validate(pinned);
         signal.throwIfAborted();
         const started = performance.now(),
-          before = this.engine.reader.bytesRead;
+          before =
+            this.engine.reader.bytesRead + this.engine.workspace.bytesRead;
         const result = await this.engine.registry.invoke(
           pinned,
           pinned.input,
@@ -53,7 +54,10 @@ export class OperationHost {
             side: "server" as const,
             operation: pinned.id,
             computeMs: performance.now() - started,
-            sourceBytes: this.engine.reader.bytesRead - before,
+            sourceBytes:
+              this.engine.reader.bytesRead +
+              this.engine.workspace.bytesRead -
+              before,
             responseBytes: 0,
           },
           provenance: {

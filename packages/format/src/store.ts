@@ -15,6 +15,9 @@ export interface BlockStore {
 const eligible = (key: string) =>
   key.startsWith("tile/") ||
   key.startsWith("labels/") ||
+  key.startsWith("search/") ||
+  key.startsWith("features/") ||
+  key.startsWith("query/") ||
   key.startsWith("index/") ||
   isRoutingCell(key);
 const request = <T>(r: IDBRequest<T>) =>

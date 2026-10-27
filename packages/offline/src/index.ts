@@ -355,6 +355,8 @@ export async function extract(
       features: locations.records.length,
     });
     capabilities.push("location-search");
+    for (const capability of ["address-search", "semantic-locations"])
+      if (m.capabilities.includes(capability)) capabilities.push(capability);
     if (m.capabilities.includes("reverse-street")) {
       const root = (await json("search/streets")) as { schema: string };
       const streets =
@@ -415,6 +417,7 @@ export async function extract(
     routing,
     transport: undefined,
     capabilities,
+    semantics: s.search ? m.semantics : undefined,
     selection: {
       polygon: s.polygon,
       parentSnapshot: m.snapshot,

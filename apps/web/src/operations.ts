@@ -117,7 +117,11 @@ export class OperationSession {
     readonly onExecution: (e: Execution) => void,
     readonly sources?: { id: string; reader: AtlasReader }[],
   ) {
-    this.engine = new AtlasEngine(reader);
+    this.engine = new AtlasEngine(
+      reader,
+      undefined,
+      sources?.length ? sources.map((s) => s.reader) : [reader],
+    );
     this.composed = sources !== undefined;
     if (sources) {
       try {
@@ -154,6 +158,7 @@ export class OperationSession {
       this.pluginAbort?.abort();
       this.workerRouter?.cancel();
       this.transportOwner = undefined;
+      this.engine.workspace.clear();
     }
     this.mode = nextMode;
     if (!this.transportProfiles.includes(this.profile))
@@ -411,6 +416,14 @@ export class OperationSession {
     for (const purpose of d.purposes)
       if (!this.enabled.has(purpose as Capability))
         throw new Error(`${purpose} is disabled in Data settings.`);
+    if (d.id === "workspace_prepare") {
+      const families = (input as { families?: string[] })?.families ?? [];
+      for (const family of families) {
+        const purpose = family === "locations" ? "search" : "features";
+        if (!this.enabled.has(purpose))
+          throw new Error(`${purpose} is disabled in Data settings.`);
+      }
+    }
     if (!d.enabled || !d.available)
       throw new Error("This tool is unavailable or disabled by the host.");
     this.pluginAbort?.abort();
@@ -418,7 +431,7 @@ export class OperationSession {
     const combined = AbortSignal.any([signal, controller.signal]);
     const request = structuredClone(input),
       start = performance.now(),
-      before = this.reader.bytesRead;
+      before = this.reader.bytesRead + this.engine.workspace.bytesRead;
     if (mode === "server") {
       if (!this.remote || this.reader.offline)
         throw new Error("Server tools need a connection.");
@@ -500,7 +513,8 @@ export class OperationSession {
       side: "device",
       operation: d.id,
       computeMs: performance.now() - start,
-      sourceBytes: this.reader.bytesRead - before,
+      sourceBytes:
+        this.reader.bytesRead + this.engine.workspace.bytesRead - before,
       responseBytes: 0,
     };
     this.record(execution);

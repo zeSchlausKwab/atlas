@@ -35,7 +35,10 @@
     "verify:graph-resume": "bun scripts/verify-graph-resume.ts",
     "benchmark:compiler": "bun scripts/benchmark-compiler.ts",
     "verify:source-resume": "bun scripts/verify-source-resume.ts",
-    "demo": "bun scripts/local-demo.ts"
+    "demo": "bun scripts/local-demo.ts",
+    "demo:workspace": "bun scripts/workspace-demo.ts",
+    "benchmark:addresses": "bun scripts/benchmark-addresses.ts",
+    "verify:workspace-build": "bun scripts/verify-workspace-build.ts"
   },
   "dependencies": {
     "@contextvm/sdk": "0.14.3",

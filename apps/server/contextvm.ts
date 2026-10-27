@@ -1,3 +1,4 @@
+import { WorkspaceError } from "../../packages/workspace/src/index";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListToolsRequestSchema,
@@ -34,17 +35,31 @@ export function createMcpServer(host: OperationHost) {
         },
         outputSchema: {
           type: "object" as const,
-          required: ["result", "execution", "provenance"],
+          anyOf: [
+            { required: ["result", "execution", "provenance"] },
+            { required: ["error"] },
+          ],
           properties: {
             result: d.outputSchema,
             execution: { type: "object" },
             provenance: { type: "object" },
+            error: {
+              type: "object",
+              required: ["code", "message", "details"],
+              properties: {
+                code: { type: "string" },
+                message: { type: "string" },
+                details: { type: "object" },
+              },
+            },
           },
         },
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: !["workspace_prepare", "workspace_query"].includes(
+            d.id,
+          ),
         },
         _meta: { "atlas/contract": d },
       })),
@@ -71,6 +86,9 @@ export function createMcpServer(host: OperationHost) {
       };
     } catch (e) {
       return {
+        ...(e instanceof WorkspaceError
+          ? { structuredContent: { error: e.toJSON() } }
+          : {}),
         isError: true,
         content: [
           {

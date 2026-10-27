@@ -28,6 +28,23 @@ pub fn class(tags: &Tags) -> Option<u8> {
         || ["park", "garden", "golf_course"].contains(&tag("leisure"))
     {
         Some(0)
+    } else if [
+        "addr:housenumber",
+        "amenity",
+        "tourism",
+        "shop",
+        "historic",
+        "public_transport",
+        "leisure",
+        "office",
+        "craft",
+        "healthcare",
+    ]
+    .iter()
+    .any(|key| !tag(key).is_empty())
+    {
+        // Retain semantic polygons without introducing a visual map class.
+        Some(8)
     } else {
         None
     }

@@ -83,6 +83,7 @@ export async function partitionTiles(
             );
           const f: Feature = JSON.parse(new TextDecoder().decode(bytes));
           if (
+            Number(f.properties?.class) !== 8 &&
             selection.layers.includes(
               layerForClass(Number(f.properties?.class)),
             )
@@ -161,6 +162,7 @@ export async function partitionTiles(
         throw new Error("One source geometry exceeds the 32 MiB tiling budget");
       const f: Feature = JSON.parse(new TextDecoder().decode(bytes));
       if (
+        Number(f.properties?.class) === 8 ||
         !selection.layers.includes(layerForClass(Number(f.properties?.class)))
       )
         continue;

@@ -10,6 +10,9 @@ import {
   meters,
   nearestOnLine,
   normalize,
+  enrichLocation,
+  explicitAddress,
+  addressText,
 } from "./model";
 const STREET_TYPES = new Set([
   "motorway",
@@ -66,7 +69,7 @@ export function buildGeocoding(
 ): { locations: LocationBlock; streets: StreetBlock } {
   const records = nodes
     .filter((n) => validPosition(n.coordinates))
-    .map((n) => ({ ...n, aliases: [...n.aliases] }));
+    .map((n) => enrichLocation({ ...n, aliases: [...n.aliases] }));
   const places = records.filter(
     (n) =>
       n.kind === "place" &&
@@ -147,13 +150,18 @@ export function buildGeocoding(
           aliases: new Set(street.aliases),
         });
     } else if (
-      name &&
       !tags.highway &&
       (tags.amenity ||
         tags.tourism ||
         tags.shop ||
         tags.historic ||
-        tags.building)
+        (name && tags.building) ||
+        tags["addr:housenumber"] ||
+        tags.leisure ||
+        tags.office ||
+        tags.craft ||
+        tags.healthcare ||
+        tags.public_transport)
     ) {
       const line =
         f.geometry.type === "MultiPolygon"
@@ -174,20 +182,37 @@ export function buildGeocoding(
           (polygons ? areaAnchor(polygons as Position[][][]) : undefined) ??
           (line[0] as Position),
         place = nearby(coordinates);
-      records.push({
-        id,
-        name,
-        aliases: aliases(tags, name),
-        kind: "poi",
-        category:
-          tags.amenity ||
-          tags.tourism ||
-          tags.shop ||
-          tags.historic ||
-          "building",
-        coordinates,
-        context: place ? `near ${place.name}` : undefined,
-      });
+      const address = explicitAddress(tags);
+      records.push(
+        enrichLocation({
+          id,
+          name:
+            name ||
+            (address
+              ? addressText(address)
+              : tags.amenity ||
+                tags.shop ||
+                tags.tourism ||
+                tags.leisure ||
+                tags.office ||
+                tags.craft ||
+                tags.healthcare ||
+                tags.public_transport ||
+                tags.historic ||
+                "Unnamed POI"),
+          aliases: aliases(tags, name),
+          kind: name || !address ? "poi" : "address",
+          tags: { ...tags },
+          category:
+            tags.amenity ||
+            tags.tourism ||
+            tags.shop ||
+            tags.historic ||
+            "building",
+          coordinates,
+          context: place ? `near ${place.name}` : undefined,
+        }),
+      );
     }
   }
   for (const [key, g] of groups) {

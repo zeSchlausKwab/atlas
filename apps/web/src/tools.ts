@@ -22,6 +22,7 @@ export class ToolControls {
   private result?: FeatureResult;
   private exportResult?: unknown;
   private drawing = false;
+  private taskRefs = new Map<string, { workspace?: string; result?: string }>();
   private revision = 0;
   constructor(
     readonly map: WorkspaceMap,
@@ -225,6 +226,13 @@ export class ToolControls {
         input.id = label.htmlFor;
         const defaultValue =
           schema.default ??
+          (key === "workspace"
+            ? this.taskRefs.get(this.operations.mode)?.workspace
+            : key === "result"
+              ? this.taskRefs.get(this.operations.mode)?.result
+              : key === "families" && d.id === "workspace_prepare"
+                ? ["locations"]
+                : undefined) ??
           (key === "bounds"
             ? this.map.viewBounds()
             : key === "point" || key === "start" || key === "end"
@@ -258,7 +266,9 @@ export class ToolControls {
       d.purposes.every((p) => this.operations.enabled.has(p as any));
     el<HTMLButtonElement>("run").disabled = !permitted;
     el<HTMLButtonElement>("compare").disabled =
-      !permitted || !this.operations.remote;
+      !permitted ||
+      !this.operations.remote ||
+      (d.id.startsWith("workspace_") && d.id !== "workspace_catalog");
     this.status(
       !d.enabled
         ? "The host has disabled this operation. Device tools remain independently available."
@@ -322,6 +332,14 @@ export class ToolControls {
       }
       if (revision !== this.revision || controller.signal.aborted) return;
       const result = response.result as any;
+      if (d.id === "workspace_prepare")
+        this.taskRefs.set(originalMode, { workspace: result.workspace });
+      if (d.id === "workspace_query")
+        this.taskRefs.set(originalMode, {
+          workspace: result.workspace,
+          result: result.result,
+        });
+      if (d.id === "workspace_release") this.taskRefs.delete(originalMode);
       this.result =
         result?.type === "FeatureCollection"
           ? { ...result, provenance: response.provenance }

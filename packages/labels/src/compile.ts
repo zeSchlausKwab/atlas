@@ -33,7 +33,14 @@ export function buildLabels(
       bucket(
         Math.min(n - 1, Math.max(0, Math.floor(p[0] * n))),
         Math.min(n - 1, Math.max(0, Math.floor(p[1] * n))),
-      ).pois.push(poi);
+      ).pois.push({
+        id: poi.id,
+        name: poi.name,
+        aliases: poi.aliases,
+        kind: "poi",
+        category: poi.category,
+        coordinates: poi.coordinates,
+      });
     }
   for (const road of streets.streets) {
     if (!road.name) continue;

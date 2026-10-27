@@ -3,7 +3,10 @@ export interface Location {
   id: string;
   name: string;
   aliases: string[];
-  kind: "place" | "street" | "poi" | "peak";
+  kind: "place" | "street" | "poi" | "peak" | "address";
+  /** Explicit OSM tags; missing properties remain unknown. */
+  tags?: Record<string, string>;
+  address?: Address;
   category: string;
   coordinates: Position;
   context?: string;
@@ -97,3 +100,49 @@ export function parseCoordinates(text: string): Position {
     throw new Error("Use longitude within ±180° and latitude within ±85°.");
   return position;
 }
+
+export interface Address {
+  houseNumber: string;
+  street?: string;
+  place?: string;
+  city?: string;
+  postcode?: string;
+  country?: string;
+  source: "osm-explicit";
+}
+export function explicitAddress(
+  tags: Record<string, string>,
+): Address | undefined {
+  const houseNumber = tags["addr:housenumber"]?.trim();
+  if (!houseNumber) return;
+  return {
+    houseNumber,
+    source: "osm-explicit",
+    ...Object.fromEntries(
+      ["street", "place", "city", "postcode", "country"].flatMap((key) =>
+        tags[`addr:${key}`]?.trim() ? [[key, tags[`addr:${key}`].trim()]] : [],
+      ),
+    ),
+  };
+}
+export function addressText(a: Address) {
+  return [a.street ?? a.place, a.houseNumber, a.postcode, a.city, a.country]
+    .filter(Boolean)
+    .join(" ");
+}
+export function enrichLocation(record: Location): Location {
+  const address = record.tags ? explicitAddress(record.tags) : record.address;
+  return address
+    ? {
+        ...record,
+        address,
+        aliases: [...new Set([...record.aliases, addressText(address)])],
+      }
+    : record;
+}
+export const SEMANTIC_RETENTION = {
+  version: 1 as const,
+  addresses: "osm-explicit" as const,
+  poiTags: true,
+  administrativeHierarchy: false,
+};

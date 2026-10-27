@@ -166,6 +166,8 @@ export class AtlasReader {
       cacheBudgets?: Partial<typeof DEFAULT_DECODED_BUDGETS>;
       /** Estimated retained descriptor bytes, excluding the immutable root. */
       directoryBudget?: number;
+      /** Called before cached or fetched block decoding; scoped consumers enforce resource budgets here. */
+      beforeBlock?: (block: Block) => void;
     } = {},
   ) {
     this.cache = new DecodedCache(options.cacheBudgets);
@@ -180,6 +182,23 @@ export class AtlasReader {
         for (const b of blocks) this.byKey.delete(b.key);
       },
     );
+  }
+  /** An independent session pinned to this verified index; changing its policy never changes the map reader. */
+  fork(options: AtlasReader["options"] = {}, source: ByteSource = this.source) {
+    this.active();
+    const reader = new AtlasReader(source, undefined, {
+      ...this.options,
+      ...options,
+    });
+    reader.index = structuredClone(this.index);
+    reader.byKey = new Map(reader.index.blocks.map((b) => [b.key, b]));
+    for (const [key, blocks] of this.pages) {
+      for (const b of blocks) reader.byKey.set(b.key, b);
+      reader.pages.set(key, blocks);
+    }
+    for (const [key, bytes] of this.cache) reader.cache.set(key, bytes);
+    reader.offline = this.offline;
+    return reader;
   }
   get memory() {
     return { decoded: this.cache.stats, directory: this.pages.stats };
@@ -444,6 +463,7 @@ export class AtlasReader {
   }
   private async readBlock(block: Block): Promise<Uint8Array> {
     this.active();
+    this.options.beforeBlock?.(block);
     const key = block.key;
     const start = this.index.header.payloadOffset + block.offset;
     const cached = this.cache.get(key);

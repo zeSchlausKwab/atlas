@@ -20,6 +20,7 @@ import { mkdir, rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileHash } from "./source";
+import { SEMANTIC_RETENTION } from "../../geocoding/src/model";
 import { buildGeocoding } from "../../geocoding/src/compile";
 import type { Location } from "../../geocoding/src/model";
 import geojsonvt from "geojson-vt";
@@ -374,10 +375,11 @@ async function main() {
     // scales, a half-pixel tolerance avoids shipping invisible vertex detail.
     const displayFeatures = imported.geojson.features.filter(
       (f) =>
-        !selected ||
-        selected.layers.includes(
-          layerForClass(Number(f.properties?.class ?? 3)),
-        ),
+        Number(f.properties?.class) !== 8 &&
+        (!selected ||
+          selected.layers.includes(
+            layerForClass(Number(f.properties?.class ?? 3)),
+          )),
     );
     const makeIndex = (overview: boolean) =>
       geojsonvt(
@@ -605,18 +607,21 @@ async function main() {
           : []),
         ...(!selected ? ["walking-routing"] : []),
         ...(transport ? ["transport-routing"] : []),
-        ...(!selected || selected.search ? ["location-search"] : []),
+        ...(!selected || selected.search
+          ? ["location-search", "address-search", "semantic-locations"]
+          : []),
         ...(!selected || selected.reverse ? ["reverse-street"] : []),
         ...(!selected || selected.peaks ? ["peak-query"] : []),
         ...(!flags["no-source-features"] ? ["source-feature-export"] : []),
       ],
+      semantics: !selected || selected.search ? SEMANTIC_RETENTION : undefined,
       limitations: [
         "Experimental schema; no compatibility guarantee",
         `${imported.assembledRelations} area relations assembled; ${imported.skippedRelations} incomplete or unsupported area relations skipped. Nested multipolygon members are expanded with composed inner/outer roles.`,
         "Transport-v1: estimated times and common via-node turn restrictions; unsupported conditional/complex turn restrictions exclude incoming ways. No traffic, elevation costs, transit schedules or country-specific defaults",
         "Routing graph covers retained ways in the source extract; no route does not prove real-world disconnection",
         "Conditional access and unsupported access values are excluded; nearest-segment snapping is limited to 150 m",
-        "Location search and nearest-street lookup only; no house-number address matching or authoritative administrative hierarchy",
+        "Explicit OSM house-number addresses; no interpolation, inferred missing addresses or authoritative administrative hierarchy",
         "Reverse lookup covers retained street types within 1 km; a nearest street is not a postal address or an accessible route",
         "No imagery, terrain, or Hashtree transport yet",
         `${imported.skippedWays} ways skipped because referenced nodes were missing`,

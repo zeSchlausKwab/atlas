@@ -130,6 +130,12 @@ export interface Manifest {
   };
   areas?: { assembledRelations: number; skippedRelations: number };
   featureCountKind?: "tile-records";
+  semantics?: {
+    version: 1;
+    addresses: "osm-explicit";
+    poiTags: boolean;
+    administrativeHierarchy: boolean;
+  };
   selection?: {
     polygon: [number, number][];
     parentSnapshot: string;

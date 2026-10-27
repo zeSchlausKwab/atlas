@@ -1,3 +1,5 @@
+import { AtlasWorkspace } from "../../workspace/src/index";
+import { workspaceTools } from "../../workspace/src/tools";
 import { OperationRegistry } from "./registry";
 import { builtins } from "./builtins";
 import { operationCatalog } from "../../format/src/capabilities";
@@ -25,20 +27,23 @@ export class AtlasEngine {
     return operationCatalog(this.reader.index.manifest);
   }
   readonly registry: OperationRegistry;
+  readonly workspace: AtlasWorkspace;
   readonly router: AtlasRouter;
   readonly geocoder: AtlasGeocoder;
   readonly features: AtlasFeatures;
   constructor(
     readonly reader: AtlasReader,
     initialize?: () => Promise<unknown>,
+    workspaceSources: readonly AtlasReader[] = [reader],
   ) {
+    this.workspace = new AtlasWorkspace(workspaceSources);
     this.router = new AtlasRouter(reader, initialize);
     this.geocoder = new AtlasGeocoder(reader);
     this.features = new AtlasFeatures(reader);
     this.registry = new OperationRegistry(reader.index.manifest, {
       scanFeatures: (q, signal) => this.features.scan(q, signal),
     });
-    for (const plugin of builtins(this))
+    for (const plugin of [...builtins(this), ...workspaceTools(this.workspace)])
       this.registry.register(plugin, "atlas-core-1");
   }
   route(start: Position, end: Position, profile: TransportMode = "walking") {
@@ -68,6 +73,7 @@ export class AtlasEngine {
   }
   destroy() {
     this.router.destroy();
+    this.workspace.clear();
   }
 }
 export class RemoteOperations {

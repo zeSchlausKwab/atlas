@@ -1,3 +1,4 @@
+import { WorkspaceError } from "../../packages/workspace/src/index";
 import { AtlasEngine } from "../../packages/operations/src/index";
 import { OperationHost } from "../../packages/operations/src/host";
 import { OperationError } from "../../packages/operations/src/registry";
@@ -44,6 +45,11 @@ export function createApiHandler(
       };
       host.validate(body);
     } catch (e) {
+      if (e instanceof WorkspaceError)
+        return Response.json(
+          { error: e.message, code: e.code, details: e.details },
+          { status: 422, headers },
+        );
       return error(
         e instanceof Error ? e.message : "Invalid request",
         e instanceof OperationError ? e.status : 400,
@@ -63,6 +69,11 @@ export function createApiHandler(
         });
       return Response.json(response, { headers });
     } catch (e) {
+      if (e instanceof WorkspaceError)
+        return Response.json(
+          { error: e.message, code: e.code, details: e.details },
+          { status: 422, headers },
+        );
       return error(
         e instanceof Error ? e.message : "Operation failed",
         e instanceof OperationError

@@ -4,6 +4,13 @@ An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → by
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. The consumer uses its own WASM renderer and reads Atlas files directly. The host preview uses OpenFreeMap; source preparation supports regional or cached planet PBFs.
 
+## Task-local AI tools
+
+Prepare a bounded data workspace across selected maps, then query it locally with
+reusable result references and explicit coverage. New imports include explicit OSM
+house-number addresses and queryable POI tags. Run `bun run demo:workspace` for a
+small, fully local two-file proof; see [AI workspaces](docs/AI-WORKSPACES.md).
+
 ## Run locally
 
 No remote Atlas server, account, SSH access, Nostr relay or planet download is

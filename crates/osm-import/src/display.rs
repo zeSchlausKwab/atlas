@@ -223,6 +223,41 @@ pub(crate) fn parse_elevation(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn location(tags: &[(&str, &str)]) -> Value {
+        let node = osmpbfreader::Node {
+            id: osmpbfreader::NodeId(42),
+            decimicro_lat: 480000000,
+            decimicro_lon: 160000000,
+            tags: tags
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect(),
+        };
+        node_location(&node).unwrap()
+    }
+    #[test]
+    fn semantic_nodes_keep_explicit_addresses_and_unnamed_pois() {
+        let address = location(&[
+            ("addr:housenumber", "12B"),
+            ("addr:street", "Testgasse"),
+            ("addr:city", "Wien"),
+        ]);
+        assert_eq!(address["kind"], "address");
+        assert_eq!(address["name"], "Testgasse 12B Wien");
+        assert_eq!(address["tags"]["addr:housenumber"], "12B");
+        let poi = location(&[("amenity", "cafe"), ("wheelchair", "yes")]);
+        assert_eq!(poi["kind"], "poi");
+        assert_eq!(poi["tags"]["wheelchair"], "yes");
+        assert!(poi["tags"].get("opening_hours").is_none());
+    }
+    #[test]
+    fn semantic_only_polygons_survive_without_a_display_class() {
+        let tags = [("amenity", "school")]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        assert_eq!(areas::class(&tags), Some(8));
+    }
     #[test]
     fn elevations_are_numeric_and_unit_aware() {
         assert_eq!(parse_elevation("2599 m"), Some(2599.0));
@@ -233,44 +268,77 @@ mod tests {
 }
 
 pub(crate) fn node_location(node: &osmpbfreader::Node) -> Option<Value> {
-    let position = [node.lon(), node.lat()];
-    if let Some(name) = node.tags.get("name").filter(|name| !name.trim().is_empty()) {
-        let tag = |key: &str| node.tags.get(key).map(|s| s.as_str()).unwrap_or("");
-        let kind = if !tag("place").is_empty() {
-            "place"
-        } else if tag("natural") == "peak" {
-            "peak"
-        } else {
-            "poi"
-        };
-        let category = [
-            "place",
-            "amenity",
-            "tourism",
-            "shop",
-            "historic",
-            "public_transport",
-            "natural",
-        ]
-        .iter()
-        .map(|key| tag(key))
-        .find(|v| !v.is_empty());
-        if let Some(category) = category {
-            let mut aliases: Vec<&str> = ["alt_name", "short_name", "name:de", "name:en"]
-                .iter()
-                .flat_map(|key| tag(key).split(';'))
-                .map(str::trim)
-                .filter(|s| !s.is_empty() && *s != name.as_str())
-                .collect();
-            aliases.sort();
-            aliases.dedup();
-            return Some(
-                json!({"id":format!("node/{}",node.id.0),"name":name.trim(),"aliases":aliases,"kind":kind,"category":category,"coordinates":position}),
-            );
-        }
+    let tag = |key: &str| node.tags.get(key).map(|s| s.as_str()).unwrap_or("").trim();
+    let number = tag("addr:housenumber");
+    let category = [
+        "place",
+        "amenity",
+        "tourism",
+        "shop",
+        "historic",
+        "public_transport",
+        "leisure",
+        "office",
+        "craft",
+        "healthcare",
+        "emergency",
+    ]
+    .iter()
+    .map(|key| tag(key))
+    .find(|v| !v.is_empty())
+    .or_else(|| (tag("natural") == "peak").then_some("peak"))
+    .or_else(|| {
+        ["station", "halt", "tram_stop", "subway_entrance"]
+            .contains(&tag("railway"))
+            .then(|| tag("railway"))
+    })
+    .or_else(|| (tag("highway") == "bus_stop").then_some("bus_stop"));
+    if category.is_none() && number.is_empty() {
+        return None;
     }
-
-    None
+    let kind = if !tag("place").is_empty() {
+        "place"
+    } else if tag("natural") == "peak" {
+        "peak"
+    } else if category.is_none() {
+        "address"
+    } else {
+        "poi"
+    };
+    let address = [
+        tag("addr:street"),
+        tag("addr:place"),
+        number,
+        tag("addr:postcode"),
+        tag("addr:city"),
+        tag("addr:country"),
+    ]
+    .into_iter()
+    .filter(|v| !v.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ");
+    let name = if !tag("name").is_empty() {
+        tag("name")
+    } else if !number.is_empty() {
+        &address
+    } else {
+        category.unwrap_or("Unnamed POI")
+    };
+    let mut aliases: Vec<&str> = ["alt_name", "short_name", "name:de", "name:en"]
+        .iter()
+        .flat_map(|key| tag(key).split(';'))
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != name)
+        .collect();
+    if !number.is_empty() && address != name {
+        aliases.push(&address);
+    }
+    aliases.sort();
+    aliases.dedup();
+    Some(
+        json!({"id":format!("node/{}",node.id.0),"name":name,"aliases":aliases,
+        "kind":kind,"category":category.unwrap_or("address"),"coordinates":[node.lon(),node.lat()], "tags":node.tags}),
+    )
 }
 
 pub(crate) fn way_feature(

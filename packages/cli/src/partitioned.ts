@@ -19,6 +19,7 @@ import {
   type TransportMode,
 } from "../../format/src/index";
 import { buildingHeight } from "../../format/src/heights";
+import { SEMANTIC_RETENTION } from "../../geocoding/src/model";
 import { SourceGeocoding } from "../../geocoding/src/source-build";
 import { PagedSearchBuilder } from "../../geocoding/src/paged-build";
 import { buildLabels, partitionLabels } from "../../labels/src/compile";
@@ -31,7 +32,7 @@ import type { PackageSelection } from "../../provisioning/src/selection";
 import { runCompiler } from "../../provisioning/src/process";
 import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const VERSION = 3;
+const VERSION = 4;
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 interface State {
   identity: string;
@@ -117,7 +118,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
     limitations: [
       "Prototype compiler: bounded source batches and spatial graph/search pages.",
       "Estimated transport costs; common via-node restrictions. Unsupported conditional/complex restrictions exclude incoming ways.",
-      "Search covers retained OSM names and nearby streets, not house-number addresses. Very broad text queries have a bounded candidate budget.",
+      "Search includes explicit OSM house-number addresses; no interpolation or authoritative administrative hierarchy. Very broad text queries have a bounded candidate budget.",
       "Whole display tiles and extractable source objects can extend outside the polygon; routing uses padded whole cells.",
     ],
     selection: {
@@ -538,8 +539,15 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : undefined,
                   featureZoom: s.featureKinds.length ? FEATURE_ZOOM : undefined,
                   featureKinds: s.featureKinds,
+                  semantics: s.search ? SEMANTIC_RETENTION : undefined,
                   capabilities: [
-                    ...(s.search ? ["location-search"] : []),
+                    ...(s.search
+                      ? [
+                          "location-search",
+                          "address-search",
+                          "semantic-locations",
+                        ]
+                      : []),
                     ...(s.reverse ? ["reverse-street"] : []),
                     ...(s.placeNames || s.streetNames || s.pois
                       ? ["map-labels"]

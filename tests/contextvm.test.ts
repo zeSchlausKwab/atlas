@@ -50,6 +50,36 @@ test("real ContextVM SDK discovers and invokes the registry over an isolated Nos
       await f.engine.registry.invoke(f.ref, { polygon }),
     );
     expect(wire.provenance.implementation).toBe(f.ref.implementation);
+    expect(list.tools.map((t) => t.name)).toContain("workspace_prepare");
+    const task = async (name: string, input: unknown) =>
+      client.callTool({
+        name,
+        arguments: {
+          snapshot: f.reader.index.manifest.snapshot,
+          implementation: "atlas-core-1",
+          input,
+        },
+      });
+    const prepared = await task("workspace_prepare", {
+      bounds: [9, 47, 9.2, 47.2],
+      families: ["water"],
+    });
+    expect(prepared.isError).not.toBe(true);
+    const workspace = (prepared.structuredContent as any).result.workspace;
+    const queried = await task("workspace_query", {
+      workspace,
+      where: [{ field: "tags.water", op: "eq", value: "lake" }],
+    });
+    expect(queried.isError).not.toBe(true);
+    expect((queried.structuredContent as any).result.count).toBe(2);
+    const absent = await task("workspace_prepare", {
+      bounds: [9, 47, 9.2, 47.2],
+      families: ["locations"],
+    });
+    expect(absent.isError).toBe(true);
+    expect((absent.structuredContent as any).error.code).toBe(
+      "unsupported_data",
+    );
     f.engine.registry.setEnabled(f.ref.id, false);
     expect((await client.listTools()).tools.map((t) => t.name)).not.toContain(
       f.ref.id,

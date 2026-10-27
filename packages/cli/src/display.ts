@@ -1,6 +1,7 @@
 /** Visual detail is independent of the full-resolution query/routing data. */
 export function displayMinZoom(properties: Record<string, unknown>): number {
   const cls = Number(properties.class);
+  if (cls === 8) return Infinity;
   const tags = properties.tags as Record<string, string> | undefined;
   const highway = tags?.highway ?? "";
   if (cls === 2) return 13;

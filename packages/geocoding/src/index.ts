@@ -70,7 +70,29 @@ export function locations(bytes: Uint8Array) {
         typeof r.name === "string" &&
         r.name.length > 0 &&
         r.name.length <= 1000 &&
-        ["place", "street", "poi", "peak"].includes(r.kind) &&
+        ["place", "street", "poi", "peak", "address"].includes(r.kind) &&
+        (r.tags === undefined ||
+          (r.tags !== null &&
+            typeof r.tags === "object" &&
+            !Array.isArray(r.tags) &&
+            Object.entries(r.tags).every(
+              ([k, v]) =>
+                k.length <= 256 && typeof v === "string" && v.length <= 10000,
+            ))) &&
+        (r.address === undefined ||
+          (r.address !== null &&
+            typeof r.address === "object" &&
+            r.address.source === "osm-explicit" &&
+            typeof r.address.houseNumber === "string" &&
+            r.address.houseNumber.length > 0 &&
+            r.address.houseNumber.length <= 1000 &&
+            ["street", "place", "city", "postcode", "country"].every((key) => {
+              const value = r.address![key as keyof typeof r.address];
+              return (
+                value === undefined ||
+                (typeof value === "string" && value.length <= 1000)
+              );
+            }))) &&
         validPosition(r.coordinates) &&
         (r.context === undefined || typeof r.context === "string"),
     )
@@ -122,6 +144,13 @@ export function rankLocations(names: ReturnType<typeof locations>, q: string) {
   const tokens = q.split(" ");
   return names
     .flatMap(({ record, names, context }) => {
+      // Address numbers are exact tokens: "12" must not match "123".
+      const words = `${names.join(" ")} ${context}`.split(" ");
+      if (
+        record.address &&
+        tokens.some((t) => /^\d+[\p{L}]?$/u.test(t) && !words.includes(t))
+      )
+        return [];
       let score = Infinity;
       for (const name of names) {
         const words = name.split(" ");
