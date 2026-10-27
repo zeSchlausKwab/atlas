@@ -242,3 +242,11 @@ fixture reproduces that failure with 600 individually valid UTF-8 address record
 in one cell; it also verifies dense reverse-street cells, name lookup, workspace
 counts and a rebuilt excerpt. A resume retains the completed source database,
 extracted PBF and routing archive, then recomputes the failed semantic stage.
+
+Version 4 checkpoints can resume under compiler version 5 only when the complete
+old fingerprint matches the current extracted-PBF hash and exact selection. The
+migration retains `source.sqlite`, `transport.atlas` and `display.atlas` receipts,
+invalidates semantic packing (v5 introduced paged selectable features), backs up
+the old receipt as `partitioned.json.v4`, and atomically publishes the new one.
+Every retained file still passes its normal size/SHA-256 verification before use.
+Other versions, changed input and changed recipes remain rejected.

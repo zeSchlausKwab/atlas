@@ -1,3 +1,4 @@
+import { reconcilePartitionedState } from "./partitioned-state";
 import { compilerWorkers } from "../../compiler/src/settings";
 import { Database } from "bun:sqlite";
 import { mkdir, rm, statfs } from "node:fs/promises";
@@ -32,12 +33,7 @@ import type { PackageSelection } from "../../provisioning/src/selection";
 import { runCompiler } from "../../provisioning/src/process";
 import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const VERSION = 5;
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
-interface State {
-  identity: string;
-  completed: Record<string, { size: number; sha256: string }>;
-}
 export interface PartitionedOptions {
   input: string;
   output: string;
@@ -61,32 +57,38 @@ export async function compilePartitioned(o: PartitionedOptions) {
   await mkdir(o.work, { recursive: true });
   await mkdir(dirname(o.output), { recursive: true });
   const inputHash = await fileHash(
-      o.input,
-      (completed, total) =>
-        progress(
-          "ATLAS_PROGRESS " +
-            JSON.stringify({
-              stage: "input-verification",
-              message: "Verifying compiler input",
-              completed,
-              total,
-              unit: "bytes",
-            }),
-        ),
-      signal,
-    ),
-    identity = new Bun.CryptoHasher("sha256")
-      .update(JSON.stringify({ version: VERSION, inputHash, selection: s }))
-      .digest("hex");
+    o.input,
+    (completed, total) =>
+      progress(
+        "ATLAS_PROGRESS " +
+          JSON.stringify({
+            stage: "input-verification",
+            message: "Verifying compiler input",
+            completed,
+            total,
+            unit: "bytes",
+          }),
+      ),
+    signal,
+  );
   const statePath = join(o.work, "partitioned.json"),
     old = Bun.file(statePath);
-  const state: State = (await old.exists())
-    ? await old.json()
-    : { identity, completed: {} };
-  if (state.identity !== identity)
-    throw new Error(
-      "Partitioned checkpoints belong to another source, recipe or compiler",
+  const previous = (await old.exists()) ? await old.json() : undefined;
+  const { state, migrated } = reconcilePartitionedState(previous, inputHash, s);
+  const identity = state.identity;
+  if (migrated) {
+    // Keep the old receipt for diagnostics; publish the migration atomically.
+    const backup = statePath + ".v4";
+    if (!(await Bun.file(backup).exists()))
+      await Bun.write(backup, JSON.stringify(previous));
+    await Bun.write(statePath + ".part", JSON.stringify(state));
+    await import("node:fs/promises").then((fs) =>
+      fs.rename(statePath + ".part", statePath),
     );
+    progress(
+      "Upgraded v4 checkpoints: retaining source, routing and display; rebuilding semantic pages",
+    );
+  }
   let failure: Error | undefined;
   const space = async () => {
     const fs = await statfs(o.work);
