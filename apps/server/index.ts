@@ -99,6 +99,9 @@ const server = Bun.serve({
   hostname: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3100),
   maxRequestBodySize: 16384,
+  // Opening a large hosted package verifies its hash before responding.
+  // Bun's 10-second default otherwise drops that first request mid-verification.
+  idleTimeout: 120,
   async fetch(request, bunServer) {
     return publicCors(request, origins, async () => {
       const path = new URL(request.url).pathname;
