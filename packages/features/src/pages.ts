@@ -142,7 +142,11 @@ export async function featureBlock(reader: AtlasReader, key: string) {
   if (!b) throw new Error(`Missing feature page ${key}`);
   return b;
 }
-/** Exact intersection. Attribute-only reads fetch geometry only for boundary candidates. */
+/** Exact intersection. Attribute-only reads fetch geometry only for boundary candidates.
+ * exactId resolves a search anchor's source object, including when the anchor falls
+ * in a polygon hole. Bounds still prune index pages; they are not an area filter
+ * in that mode. The caller must provide a source-backed ID, never a name match.
+ */
 export async function* readFeatureCell(
   reader: AtlasReader,
   key: string,
@@ -150,6 +154,7 @@ export async function* readFeatureCell(
   includeGeometry = true,
   signal?: AbortSignal,
   budget?: { remaining: number },
+  exactId?: string,
 ): AsyncGenerator<FeatureRecord> {
   signal?.throwIfAborted();
   const read = async (key: string) => {
@@ -169,7 +174,11 @@ export async function* readFeatureCell(
   if (data?.schema === "features-v1") {
     for (const f of decodeFeatures(root)) {
       signal?.throwIfAborted();
-      if (!overlaps(f.bbox, bounds) || !geometryIntersects(f.geometry, bounds))
+      if (
+        exactId
+          ? f.id !== exactId
+          : !overlaps(f.bbox, bounds) || !geometryIntersects(f.geometry, bounds)
+      )
         continue;
       if (includeGeometry) yield f;
       else {
@@ -189,7 +198,9 @@ export async function* readFeatureCell(
       rows.some((r) => !contains(page.bounds, r.bbox))
     )
       throw new Error("Feature page metadata mismatch");
-    const candidates = rows.filter((r) => overlaps(r.bbox, bounds));
+    const candidates = rows.filter((r) =>
+      exactId ? r.id === exactId : overlaps(r.bbox, bounds),
+    );
     if (!candidates.length) continue;
     let geometries: Map<string, Geometry> | undefined;
     if (includeGeometry || candidates.some((r) => !contains(bounds, r.bbox))) {
@@ -225,6 +236,7 @@ export async function* readFeatureCell(
       signal?.throwIfAborted();
       const geometry = geometries?.get(row.id);
       if (
+        !exactId &&
         !contains(bounds, row.bbox) &&
         (!geometry || !geometryIntersects(geometry, bounds))
       )

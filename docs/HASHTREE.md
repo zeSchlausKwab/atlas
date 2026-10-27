@@ -153,3 +153,12 @@ search/explicit addresses, reverse streets, peaks and all retained feature kinds
 The 48 GiB per-file ceiling is a maximum, not an expected size. The source build
 must finish before the two final datasets are available. Cross-map acceptance
 checks still need to run on the completed large files.
+
+On 27 October the parent completed at 8,555,145,272 bytes. The two child preparations
+are coordinated by the user service `atlas-central-pair-20261027` on the LAN server;
+its state is under `/home/nixuser/atlas/shared/central-pair-run-20261027/`.
+West/east are prepared sequentially through the normal host API, then Hashtree
+indexed. This avoids another PBF download and keeps each final excerpt a complete
+standalone `.atlas` file. The running web server is not restarted by this coordinator.
+Use the saved state for final IDs; do not substitute the parent for a child in
+cross-map acceptance tests. No existing datasets are deleted by this process.

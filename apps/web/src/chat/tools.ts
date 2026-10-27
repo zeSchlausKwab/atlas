@@ -52,15 +52,31 @@ const specs: Array<[string, string, Record<string, unknown>]> = [
   ],
   [
     "map_context",
-    "Get current viewport, selected analysis bounds, compatible datasets, drawing layers and cache state.",
+    "Get available datasets, cache state and camera/reference bounds. Camera bounds and an optional pinned rectangle are context only; they do not restrict named-place requests.",
     objectSchema({}),
   ],
   [
     "search",
-    "Search explicit addresses or places across selected maps. Returns bounded candidates and point result reference. Resolve ambiguous names before routing.",
+    "Search addresses or named places across ALL selected maps regardless of viewport or pinned rectangle. Optional tag (e.g. leisure=park) filters BEFORE ranking/page limits so transit stops and addresses cannot crowd out parks. Returns ranked candidates with context/tags and a point result reference. Points are not place boundaries: use place_geometry for a chosen footprint; clarify ambiguous matches.",
     objectSchema(
-      { query: text, limit: { type: "integer", minimum: 1, maximum: 10 } },
+      {
+        query: text,
+        tag: objectSchema({ key: text, value: text }, ["key", "value"]),
+        limit: { type: "integer", minimum: 1, maximum: 10 },
+      },
       ["query"],
+    ),
+  ],
+  [
+    "place_geometry",
+    "Retrieve the retained source footprint of ONE chosen search candidate, independent of the camera. Pass the search result reference and its exact OSM id; family defaults to land (parks). Returns full geometry, bounds and boundaryAvailable. Use its polygon with spatial_filter after preparing its bounds. An empty result means no retained polygon was found at the search anchor, not absence in the real world. Never substitute a guessed circle/box; ask for clarification if necessary.",
+    objectSchema(
+      {
+        result: ref,
+        id: text,
+        family: { enum: ["land", "water", "buildings"] },
+      },
+      ["result", "id"],
     ),
   ],
   [
@@ -197,6 +213,13 @@ export class ChatTools implements AgentTools {
   context() {
     return {
       execution: "device",
+      geographicScope: {
+        default: "user-request-or-established-task",
+        cameraIsFilter: false,
+        pinnedAreaUse:
+          "Only when the request refers to here/analysis area/selected area; named places override it.",
+        missingScope: "Ask the user which place or area.",
+      },
       viewportBounds: this.map.viewBounds(),
       selectedBounds: this.selectedBounds ?? null,
       zoom: this.map.zoom,
@@ -213,17 +236,15 @@ export class ChatTools implements AgentTools {
         featureSchema: r.index.manifest.featureSchema ?? 1,
       })),
       routingAvailable: !!this.router,
-      recipes: this.recipes
-        .getSnapshot()
-        .map((r) => ({
-          recipe: r.recipe,
-          title: r.definition.title,
-          parameters: r.parameters,
-          result: r.result,
-          count: r.count,
-          running: r.running,
-          error: r.error,
-        })),
+      recipes: this.recipes.getSnapshot().map((r) => ({
+        recipe: r.recipe,
+        title: r.definition.title,
+        parameters: r.parameters,
+        result: r.result,
+        count: r.count,
+        running: r.running,
+        error: r.error,
+      })),
       charts: this.insights
         .getSnapshot()
         .charts.map(({ id, title, kind, result }) => ({
@@ -304,6 +325,7 @@ export class ChatTools implements AgentTools {
       for (const f of i.families)
         requirePurpose(f === "locations" ? "search" : "features");
     if (name === "search" || name === "reverse") requirePurpose("search");
+    if (name === "place_geometry") requirePurpose("features");
     if (name === "route" || name === "isochrone") requirePurpose("routing");
     let result: any;
     if (name === "map_context") result = this.context();

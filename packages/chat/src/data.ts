@@ -12,7 +12,9 @@ import type {
 import { AtlasReader } from "../../format/src/reader";
 import { AtlasWorkspace } from "../../workspace/src/index";
 import { workspaceTools } from "../../workspace/src/tools";
-import { AtlasGeocoder } from "../../geocoding/src/index";
+import { AtlasGeocoder, rankLocations } from "../../geocoding/src/index";
+import { normalize, type Location } from "../../geocoding/src/model";
+import { placeGeometry } from "./places";
 import { OperationRegistry } from "../../operations/src/registry";
 import { GeometryResults, validateDrawing, type ResultMeta } from "./geometry";
 import {
@@ -411,8 +413,32 @@ export class ChatDataRuntime {
         region,
       });
       if (regionMeta) value = { ...value, region: regionMeta };
+    } else if (name === "place_geometry") {
+      const saved = this.results.get(input.result);
+      if (saved.meta.operation !== "search")
+        throw new Error("Pass a search result reference to place_geometry");
+      const chosen = saved.collection.features.find((f) => f.id === input.id);
+      if (!chosen || chosen.geometry.type !== "Point")
+        throw new Error("Choose an ID returned by this search");
+      const located = await placeGeometry(
+        this.readers,
+        chosen,
+        input.family ?? "land",
+        signal,
+        progress,
+      );
+      value = {
+        ...this.results.save(located.collection, {
+          operation: "place_geometry",
+          input: saved.meta,
+          sourceId: input.id,
+          scope: "retained-source-data",
+          ...located.meta,
+        }),
+        ...located.meta,
+      };
     } else if (name === "search") {
-      const matches = new Map<string, Record<string, unknown>>();
+      const matches = new Map<string, Location>();
       const sourceMatchCounts: Array<{
         snapshot: string;
         total: number;
@@ -432,6 +458,7 @@ export class ChatDataRuntime {
         const found = await this.geocoders[i]!.search(
           input.query,
           input.limit ?? 8,
+          input.tag ? { tag: input.tag } : undefined,
         );
         sourceMatchCounts.push({
           snapshot: m.snapshot,
@@ -439,34 +466,48 @@ export class ChatDataRuntime {
           returned: found.matches.length,
         });
         for (const r of found.matches) {
-          const row = {
-            id: r.id,
-            name: r.name,
-            coordinates: r.coordinates,
-            kind: r.kind,
-            category: r.category,
-            address: r.address ?? null,
-          };
           const old = matches.get(r.id);
-          if (old && JSON.stringify(old) !== JSON.stringify(row))
+          if (old && canonical(old) !== canonical(r))
             throw new Error("Overlapping search sources disagree on " + r.id);
-          matches.set(r.id, row);
+          matches.set(r.id, r);
         }
       }
       if (!searched.length)
         throw new Error("Selected maps have no search data");
-      const rows = [...matches.values()].slice(0, input.limit ?? 8);
+      // Rank the union, rather than filling the final page from the first map.
+      const rows = rankLocations(
+        [...matches.values()].map((record) => ({
+          record,
+          names: [record.name, ...record.aliases].map(normalize),
+          context: normalize(record.context ?? ""),
+        })),
+        normalize(input.query),
+      )
+        .slice(0, input.limit ?? 8)
+        .map(({ record: r }) => ({
+          id: r.id,
+          name: r.name,
+          coordinates: r.coordinates,
+          kind: r.kind,
+          category: r.category,
+          address: r.address ?? null,
+          context: r.context ?? null,
+          tags: r.tags ?? {},
+        }));
       const fc: FeatureCollection = {
         type: "FeatureCollection",
         features: rows.map((r) => ({
           type: "Feature",
           id: r.id as string,
           geometry: { type: "Point", coordinates: r.coordinates as number[] },
-          properties: { name: r.name },
+          properties: { ...r, coordinates: undefined },
         })),
       };
       value = {
         ...this.results.save(fc, {
+          operation: "search",
+          query: input.query,
+          tag: input.tag ?? null,
           snapshots: searched,
           scope: "retained-source-data",
           omittedSources: omitted,
@@ -476,7 +517,7 @@ export class ChatDataRuntime {
         truncated:
           matches.size > rows.length ||
           sourceMatchCounts.some((s) => s.total > s.returned),
-        note: "Bounded candidates per source; not a globally exhaustive ranking.",
+        note: "Candidates ranked across all selected maps, independent of the viewport. Points and their bounds are not place boundaries. Use place_geometry for retained footprints. Candidates may be truncated by source indexes.",
       };
     } else if (name === "reverse") {
       let nearest: any = null;

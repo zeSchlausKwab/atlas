@@ -33,14 +33,18 @@ test("paged search preserves ranking, aliases, substrings, context and nearest s
     20 * 1024 ** 2,
   ).open();
   try {
-    const records: Location[] = Array.from({ length: 1200 }, (_, i) => ({
-      id: `node/${i + 1}`,
-      name: `Museum ${i}`,
-      aliases: [],
-      kind: "poi",
-      category: "museum",
-      coordinates: [i % 2 ? 16 : 8, 48],
-    }));
+    const records: Location[] = Array.from(
+      { length: 1200 },
+      (_, i): Location => ({
+        id: `node/${i + 1}`,
+        name: `Museum ${i}`,
+        aliases: [],
+        kind: "poi",
+        category: "museum",
+        tags: i === 1199 ? { leisure: "park" } : { tourism: "museum" },
+        coordinates: [i % 2 ? 16 : 8, 48],
+      }),
+    );
     records.push(
       {
         id: "node/5000",
@@ -127,6 +131,15 @@ test("paged search preserves ranking, aliases, substrings, context and nearest s
       expect(a.matches).toEqual(b.matches);
       expect(a.total).toBe(b.total);
     }
+    const filteredPaged = await paged.search("museum", 1, {
+      tag: { key: "leisure", value: "park" },
+    });
+    const filteredLegacy = await legacy.search("museum", 1, {
+      tag: { key: "leisure", value: "park" },
+    });
+    expect(filteredPaged.matches).toEqual(filteredLegacy.matches);
+    expect(filteredPaged.matches[0]?.id).toBe("node/1200");
+    expect(filteredPaged.total).toBe(1);
     expect(reads.some((k) => k.startsWith("search/streets"))).toBe(false);
     expect(reads.some((k) => k.startsWith("search/locations-data"))).toBe(
       false,

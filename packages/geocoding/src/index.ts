@@ -178,6 +178,18 @@ export function rankLocations(names: ReturnType<typeof locations>, q: string) {
         a.record.id.localeCompare(b.record.id),
     );
 }
+export interface SearchFilter {
+  tag?: { key: string; value: string };
+}
+const filterLocations = (
+  ranked: ReturnType<typeof rankLocations>,
+  filter?: SearchFilter,
+) =>
+  filter?.tag
+    ? ranked.filter(
+        ({ record }) => record.tags?.[filter.tag!.key] === filter.tag!.value,
+      )
+    : ranked;
 export class AtlasGeocoder {
   private catalog?: SearchCatalog;
   private pagedStreets = false;
@@ -200,7 +212,11 @@ export class AtlasGeocoder {
       );
     return this.reader.block(key);
   }
-  async search(query: string, limit = 8): Promise<SearchResult> {
+  async search(
+    query: string,
+    limit = 8,
+    filter?: SearchFilter,
+  ): Promise<SearchResult> {
     const q = normalize(query),
       snapshot = this.reader.index.manifest.snapshot,
       cached = !!this.names || this.reader.cache.has("search/locations");
@@ -228,8 +244,8 @@ export class AtlasGeocoder {
         });
       await this.pendingNames;
     }
-    if (this.catalog) return this.searchPaged(q, limit);
-    const ranked = rankLocations(this.names!, q);
+    if (this.catalog) return this.searchPaged(q, limit, filter);
+    const ranked = filterLocations(rankLocations(this.names!, q), filter);
     return {
       matches: ranked.slice(0, limit).map((r) => r.record),
       total: ranked.length,
@@ -238,7 +254,11 @@ export class AtlasGeocoder {
       scope: SCOPE,
     };
   }
-  private async searchPaged(q: string, limit: number): Promise<SearchResult> {
+  private async searchPaged(
+    q: string,
+    limit: number,
+    filter?: SearchFilter,
+  ): Promise<SearchResult> {
     const before = this.reader.requests;
     let readBytes = 0;
     const json = async (key: string) => {
@@ -385,7 +405,7 @@ export class AtlasGeocoder {
         throw new Error("Search record page length mismatch");
       for (const id of ids) matches.push(records[id]!);
     }
-    const ranked = rankLocations(matches, q);
+    const ranked = filterLocations(rankLocations(matches, q), filter);
     return {
       matches: ranked.slice(0, limit).map((r) => r.record),
       total: ranked.length,

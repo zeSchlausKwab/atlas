@@ -9,6 +9,7 @@ import { PagedFeatureWriter } from "../packages/features/src/paged-build";
 import { AtlasFeatures, type Bounds } from "../packages/features/src/index";
 import { AtlasWorkspace } from "../packages/workspace/src/index";
 import {
+  readFeatureCell,
   featureCatalog,
   featureJSON,
   MAX_FEATURE_PAGE,
@@ -339,4 +340,54 @@ test("cache-only, cancellation, malformed catalogs and read budgets fail explici
     ),
   ).toThrow();
   f.reader.dispose();
+});
+
+test("exact source ID lookup resolves an anchor in a polygon hole in legacy and paged cells", async () => {
+  const outer = [
+    [16.38, 48.2],
+    [16.39, 48.2],
+    [16.39, 48.21],
+    [16.38, 48.21],
+    [16.38, 48.2],
+  ];
+  const hole = [
+    [16.384, 48.204],
+    [16.384, 48.206],
+    [16.386, 48.206],
+    [16.386, 48.204],
+    [16.384, 48.204],
+  ];
+  const shape: FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { id: "way/88", class: 2, tags: { building: "yes" } },
+        geometry: { type: "Polygon", coordinates: [outer, hole] },
+      },
+    ],
+  };
+  for (const legacy of [false, true]) {
+    const { reader, blocks } = await fixture(shape, legacy);
+    const cell = blocks.find((b) =>
+      b.key.startsWith("features/buildings/"),
+    )!.key;
+    const seed: Bounds = [16.3849, 48.2049, 16.3851, 48.2051];
+    const normal = [];
+    for await (const f of readFeatureCell(reader, cell, seed)) normal.push(f);
+    expect(normal).toHaveLength(0);
+    const byId = [];
+    for await (const f of readFeatureCell(
+      reader,
+      cell,
+      seed,
+      true,
+      undefined,
+      undefined,
+      "way/88",
+    ))
+      byId.push(f);
+    expect(byId).toHaveLength(1);
+    expect(byId[0]!.geometry).toEqual(shape.features[0]!.geometry);
+  }
 });

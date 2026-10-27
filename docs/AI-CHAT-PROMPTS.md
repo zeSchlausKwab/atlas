@@ -1,6 +1,10 @@
 # Maps as an analysis canvas
 
-Use a neighborhood-sized pinned analysis area initially. These prompts use the
+Name the geography in your request. The camera is only used when you explicitly
+say “here” or “current view”; an optional pinned rectangle supplies “analysis area”.
+For the older area-based examples below, prefix the prompt with “In the current
+view” or “In the pinned analysis area”. Without that or an established task, the
+assistant should ask where to look. These prompts use the
 existing local workspace, routing, code and drawing tools. Results depend on the
 features retained by the selected Atlas files; missing tags are unknown, not zero.
 
@@ -46,7 +50,7 @@ units and whether the claimed drawing matches the exported geometry and style.
 
 ## Spatial tools: more than buildings
 
-These prompts now use reusable local spatial tools. Pin a neighborhood first;
+These prompts use reusable local spatial tools. Explicitly name your study area;
 select the relevant feature families and retain geometry. Labels/colors can use
 cached `run_code` output, while the spatial calculations use the typed tools.
 
@@ -167,3 +171,59 @@ data when comparing proximity near its edges.
 
 Recipes remain local to the current chat; exported JSON records definitions and run
 history. See [Analysis recipes](ANALYSIS-RECIPES.md) for contracts and verification.
+
+## Places beyond the camera and interesting polygons
+
+Keep the camera over Schönbrunn to test independence from the viewport.
+
+1. **Park furniture, elsewhere.** “Find all mapped benches inside Stadtpark in
+   Vienna, excluding Stadtpark-Kinderpark. Resolve the mapped boundary, draw it
+   and the benches, and keep my camera unchanged.”
+2. **Clarify instead of guessing.** “Find all park benches in Prater park.”
+   The rehearsal search lacks a full green-Prater polygon: expect a question or
+   an explicit coverage limitation, not substitution of subway entrances or the
+   amusement park. “Find cafés” alone should also trigger a location question.
+3. **A park halo.** Follow up after panning elsewhere: “Around the same park,
+   draw 0–100 m, 100–250 m and 250–500 m exterior rings. Cut out the park itself
+   and all mapped water. Color and label the rings, check exclusions, and make
+   the outer distance adjustable.”
+4. **Two parks, shared neighborhood.** “Find Augarten and Stadtpark in Vienna.
+   Buffer each by 800 m. Draw the overlap in violet and each exclusive area in
+   its own color. Label their areas in hectares. These are geometric distances,
+   not walking catchments. Ask if either boundary is ambiguous.”
+5. **Islands of seating.** “Inside Augarten in Vienna, union 25 m circles around
+   mapped benches, clip to the park and subtract them from its footprint.
+   Show the remaining polygons as areas farther than 25 m from a mapped bench.
+   Preserve holes; absence of mapped benches does not establish no seating.”
+6. **The city between two walks.** “Resolve Wien Hauptbahnhof and Praterstern.
+   Create 15-minute walking areas around both, draw their shared reachable area
+   and the areas unique to each, and label square kilometres. Clarify which
+   station origin to use when there are several candidates.”
+7. **A river necklace.** “For the Donaukanal between Schwedenplatz and Urania,
+   resolve both landmarks and the retained water geometry. Draw bank-distance
+   bands at 50, 150 and 300 m, remove water interiors and color nearby buildings
+   by band. Explain how you bounded the study reach; ask if it is ambiguous.”
+8. **Contours instead of cells.** “Within a 1 km buffer of MuseumsQuartier,
+   create a smoothed café-density field with 150 m bandwidth and 25 m sampling.
+   Draw three filled contour bands, explain their units and sampling, and keep
+   the input cafés as small points. Do not call it population or footfall.”
+9. **A cross-map ribbon.** “Draw a cycling route from Hainburg an der Donau to
+   Bratislava. Resolve the endpoints, then draw a 200 m corridor around the
+   route and extract mapped water intersecting it. Show the source-map seam and
+   report which packages supplied the route. Ask which endpoints if needed.”
+10. **Geometry that follows a question.** “Compare 500 m neighborhoods around
+    the main railway stations in Brno and Bratislava. Cut railway footprints
+    out of each circle, color retained buildings by known/estimated/unknown
+    height, and compare the remaining polygon areas. Keep both results for a
+    follow-up; do not use the current viewport.”
+11. **A deliberate boundary with holes.** “Inside Stadtpark's mapped footprint,
+    subtract 20 m buffers around all mapped paths and 10 m buffers around its
+    water. Draw and label the remaining connected areas. This is a geometry
+    exercise, not a claim that those areas are accessible or suitable.”
+12. **Cache and scope test.** After any polygon analysis, pan far away and ask:
+    “Keep the same study area. Increase the outer distance by 100 m, preserve
+    the exclusions and show what changed. Report newly fetched map bytes.”
+
+Use the larger Central Europe pair for Brno/Bratislava/Hainburg. Explicit “near”
+radii in these prompts are deliberate; if you omit a radius, the assistant can
+ask. Counts are retained OSM observations, not proof of real-world completeness.

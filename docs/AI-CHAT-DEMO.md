@@ -11,11 +11,14 @@ Put `DS_API_KEY` in your ignored `.env` or the client process environment, then 
 process after setting the key or changing the proxy. Frontend edits need
 `bun run build:client` and a refresh. The map host does not need the API key.
 
-Select compatible maps in **Composer**, then open **Chat → Analysis area** and
-select a rectangle or pin the visible view. The Vienna rehearsal has a **Use
-Vienna test area** shortcut. Try:
+Select compatible maps in **Composer**, then name the place you want to study in
+**Chat**. The camera is not an analysis boundary. **Reference area** optionally pins
+a rectangle for requests that explicitly say “here”, “analysis area” or “selected
+area”. “Current view” always means the live camera; a named place overrides both.
+Follow-ups keep the established task area after panning. With no stated place and
+no prior task, the assistant asks which area to use. Try:
 
-- “Count buildings at least 20 metres tall. Separate unknown heights and level
+- “In the current view, count buildings at least 20 metres tall. Separate unknown heights and level
   estimates, and highlight the matches.”
 - “Use JavaScript on the cached results to group building heights into 10 m bands.”
 - “Now show only those at least 30 metres, using the cached data.”
@@ -71,7 +74,8 @@ Reasoning text is model output, not proof; inspect actual tool responses.
 | `workspace_query`, `workspace_result` | Typed cached filters and projected result pages; geometry stays local |
 | `analyze` | Count, numeric statistics including unknowns, grouping, or polygon intersection |
 | `run_code` | Custom synchronous JavaScript over cached result snapshots in QuickJS |
-| `search`, `reverse` | Address/place candidates and nearest retained street; truncation is disclosed |
+| `search`, `reverse` | Address/place candidates ranked across all selected maps, optional OSM tag filter before limits, and nearest retained street |
+| `place_geometry` | Full retained polygon for a chosen search ID; source footprint, never an invented place extent |
 | `route`, `isochrone` | Composed walking/cycling/driving computation in WASM; returns geometry references |
 | `map_draw`, `map_style`, `map_view`, `map_undo` | Draw and style locally resolved results, restyle retained geometry, fit or remove layers |
 | `workspace_release` | Release pinned rows and invalidate their results |
@@ -309,3 +313,47 @@ accuracy limits and the Danube regression. Reload the client to load the new cat
 Native styles, explicit exclusion masks, result checks and adjustable cached recipes
 are available; see [Analysis recipes](ANALYSIS-RECIPES.md). Running tool progress is
 visible when collapsed, and the shared session byte meter includes AI package reads.
+
+## Named-area resolution
+
+Search results contain points, tags and nearby-place context. `search` can filter
+by `tag: {key: "leisure", value: "park"}` before candidate limits, avoiding station
+and address results crowding out a named park. Composed candidates are ranked as
+one union rather than preferring whichever archive was listed first.
+
+`place_geometry({result: searchResult, id: chosenId, family: "land"})` reads the
+source feature at its retained search anchor and returns a polygon reference and
+its bounding envelope. Prepare that envelope, then use `spatial_filter` against
+the polygon for “inside”; its holes remain excluded. The lookup only accepts an
+ID from the referenced search result. Point-only places or absent source geometry
+return `boundaryAvailable:false`, not an approximate circle. Administrative
+boundaries are not generally retained. Ask for clarification or an agreed study
+area when the named boundary is unavailable.
+
+No archive rebuild or full-file download is needed for these harness changes.
+All spatial computation remains on the device; source pages are fetched as needed.
+
+### Scope acceptance, 27 October 2026
+
+Live DeepSeek/browser tests on the two Vienna rehearsal files, camera at
+Schönbrunn, verified:
+
+- “Find cafés” asked for an area with no tool calls or map reads.
+- Named Stadtpark analysis resolved the park polygon and counted 289 retained
+  benches inside it while keeping the camera at Schönbrunn.
+- After panning, a follow-up used the same cached park for a 100 m exterior band,
+  with zero new source reads and no new workspace preparation.
+- With a reference rectangle pinned and the camera moved, explicit “current
+  view” used the new viewport bounds, not the pin. Partial source coverage was
+  disclosed. There were no browser page errors in these runs.
+
+These are observed model runs, not a guarantee of every model response. Source
+lookup/ranking, filter-before-limit behavior and hole handling have deterministic
+regressions. The full green-Prater boundary was absent from the rehearsal search
+results; the tool must report missing geometry rather than fabricate a boundary.
+
+Large pair acceptance: `bun scripts/verify-large-pair.ts WEST_URL EAST_URL`
+checks z0–16/capabilities/shared graph identity, a buildings workspace across the
+seam, cached follow-up reads, explicit addresses, named polygons and checked
+proximity bands, then all three routing profiles from Vienna to Bratislava. It
+uses HTTP ranges and requires both prepared child files, not the shared parent.

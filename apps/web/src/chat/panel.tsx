@@ -216,7 +216,9 @@ export function mountChat(
     const recipeRunning = recipes.some((r) => r.running);
     const [status, setStatus] = useState("Checking DeepSeek…"),
       [available, setAvailable] = useState(false);
-    const [scope, setScope] = useState("Current map view"),
+    const [scope, setScope] = useState(
+        "Name a place in your request, or explicitly ask about here.",
+      ),
       [picking, setPicking] = useState(false);
     const [problem, setProblem] = useState("");
     const [inspecting, setInspecting] = useState(false);
@@ -411,7 +413,7 @@ export function mountChat(
             map.canvas.parentElement,
           )}
         <div className="chat-heading">
-          <h2>Ask this place.</h2>
+          <h2>Ask the map.</h2>
           <div className="chat-status">
             <span className="chat-device">● Tools on this device</span>
             <span>{status}</span>
@@ -419,23 +421,29 @@ export function mountChat(
         </div>
         <details className="chat-scope" ref={areaDetails}>
           <summary>
-            Analysis area{" "}
+            Reference area{" "}
             <span>
-              {tools.selectedBounds ? "Pinned rectangle" : "Current view"}
+              {tools.selectedBounds ? "Pinned for ‘here’" : "From your request"}
             </span>
           </summary>
           <div className="chat-row">
-            <strong>Analysis area</strong>
+            <strong>Optional rectangle</strong>
             <button
               disabled={state.running || recipeRunning}
               onClick={() => {
                 tools.selectedBounds = undefined;
-                setScope("Current map view");
+                setScope(
+                  "Name a place in your request, or explicitly ask about here.",
+                );
               }}
             >
-              Use live view
+              Clear reference
             </button>
           </div>
+          <p>
+            Named places can be anywhere in the selected maps. This rectangle is
+            used only when you ask about “here” or the “analysis area”.
+          </p>
           <p className="chat-coordinates">
             {picking ? "Click two corners on the map…" : scope}
           </p>
@@ -469,6 +477,16 @@ export function mountChat(
             {!state.messages.length && (
               <div className="chat-welcome">
                 <p className="eyebrow">TRY A QUESTION</p>
+                <button
+                  disabled={!available}
+                  onClick={() =>
+                    void agent.send(
+                      "Find all mapped park benches inside Stadtpark in Vienna, excluding Stadtpark-Kinderpark, regardless of my current view. Resolve its mapped park boundary first; ask me if the place is ambiguous. Show the park and benches and report coverage.",
+                    )
+                  }
+                >
+                  Benches in Stadtpark, from anywhere <span>↗</span>
+                </button>
                 <button
                   disabled={!available}
                   onClick={() =>
@@ -558,7 +576,7 @@ export function mountChat(
           <ComposerPrimitive.Root className="chat-composer">
             <ComposerPrimitive.Input
               aria-label="Message Atlas"
-              placeholder="Ask about this area…"
+              placeholder="Ask about a place or this view…"
               rows={2}
             />
             <div className="chat-row">
