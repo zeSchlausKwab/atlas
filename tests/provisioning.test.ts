@@ -1,3 +1,4 @@
+import { AtlasGeocoder } from "../packages/geocoding/src/index";
 import geojsonvt from "geojson-vt";
 import { encodeTile } from "../packages/cli/src/tile-codec";
 import { encodePackage } from "../packages/format/src/writer";
@@ -368,10 +369,17 @@ test("display preparation removes unselected layers and clips independently sele
       [9.05, 47.02],
     ]);
     expect(
-      JSON.parse(
-        new TextDecoder().decode(await out.block("search/locations")),
-      ).records.map((r: any) => r.name),
+      (await new AtlasGeocoder(out).search("Inside")).matches.map(
+        (r) => r.name,
+      ),
     ).toEqual(["Inside"]);
+    expect((await new AtlasGeocoder(out).search("Outside")).matches).toEqual(
+      [],
+    );
+    expect(
+      JSON.parse(new TextDecoder().decode(await out.block("search/locations")))
+        .schema,
+    ).toBe("locations-paged-v1");
     expect(reader.bytesByLayer.roads).toBe(0);
     expect(reader.bytesByPurpose.features).toBe(0);
   } finally {

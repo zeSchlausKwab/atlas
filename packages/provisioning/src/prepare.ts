@@ -1,10 +1,14 @@
 import { selectedPeaks } from "../../format/src/peaks";
 import { selectedPlaces } from "../../labels/src/place-pages";
-import { selectedSearch } from "../../geocoding/src/selection";
+import { rm } from "node:fs/promises";
+import { PagedSearchBuilder } from "../../geocoding/src/paged-build";
+import { STREET_ZOOM } from "../../geocoding/src/paging";
+import { locations, streets } from "../../geocoding/src/index";
 import booleanIntersects from "@turf/boolean-intersects";
 import type { Polygon as GeoPolygon } from "geojson";
 import { DiskWriter } from "../../cli/src/disk-writer";
 import {
+  project,
   type Manifest,
   type Peak,
   type TransportMetadata,
@@ -14,11 +18,7 @@ import { splitTile, tileRecords } from "../../format/src/tiles";
 import { decodeFeatures } from "../../features/src/index";
 import { decodeLabels } from "../../labels/src/index";
 import { decodePlaces, encodePlaces } from "../../labels/src/places";
-import type {
-  LocationBlock,
-  StreetBlock,
-  Position,
-} from "../../geocoding/src/model";
+import type { Position } from "../../geocoding/src/model";
 import {
   bounds,
   inside,
@@ -99,6 +99,52 @@ export async function preparePackage(
       turns: 0,
     };
   let peakCount = 0;
+  let search: PagedSearchBuilder | undefined;
+  const searchPath = output + ".search.sqlite";
+  const rebuildSearch = async (
+    kind: "locations" | "streets",
+    rootBytes: Uint8Array,
+  ) => {
+    if (!search) {
+      await rm(searchPath, { force: true });
+      await rm(searchPath + "-journal", { force: true });
+      search = new PagedSearchBuilder(searchPath);
+    }
+    const root = JSON.parse(new TextDecoder().decode(rootBytes));
+    const box = bounds(s.polygon),
+      n = 2 ** STREET_ZOOM;
+    const nw = project(box[0], box[3]),
+      se = project(box[2], box[1]);
+    const pages =
+      root.schema === `${kind}-paged-v1`
+        ? await reader.spatial(
+            `search/${kind}-data`,
+            STREET_ZOOM,
+            Math.max(0, Math.floor(nw[0] * n)),
+            Math.min(n - 1, Math.floor(se[0] * n)),
+            Math.max(0, Math.floor(nw[1] * n)),
+            Math.min(n - 1, Math.floor(se[1] * n)),
+          )
+        : [{ key: `search/${kind}` }];
+    for (const page of pages) {
+      signal.throwIfAborted();
+      const bytes =
+        page.key === `search/${kind}`
+          ? rootBytes
+          : await reader.block(page.key);
+      if (kind === "locations") {
+        for (const { record } of locations(bytes))
+          if (inside(record.coordinates, s.polygon)) search.addLocation(record);
+      } else {
+        // The disk-backed primary key deduplicates streets repeated in adjacent cells.
+        for (const { street } of streets(bytes))
+          for (const coordinates of clipLine(street.coordinates, s.polygon))
+            search.addStreet({ ...street, coordinates });
+      }
+      reader.cache.delete(page.key);
+      emit(`Selecting ${page.key}`);
+    }
+  };
   try {
     for (const b of plan.blocks) {
       signal.throwIfAborted();
@@ -166,31 +212,12 @@ export async function preparePackage(
         features = values.length;
         outputBytes = encode({ schema: "features-v1", features: values });
         keep = !!features;
-      } else if (b.key === "search/locations") {
-        const root = JSON.parse(new TextDecoder().decode(bytes));
-        const data: LocationBlock =
-          root.schema === "locations-paged-v1"
-            ? await selectedSearch(reader, s.polygon, "locations")
-            : root;
-        data.records = data.records.filter((v) =>
-          inside(v.coordinates, s.polygon),
+      } else if (b.key === "search/locations" || b.key === "search/streets") {
+        await rebuildSearch(
+          b.key === "search/locations" ? "locations" : "streets",
+          bytes,
         );
-        features = data.records.length;
-        outputBytes = encode(data);
-      } else if (b.key === "search/streets") {
-        const root = JSON.parse(new TextDecoder().decode(bytes));
-        const data: StreetBlock =
-          root.schema === "streets-paged-v1"
-            ? await selectedSearch(reader, s.polygon, "streets")
-            : root;
-        data.streets = data.streets.flatMap((v) =>
-          clipLine(v.coordinates, s.polygon).map((coordinates) => ({
-            ...v,
-            coordinates,
-          })),
-        );
-        features = data.streets.length;
-        outputBytes = encode(data);
+        keep = false;
       } else if (b.key === "query/peaks") {
         const values = await selectedPeaks(reader, s.polygon);
         peakCount = features = values.length;
@@ -220,6 +247,13 @@ export async function preparePackage(
       p.writtenBytes = writer.bytesWritten;
     }
     signal.throwIfAborted();
+    if (search)
+      await search.finish(
+        writer,
+        { search: s.search, reverse: s.reverse },
+        signal,
+        emit,
+      );
     const keys = new Set(writer.blocks.map((b) => b.key)),
       caps: string[] = [],
       layers = s.layers.filter((l) =>
@@ -232,7 +266,12 @@ export async function preparePackage(
     if (layers.includes("buildings") && m.buildingHeights)
       caps.push("building-heights");
     if ([...keys].some((k) => k.startsWith("labels/"))) caps.push("map-labels");
-    if (keys.has("search/locations")) caps.push("location-search");
+    if (keys.has("search/locations")) {
+      caps.push("location-search");
+      if (m.semantics) caps.push("semantic-locations");
+      if (m.semantics?.addresses === "osm-explicit")
+        caps.push("address-search");
+    }
     if (keys.has("search/streets")) caps.push("reverse-street");
     if (keys.has("query/peaks")) caps.push("peak-query");
     if (featureKinds.length) caps.push("feature-extraction");
@@ -268,6 +307,7 @@ export async function preparePackage(
           }
         : undefined,
       capabilities: caps,
+      semantics: s.search ? m.semantics : undefined,
       selection: {
         polygon: s.polygon,
         parentSnapshot: m.snapshot,
@@ -294,5 +334,7 @@ export async function preparePackage(
   } catch (e) {
     await writer.abort();
     throw e;
+  } finally {
+    await search?.dispose();
   }
 }
