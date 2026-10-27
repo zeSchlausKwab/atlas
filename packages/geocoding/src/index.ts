@@ -1,3 +1,4 @@
+import { readSearchCell } from "./cell-pages";
 import { project } from "../../format/src/index";
 import {
   ordinalKey,
@@ -448,13 +449,19 @@ export class AtlasGeocoder {
         Math.max(0, Math.floor(a[1] * n)),
         Math.min(n - 1, Math.floor(b[1] * n)),
       )) {
-        for (const r of streets(await this.reader.block(cell.key))) {
-          const identity = r.street.id + JSON.stringify(r.street.coordinates);
-          if (!seen.has(identity)) {
-            seen.add(identity);
-            roads.push(r);
+        for await (const bytes of readSearchCell(
+          this.reader,
+          cell.key,
+          "streets",
+          [point[0] - dx, point[1] - dy, point[0] + dx, point[1] + dy],
+        ))
+          for (const r of streets(bytes)) {
+            const identity = r.street.id + JSON.stringify(r.street.coordinates);
+            if (!seen.has(identity)) {
+              seen.add(identity);
+              roads.push(r);
+            }
           }
-        }
       }
       roads.sort((a, b) =>
         a.street.id < b.street.id ? -1 : a.street.id > b.street.id ? 1 : 0,

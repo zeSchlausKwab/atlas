@@ -212,3 +212,33 @@ found and 119 GiB was available after failure. A separate regression reproduces
 corruption when an unjournaled transaction spills updates and fails; journaled
 transactions fix that demonstrated recovery defect. This hardening is not proof
 that the historical failure's root cause has been identified.
+
+## Dense spatial search cells
+
+A z14 cell can contain more than 4 MiB of valid address or street records. It now
+splits into payload pages targeting 256 KiB, with a hard 4 MiB ceiling per page.
+A single record larger than 4 MiB still fails explicitly with its ID. Byte
+accounting includes the JSON wrapper, commas and UTF-8 encoding. There is no
+record dropping or increase to the archive reader's payload limit.
+
+Small cells retain their inline `locations-v1` / `streets-v1` payload. Larger
+`search/locations-data/14/x/y` and `search/streets-data/14/x/y` blocks contain
+`{schema:"locations-cell-paged-v1"|"streets-cell-paged-v1",pages:[{key,bounds,count}]}`.
+The referenced payloads are `search/location-pages/16/x/y` and
+`search/street-pages/16/x/y`, using the ordinal address mapping above. Their
+contents use the original record schemas. Coordinates in page bounds are WGS84.
+All directories and payloads remain inside the same `.atlas` file. Updated
+readers support both old inline and paged spatial cells; older consumers must
+update before reading newly compiled dense cells.
+
+Workspace preparation, reverse geocoding and Atlas-to-Atlas extraction share the
+page reader. It validates references and counts, skips pages with disjoint bounds,
+and follows normal reader cache, integrity and transfer-budget handling. Text
+search continues using the existing independent name index.
+
+The Central Europe build on 2026-10-27 failed at 35,228 / 40,424 location cells
+because the previous compiler treated one cell as one payload. The regression
+fixture reproduces that failure with 600 individually valid UTF-8 address records
+in one cell; it also verifies dense reverse-street cells, name lookup, workspace
+counts and a rebuilt excerpt. A resume retains the completed source database,
+extracted PBF and routing archive, then recomputes the failed semantic stage.

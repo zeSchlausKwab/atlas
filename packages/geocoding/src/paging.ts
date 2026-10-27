@@ -21,7 +21,10 @@ export interface Term {
   start: number;
   pages: number;
 }
-export function ordinalKey(kind: "records" | "postings", page: number) {
+export function ordinalKey(
+  kind: "records" | "postings" | "location-pages" | "street-pages",
+  page: number,
+) {
   if (!Number.isSafeInteger(page) || page < 0 || page >= 2 ** 32)
     throw new Error("Search page ordinal overflow");
   const leaf = Math.floor(page / 1024),
@@ -59,7 +62,13 @@ export function queryGrams(query: string) {
 export function pagedZoom(prefix: string): number | undefined {
   if (prefix === "features/attributes" || prefix === "features/geometry")
     return 16;
-  if (prefix === "search/records" || prefix === "search/postings") return 16;
+  if (
+    prefix === "search/records" ||
+    prefix === "search/postings" ||
+    prefix === "search/location-pages" ||
+    prefix === "search/street-pages"
+  )
+    return 16;
   if (prefix === "search/terms") return 8;
   if (prefix === "search/streets-data" || prefix === "search/locations-data")
     return STREET_ZOOM;

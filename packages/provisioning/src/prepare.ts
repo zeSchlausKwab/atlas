@@ -1,3 +1,4 @@
+import { readSearchCell } from "../../geocoding/src/cell-pages";
 import { selectedPeaks } from "../../format/src/peaks";
 import { selectedPlaces } from "../../labels/src/place-pages";
 import { rm } from "node:fs/promises";
@@ -131,18 +132,23 @@ export async function preparePackage(
         : [{ key: `search/${kind}` }];
     for (const page of pages) {
       signal.throwIfAborted();
-      const bytes =
-        page.key === `search/${kind}`
-          ? rootBytes
-          : await reader.block(page.key);
-      if (kind === "locations") {
-        for (const { record } of locations(bytes))
-          if (inside(record.coordinates, s.polygon)) search.addLocation(record);
-      } else {
-        // The disk-backed primary key deduplicates streets repeated in adjacent cells.
-        for (const { street } of streets(bytes))
-          for (const coordinates of clipLine(street.coordinates, s.polygon))
-            search.addStreet({ ...street, coordinates });
+      for await (const bytes of readSearchCell(
+        reader,
+        page.key,
+        kind,
+        box,
+        signal,
+      )) {
+        if (kind === "locations") {
+          for (const { record } of locations(bytes))
+            if (inside(record.coordinates, s.polygon))
+              search.addLocation(record);
+        } else {
+          // The disk-backed primary key deduplicates streets repeated in adjacent cells.
+          for (const { street } of streets(bytes))
+            for (const coordinates of clipLine(street.coordinates, s.polygon))
+              search.addStreet({ ...street, coordinates });
+        }
       }
       reader.cache.delete(page.key);
       emit(`Selecting ${page.key}`);

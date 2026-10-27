@@ -1,3 +1,4 @@
+import { writeSearchCell } from "./cell-build";
 import { parallelNameIndex } from "./parallel-index";
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
@@ -106,7 +107,9 @@ export class PagedSearchBuilder {
       await writer.add({ key, bytes, features });
     };
     let records = 0,
-      recordPage = 0;
+      recordPage = 0,
+      locationPage = 0,
+      streetPage = 0;
     if (options.search) {
       if ((options.workers ?? 1) > 1) {
         const result = await parallelNameIndex(
@@ -257,24 +260,18 @@ export class PagedSearchBuilder {
           []
         >("SELECT DISTINCT cell FROM locations ORDER BY cell")
         .iterate()) {
-        const values: Location[] = [];
-        let bytes = 0;
-        for (const { json } of this.db
-          .query<
-            { json: string },
-            [number]
-          >("SELECT json FROM locations WHERE cell=? ORDER BY id")
-          .iterate(cell)) {
-          if ((bytes += encoder.encode(json).length) > MAX_SEARCH_PAGE)
-            throw new Error(
-              "Location cell exceeds 4 MiB; use finer partitioning",
-            );
-          values.push(JSON.parse(json));
-        }
-        await write(
+        await writeSearchCell(
+          "locations",
           `search/locations-data/${STREET_ZOOM}/${Math.floor(cell / n)}/${cell % n}`,
-          { schema: "locations-v1", records: values },
-          values.length,
+          this.db
+            .query<
+              { json: string },
+              [number]
+            >("SELECT json FROM locations WHERE cell=? ORDER BY id")
+            .iterate(cell),
+          () => ordinalKey("location-pages", locationPage++),
+          write,
+          signal,
         );
         cellsProgress(++completedCells);
       }
@@ -311,24 +308,18 @@ export class PagedSearchBuilder {
           []
         >("SELECT DISTINCT cell FROM streets ORDER BY cell")
         .iterate()) {
-        const values: Street[] = [];
-        let bytes = 0;
-        for (const { json } of this.db
-          .query<
-            { json: string },
-            [number]
-          >("SELECT json FROM streets WHERE cell=? ORDER BY id")
-          .iterate(cell)) {
-          if ((bytes += encoder.encode(json).length) > MAX_SEARCH_PAGE)
-            throw new Error(
-              "Reverse street cell exceeds 4 MiB; use finer partitioning",
-            );
-          values.push(JSON.parse(json));
-        }
-        await write(
+        await writeSearchCell(
+          "streets",
           `search/streets-data/${STREET_ZOOM}/${Math.floor(cell / n)}/${cell % n}`,
-          { schema: "streets-v1", streets: values },
-          values.length,
+          this.db
+            .query<
+              { json: string },
+              [number]
+            >("SELECT json FROM streets WHERE cell=? ORDER BY id")
+            .iterate(cell),
+          () => ordinalKey("street-pages", streetPage++),
+          write,
+          signal,
         );
         cellsProgress(++completedCells);
       }

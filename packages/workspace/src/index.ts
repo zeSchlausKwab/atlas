@@ -1,3 +1,4 @@
+import { readSearchCell } from "../../geocoding/src/cell-pages";
 import booleanIntersects from "@turf/boolean-intersects";
 import difference from "@turf/difference";
 import type { Feature, Polygon, MultiPolygon, Geometry } from "geojson";
@@ -464,24 +465,30 @@ export class AtlasWorkspace {
           for (const key of keys) {
             signal.throwIfAborted();
             if (family === "locations") {
-              const bytes = await reader.block(key);
-              for (const { record: r } of locations(bytes)) {
-                const [x, y] = r.coordinates;
-                if (
-                  x < p.bounds[0] ||
-                  x > p.bounds[2] ||
-                  y < p.bounds[1] ||
-                  y > p.bounds[3]
-                )
-                  continue;
-                add({
-                  ...r,
-                  family,
-                  tags: r.tags ?? {},
-                  heightMeters: null,
-                  heightSource: "unknown",
-                });
-              }
+              for await (const bytes of readSearchCell(
+                reader,
+                key,
+                "locations",
+                p.bounds,
+                signal,
+              ))
+                for (const { record: r } of locations(bytes)) {
+                  const [x, y] = r.coordinates;
+                  if (
+                    x < p.bounds[0] ||
+                    x > p.bounds[2] ||
+                    y < p.bounds[1] ||
+                    y > p.bounds[3]
+                  )
+                    continue;
+                  add({
+                    ...r,
+                    family,
+                    tags: r.tags ?? {},
+                    heightMeters: null,
+                    heightSource: "unknown",
+                  });
+                }
             } else
               for await (const f of readFeatureCell(
                 reader,
