@@ -178,13 +178,13 @@ Optional `areas: {assembledRelations, skippedRelations}` records importer diagno
 
 ## Selectable source geometry
 
-`feature-extraction` declares `featureZoom: 12`. With CLI `--features`, source polygons and lines are placed in `features/<kind>/12/x/y`, where kind is `buildings`, `water`, `railways`, `roads` or `land`. Each independently compressed/hashed block contains `{schema: "features-v1", features: [...]}`. Its directory entries live in spatial pages, so ordinary map viewing loads only the small page pointers.
+`feature-extraction` declares `featureZoom: 12`. With CLI `--features`, source polygons and lines are placed in `features/<kind>/12/x/y`, where kind is `buildings`, `water`, `railways`, `roads` or `land`. Legacy independently compressed/hashed cells contain `{schema: "features-v1", features: [...]}`. New files declare `featureSchema: 2` and use the paged representation below. Its directory entries live in spatial pages, so ordinary map viewing loads only the small page pointers.
 
 Each feature is a GeoJSON Feature with original `way/<id>` or `relation/<id>` identity, longitude/latitude geometry, bounding box, and properties `{id, name, kind, tags}`. Supported geometry is Polygon, MultiPolygon, LineString and MultiLineString. Coordinates and rings come from retained importer source geometry, before display simplification. A shape is replicated into each z12 cell its bounding box overlaps; querying deduplicates by OSM identity and tests actual geometry intersection, including holes. This prototype trades some disk duplication for independent cells.
 
 `AtlasFeatures.query({kind, bounds, limit, tag})` returns a FeatureCollection with snapshot, attribution, total matched count and a truncation flag. Bounds are `[west,south,east,north]`, maximum 0.25° per axis; limits are 1–500 objects. `tag` is one optional exact `key=value` predicate. Returned shapes are complete source objects, not clipped tile fragments. Selecting only a portion of a line does not split it. `asPolylines()` converts polygon boundaries and inner rings into MultiLineString geometry and leaves existing lines intact.
 
-Feature extraction is independent of display zoom and visibility toggles. In device mode it reads just the intersecting category cells; in server mode it returns matching objects without sending source cells. Offline child packages currently omit this index. See [shared operations API](SERVER-AND-EXTRACTION.md).
+Feature extraction is independent of display zoom and visibility toggles. In device mode it reads just the intersecting category cells; in server mode it returns matching objects without sending source cells. Host/excerpt preparation can retain selected feature kinds, rebuilding their pages into a self-contained child archive. See [shared operations API](SERVER-AND-EXTRACTION.md).
 
 ## Optional settlement names
 
@@ -227,3 +227,36 @@ remain readable. See [partitioned compiler schemas and limits](PARTITIONED-COMPI
 for the precise layouts and consumer budgets. The container version, TIL2 and
 RCL2 codecs remain unchanged; semantic consumers must understand the new schema
 markers rather than interpreting a paged root as a regional array.
+
+
+### Feature pages v2
+
+The spatial `features/<kind>/12/x/y` block contains
+`{schema: "features-paged-v2", pages: [{attributes, geometry, bounds, count}]}`.
+Each reference names an independently compressed and hashed block in the same file:
+
+- `features/attributes/16/x/y`: `{schema: "feature-attributes-v2", features: [...]}`,
+  retaining Feature identity, bbox and properties plus `geometryHash`, without geometry.
+- `features/geometry/16/x/y`: `{schema: "feature-geometry-v2", features: [{id, geometry}]}`,
+  in the same order as the corresponding attribute rows.
+
+The z16 addresses encode page ordinals, **not geographic positions**. They reuse
+bounded directory leaves; only the z12 catalog and its bounds are spatial. Each
+page contains at most 128 records and at most 4 MiB decoded bytes. The writer targets
+256 KiB combined feature input per group; a larger single feature may occupy a
+page up to the hard limit. A cell catalog is limited to 10,000 page descriptors
+and 4 MiB. Arrays are sorted spatially before grouping. Large objects still repeat
+across the z12 cells their bounding boxes intersect.
+
+`geometryHash` is SHA-256 of UTF-8 JSON for `{type, coordinates}` in that property
+order. It preserves coordinate/ring ordering and is not a topological equivalence
+hash. It lets compatible workspaces detect conflicting shapes without fetching
+all geometry. Fetched geometry must match its attribute identity and digest.
+
+Attribute-only workspaces prune pages by bounds. For rows fully inside the query
+rectangle, attributes suffice; boundary rows load their geometry page to test exact
+intersection. Full extraction loads both page types. Missing pages are errors,
+never empty results. Old files remain readable by the new reader; old readers must
+be upgraded before serving/consuming this schema. Repacking changes the package
+snapshot and Hashtree root while preserving source revision and graph identity.
+See [feature paging](FEATURE-PAGING.md) for migration, measurements and limitations.

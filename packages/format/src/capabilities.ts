@@ -95,7 +95,11 @@ export function operationCatalog(m: Manifest) {
     features: {
       available: m.featureZoom !== undefined,
       dependencies: [
-        { family: "features/{kind}", schema: "features", versions: [1] },
+        {
+          family: "features/{kind}",
+          schema: "features",
+          versions: [m.featureSchema ?? 1],
+        },
       ],
       parameters: { maxResults: 500, maxSpanDegrees: 0.25 },
     },

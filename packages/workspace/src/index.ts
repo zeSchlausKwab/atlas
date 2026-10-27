@@ -2,11 +2,8 @@ import difference from "@turf/difference";
 import type { Feature, Polygon, MultiPolygon, Geometry } from "geojson";
 import { AtlasReader } from "../../format/src/reader";
 import { project, type Block } from "../../format/src/index";
-import {
-  decodeFeatures,
-  geometryIntersects,
-  type Bounds,
-} from "../../features/src/index";
+import { type Bounds } from "../../features/src/index";
+import { readFeatureCell, geometryHash } from "../../features/src/pages";
 import { locations } from "../../geocoding/src/index";
 import { normalize, type Address } from "../../geocoding/src/model";
 import { STREET_ZOOM } from "../../geocoding/src/paging";
@@ -38,6 +35,8 @@ export class WorkspaceError extends Error {
 export interface Prepare {
   bounds: Bounds;
   families: Family[];
+  /** false pins attributes only; geometry may still be read for exact boundary checks. */
+  geometry?: boolean;
   required?: ("addresses" | "poi-tags")[];
   cacheOnly?: boolean;
   allowPartial?: boolean;
@@ -68,6 +67,7 @@ interface Row {
   heightMeters: number | null;
   heightSource: "tagged" | "levels-estimate" | "unknown";
   geometry?: Geometry;
+  geometryHash?: string;
   aliases?: string[];
   context?: string;
 }
@@ -166,6 +166,7 @@ const fields = new Set([
   "heightMeters",
   "heightSource",
   "geometry",
+  "geometryAvailable",
   "address",
   "tags",
   "context",
@@ -179,6 +180,7 @@ function fieldValid(f: string) {
   );
 }
 function field(row: Row, f: string): unknown {
+  if (f === "geometryAvailable") return row.geometry !== undefined;
   if (f.startsWith("tags."))
     return Object.hasOwn(row.tags, f.slice(5)) ? row.tags[f.slice(5)] : null;
   if (f.startsWith("address."))
@@ -221,6 +223,7 @@ export class AtlasWorkspace {
       maxMemory = p.maxMemoryBytes ?? 64 * MiB;
     if (
       !boundsValid(p.bounds) ||
+      (p.geometry !== undefined && typeof p.geometry !== "boolean") ||
       !Array.isArray(p.families) ||
       !p.families.length ||
       p.families.length > FAMILIES.length ||
@@ -435,8 +438,8 @@ export class AtlasWorkspace {
             ).map((b) => b.key);
           for (const key of keys) {
             signal.throwIfAborted();
-            const bytes = await reader.block(key);
             if (family === "locations") {
+              const bytes = await reader.block(key);
               for (const { record: r } of locations(bytes)) {
                 const [x, y] = r.coordinates;
                 if (
@@ -455,12 +458,14 @@ export class AtlasWorkspace {
                 });
               }
             } else
-              for (const f of decodeFeatures(bytes)) {
-                if (
-                  f.properties.kind !== family ||
-                  !geometryIntersects(f.geometry, p.bounds)
-                )
-                  continue;
+              for await (const f of readFeatureCell(
+                reader,
+                key,
+                p.bounds,
+                p.geometry !== false,
+                signal,
+              )) {
+                if (f.properties.kind !== family) continue;
                 const h = buildingHeight(f.properties.tags);
                 add({
                   id: f.id,
@@ -470,6 +475,9 @@ export class AtlasWorkspace {
                   category: family,
                   tags: f.properties.tags,
                   geometry: f.geometry,
+                  geometryHash:
+                    f.geometryHash ??
+                    (f.geometry ? await geometryHash(f.geometry) : undefined),
                   heightMeters:
                     family === "buildings" && h.height >= 0 ? h.height : null,
                   heightSource:

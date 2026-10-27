@@ -1,3 +1,4 @@
+import { readFeatureCell } from "./pages";
 import type { Feature, FeatureCollection, Geometry, Position } from "geojson";
 import { AtlasReader } from "../../format/src/reader";
 import { project } from "../../format/src/index";
@@ -131,7 +132,9 @@ export function geometryIntersects(g: Geometry, b: Bounds): boolean {
   }
 }
 export function decodeFeatures(bytes: Uint8Array): MapFeature[] {
-  const data = JSON.parse(new TextDecoder().decode(bytes));
+  return validateFeatures(JSON.parse(new TextDecoder().decode(bytes)));
+}
+export function validateFeatures(data: any): MapFeature[] {
   let points = 0;
   const coords = (v: any): boolean =>
     Array.isArray(v) &&
@@ -157,6 +160,8 @@ export function decodeFeatures(bytes: Uint8Array): MapFeature[] {
         FEATURE_KINDS.includes(f.properties.kind) &&
         typeof f.properties.name === "string" &&
         f.properties.tags &&
+        typeof f.properties.tags === "object" &&
+        !Array.isArray(f.properties.tags) &&
         Object.values(f.properties.tags).every((v) => typeof v === "string") &&
         ["Polygon", "MultiPolygon", "LineString", "MultiLineString"].includes(
           f.geometry?.type,
@@ -199,24 +204,25 @@ export class AtlasFeatures {
       Math.floor(se[1] * n),
     );
     const seen = new Set<string>();
-    let scanned = 0,
-      bytes = 0;
+    let scanned = 0;
     const [key, value] = q.tag?.split("=") ?? [];
+    const budget = { remaining: 64 * 1024 ** 2 };
     for (const b of blocks) {
-      signal?.throwIfAborted();
-      const data = await this.reader.block(b.key);
-      signal?.throwIfAborted();
-      bytes += data.byteLength;
-      if (bytes > 64 * 1024 * 1024)
-        throw new Error("Feature scan exceeds 64 MiB; select a smaller area.");
-      for (const f of decodeFeatures(data)) {
-        signal?.throwIfAborted();
+      for await (const row of readFeatureCell(
+        this.reader,
+        b.key,
+        q.bounds,
+        true,
+        signal,
+        budget,
+      )) {
+        const { geometryHash: _hash, ...f } = row as MapFeature & {
+          geometryHash?: string;
+        };
         if (
           seen.has(f.id) ||
           f.properties.kind !== q.kind ||
-          !overlap(f.bbox, q.bounds) ||
-          (key && f.properties.tags[key] !== value) ||
-          !geometryIntersects(f.geometry, q.bounds)
+          (key && f.properties.tags[key] !== value)
         )
           continue;
         seen.add(f.id);
@@ -228,6 +234,7 @@ export class AtlasFeatures {
       }
     }
   }
+
   async query(q: FeatureQuery, signal?: AbortSignal): Promise<FeatureResult> {
     const found: MapFeature[] = [];
     for await (const f of this.scan(q, signal)) found.push(f);

@@ -32,7 +32,7 @@ import type { PackageSelection } from "../../provisioning/src/selection";
 import { runCompiler } from "../../provisioning/src/process";
 import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const VERSION = 4;
+const VERSION = 5;
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 interface State {
   identity: string;
@@ -538,6 +538,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       ? LABEL_ZOOM
                       : undefined,
                   featureZoom: s.featureKinds.length ? FEATURE_ZOOM : undefined,
+                  featureSchema: s.featureKinds.length ? 2 : undefined,
                   featureKinds: s.featureKinds,
                   semantics: s.search ? SEMANTIC_RETENTION : undefined,
                   capabilities: [

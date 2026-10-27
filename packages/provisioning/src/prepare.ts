@@ -15,7 +15,9 @@ import {
 } from "../../format/src/index";
 import { AtlasReader } from "../../format/src/reader";
 import { splitTile, tileRecords } from "../../format/src/tiles";
-import { decodeFeatures } from "../../features/src/index";
+import { type MapFeature } from "../../features/src/index";
+import { readFeatureCell } from "../../features/src/pages";
+import { PagedFeatureWriter } from "../../features/src/paged-build";
 import { decodeLabels } from "../../labels/src/index";
 import { decodePlaces, encodePlaces } from "../../labels/src/places";
 import type { Position } from "../../geocoding/src/model";
@@ -84,6 +86,7 @@ export async function preparePackage(
   p.phase = "packing";
   const writer = await new DiskWriter(output, s.maxBytes).open(),
     encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+  const featureWriter = new PagedFeatureWriter(writer);
   const region: GeoPolygon = {
     type: "Polygon",
     coordinates: [[...s.polygon, s.polygon[0]!]],
@@ -148,6 +151,10 @@ export async function preparePackage(
   try {
     for (const b of plan.blocks) {
       signal.throwIfAborted();
+      if (/^features\/(attributes|geometry)\//.test(b.key)) {
+        p.completed++;
+        continue;
+      }
       emit(`Packing ${b.key}`);
       const bytes = await reader.block(b.key);
       signal.throwIfAborted();
@@ -206,12 +213,20 @@ export async function preparePackage(
         outputBytes = encode(data);
         keep = !!features;
       } else if (b.key.startsWith("features/")) {
-        const values = decodeFeatures(bytes).filter((f) =>
-          booleanIntersects(f.geometry, region),
-        );
-        features = values.length;
-        outputBytes = encode({ schema: "features-v1", features: values });
-        keep = !!features;
+        if (!/^features\/(attributes|geometry)\//.test(b.key)) {
+          async function* selectedFeatures() {
+            for await (const f of readFeatureCell(
+              reader,
+              b.key,
+              bounds(s.polygon),
+              true,
+              signal,
+            ))
+              if (booleanIntersects(f.geometry!, region)) yield f as MapFeature;
+          }
+          await featureWriter.cell(b.key, selectedFeatures(), signal);
+        }
+        keep = false;
       } else if (b.key === "search/locations" || b.key === "search/streets") {
         await rebuildSearch(
           b.key === "search/locations" ? "locations" : "streets",
@@ -295,6 +310,7 @@ export async function preparePackage(
       tileLayers: layers,
       featureKinds,
       featureZoom: featureKinds.length ? m.featureZoom : undefined,
+      featureSchema: featureKinds.length ? 2 : undefined,
       labelZoom: caps.includes("map-labels") ? m.labelZoom : undefined,
       buildingHeights: caps.includes("building-heights") ? heights : undefined,
       routing: undefined,

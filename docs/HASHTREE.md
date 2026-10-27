@@ -93,10 +93,15 @@ and queries after both HTTP providers close with zero further reads.
 
 The rehearsal exposed and fixed excerpt search flattening: extracts now rebuild
 bounded name and spatial search pages instead of writing a single huge location
-block. Dense building geometry still uses coarse feature cells and may exceed the
-64 MiB task workspace estimate; the request fails explicitly. Finer feature pages
-are a follow-up. No address interpolation, administrative hierarchy completion,
-or full postal-address guarantee is claimed.
+block. The original rehearsal files still have coarse feature cells that can
+exceed the 64 MiB task workspace estimate. New compiler output and the
+[feature-only repacker](FEATURE-PAGING.md) use bounded attribute/geometry pages.
+A local repack resolves the measured dense-Vienna query while preserving exact
+IDs. These are logical archive-read measurements; Hashtree transfers whole 64 KiB
+chunks and may fetch adjacent page bytes. Transport-level savings still need a
+separate cold/warm measurement after publishing the repacked files. No address
+interpolation, administrative hierarchy completion, or full postal-address
+guarantee is claimed.
 
 `bun run demo:pair --large --source /mounted/planet.osm.pbf --dry-run` writes the
 proposed Central Europe recipe without starting the expensive build. Both outputs

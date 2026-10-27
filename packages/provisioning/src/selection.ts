@@ -1,3 +1,4 @@
+import { featureCatalog, featureBlock } from "../../features/src/pages";
 import { validBudget } from "./capacity";
 import {
   MAP_LAYERS,
@@ -228,7 +229,20 @@ export async function planPreparation(
   }
   for (const kind of s.featureKinds) {
     report(`Finding ${kind} source objects…`);
-    add(await spatial(`features/${kind}`, m.featureZoom!));
+    const cells = await spatial(`features/${kind}`, m.featureZoom!);
+    add(cells);
+    if (m.featureSchema === 2)
+      for (const cell of cells) {
+        signal.throwIfAborted();
+        const catalog = featureCatalog(await reader.block(cell.key));
+        if (!catalog) throw new Error("Expected paged features");
+        for (const p of catalog.pages)
+          for (const key of [p.attributes, p.geometry]) {
+            const block = await featureBlock(reader, key);
+            if (!block) throw new Error(`Missing feature page ${key}`);
+            add([block]);
+          }
+      }
   }
   for (const mode of s.profiles) {
     const p = m.transport!.profiles[mode]!;

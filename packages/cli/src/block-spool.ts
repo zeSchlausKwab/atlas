@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import type { BlockWriter } from "./stream-writer";
 import { decodeLabels } from "../../labels/src/index";
 import { decodePlaces } from "../../labels/src/places";
+import { PagedFeatureWriter } from "../../features/src/paged-build";
 import { decodeFeatures } from "../../features/src/index";
 import { tileRecords } from "../../format/src/tiles";
 import { compactDisplayTile } from "./display-tile";
@@ -111,6 +112,7 @@ export class BlockSpool {
     progress: (key: string, completed: number) => void,
   ) {
     let completed = 0;
+    const featureWriter = new PagedFeatureWriter(writer);
     for (const { key } of this.db
       .query<
         { key: string },
@@ -172,8 +174,9 @@ export class BlockSpool {
         let value: unknown;
         if (key.startsWith("features/")) {
           const records = values.flatMap((v) => v.features);
-          features = records.length;
-          value = { schema: "features-v1", features: records };
+          await featureWriter.cell(key, records, signal);
+          progress(key, ++completed);
+          continue;
         } else if (key.startsWith("labels/settlements/")) {
           const places = values.flatMap((v) => v.places);
           features = places.length;

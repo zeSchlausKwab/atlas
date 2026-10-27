@@ -57,6 +57,8 @@ export function queryGrams(query: string) {
   ];
 }
 export function pagedZoom(prefix: string): number | undefined {
+  if (prefix === "features/attributes" || prefix === "features/geometry")
+    return 16;
   if (prefix === "search/records" || prefix === "search/postings") return 16;
   if (prefix === "search/terms") return 8;
   if (prefix === "search/streets-data" || prefix === "search/locations-data")

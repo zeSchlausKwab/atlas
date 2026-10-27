@@ -34,11 +34,18 @@ export function describeData(m: Manifest) {
     families: FAMILIES.map((family) => ({
       family,
       available: supports(m, family),
-      schema: family === "locations" ? "locations-v1" : "features-v1",
+      schema:
+        family === "locations"
+          ? "locations-v1"
+          : m.featureSchema === 2
+            ? "features-paged-v2"
+            : "features-v1",
       access:
         family === "locations"
           ? "spatial cells (legacy packages: whole location block)"
-          : "spatial cells",
+          : m.featureSchema === 2
+            ? "bounded attribute and geometry pages; exact boundary geometry fetched only when needed"
+            : "legacy spatial cells",
     })),
     fields: {
       id: "stable OSM identity; lookup is scoped to the prepared workspace",

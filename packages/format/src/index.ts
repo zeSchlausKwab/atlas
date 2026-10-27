@@ -120,6 +120,8 @@ export interface Manifest {
   transport?: TransportMetadata;
   labelZoom?: number;
   featureZoom?: number;
+  /** Version 2 separates bounded attributes and geometry pages within the archive. */
+  featureSchema?: 2;
   featureKinds?: ("buildings" | "water" | "railways" | "roads" | "land")[];
   tileLayers?: MapLayer[];
   buildingHeights?: {
@@ -167,7 +169,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land)|search\/(?:records|postings|terms|streets-data|locations-data)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|search\/(?:records|postings|terms|streets-data|locations-data)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -307,6 +309,12 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     manifest.featureZoom !== 12
   )
     throw new Error("Invalid feature grid");
+  if (
+    manifest.featureSchema !== undefined &&
+    (manifest.featureSchema !== 2 ||
+      !manifest.capabilities.includes("feature-extraction"))
+  )
+    throw new Error("Invalid feature schema");
   if (manifest.selection) {
     const s = manifest.selection;
     if (
@@ -567,7 +575,11 @@ export function validateBlocks(
       const a = spatialAddress(block.key);
       if (
         !a ||
-        a.z !== manifest.featureZoom ||
+        a.z !== (pagedZoom(a.prefix) ?? manifest.featureZoom) ||
+        ((a.prefix === "features/attributes" ||
+          a.prefix === "features/geometry") &&
+          (manifest.featureSchema !== 2 ||
+            (block.rawLength ?? block.length) > 4 * 1024 ** 2)) ||
         a.x < 0 ||
         a.y < 0 ||
         a.x >= 2 ** a.z ||

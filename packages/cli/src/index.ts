@@ -29,6 +29,7 @@ import { buildLabels, partitionLabels } from "../../labels/src/compile";
 import { LABEL_ZOOM } from "../../labels/src/index";
 import { displayMinZoom } from "./display";
 import { buildFeatures } from "../../features/src/compile";
+import { PagedFeatureWriter } from "../../features/src/paged-build";
 import { FEATURE_ZOOM } from "../../features/src/index";
 import { DiskWriter } from "./disk-writer";
 import {
@@ -531,18 +532,13 @@ async function main() {
     if (flags.features) {
       console.log("Partitioning selectable source geometry…");
       const cells = buildFeatures(imported.geojson);
+      const featureWriter = new PagedFeatureWriter(writer);
       for (const [key, features] of cells) {
         if (
           !selected ||
           selected.featureKinds.includes(key.split("/")[1] as any)
         )
-          await writer.add({
-            key,
-            features: features.length,
-            bytes: encoder.encode(
-              JSON.stringify({ schema: "features-v1", features }),
-            ),
-          });
+          await featureWriter.cell(key, features);
         cells.delete(key);
       }
     }
@@ -586,6 +582,7 @@ async function main() {
       ...(flags.features
         ? {
             featureZoom: FEATURE_ZOOM,
+            featureSchema: 2,
             ...(selected ? { featureKinds: selected.featureKinds } : {}),
           }
         : {}),

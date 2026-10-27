@@ -56,6 +56,11 @@ const definitions = [
           maxItems: 2,
           uniqueItems: true,
         },
+        geometry: {
+          type: "boolean",
+          description:
+            "Default true. Set false for attribute-only analysis: exact bounds intersection is retained, fetching geometry only for boundary candidates. Results report geometryAvailable=false; prepare with geometry:true to draw shapes.",
+        },
         cacheOnly: { type: "boolean" },
         allowPartial: { type: "boolean" },
         maxReadBytes: { type: "integer", minimum: 1, maximum: 67108864 },
