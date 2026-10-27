@@ -129,3 +129,22 @@ mount is preferable to a desktop GVFS session on an unattended host.
 Tests: `bun test tests/hashtree.test.ts tests/source-location.test.ts
  tests/provisioning.test.ts` (one shell line). Run `bun run typecheck` and
 `bun run build:web` for both browser apps.
+
+## Hosted large-pair workflow
+
+`bun scripts/hosted-pair.ts PLAN.json STATE.json` coordinates existing host API
+jobs: build a shared parent from a pinned cached PBF, prepare two excerpts from
+that parent, then publish each with Hashtree. `PairPlan` in the script defines the
+JSON schema (server, source ID/SHA-256, parent selection and two child selections).
+Every compilation appears in **Builds & checkpoints** and remains stoppable there.
+The coordinator stops if a job fails or is cancelled. Resume the job in the host
+UI and rerun the coordinator with the same plan/state to continue. It keeps the
+parent and checkpoints for acceptance testing; it never deletes them automatically.
+
+The 27 October LAN run uses the verified NAS planet dated 2026-10-05. Parent bounds
+are `[14.1, 47.0, 19.8, 49.4]`; west ends at 16.9°E and east starts at 16.7°E.
+Both request z0–16, all six display layers, labels, all three transport profiles,
+search/explicit addresses, reverse streets, peaks and all retained feature kinds.
+The 48 GiB per-file ceiling is a maximum, not an expected size. The source build
+must finish before the two final datasets are available. Cross-map acceptance
+checks still need to run on the completed large files.
