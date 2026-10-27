@@ -16,7 +16,7 @@ export class ChatDataRuntime {
   readonly registry: OperationRegistry;
   readonly geocoders: AtlasGeocoder[];
   constructor(readonly readers: AtlasReader[]) {
-    this.workspace = new AtlasWorkspace(readers);
+    this.workspace = new AtlasWorkspace(readers, "interactive");
     this.registry = new OperationRegistry(readers[0]!.index.manifest, {
       scanFeatures: () => {
         throw new Error("Use a task workspace");
@@ -29,17 +29,19 @@ export class ChatDataRuntime {
   definitions() {
     return this.registry.catalog();
   }
+  snapshot(ref: string) {
+    if (ref.startsWith("geo-")) {
+      const saved = this.results.get(ref);
+      return { rows: saved.collection.features, ...saved };
+    }
+    return this.workspace.snapshot(ref);
+  }
   async resolve(
     ref: string,
   ): Promise<{ collection: FeatureCollection; meta: ResultMeta }> {
     if (ref.startsWith("geo-")) return this.results.get(ref);
     const first = this.workspace.result(ref, 0, 1, ["id"]);
-    if (first.count > 10000)
-      throw new Error(
-        "Drawing exceeds 10,000 objects. Filter the result first.",
-      );
     const fc: FeatureCollection = { type: "FeatureCollection", features: [] };
-    let size = 0;
     for (let offset = 0; offset < first.count; offset++) {
       const r = this.workspace.result(ref, offset, 1, [
         "id",
@@ -63,9 +65,6 @@ export class ChatDataRuntime {
         geometry,
         properties: { name: r.name, family: r.family },
       } as unknown as Feature;
-      size += JSON.stringify(f).length;
-      if (size > 16 * 1024 ** 2)
-        throw new Error("Drawing exceeds 16 MiB; filter the result.");
       fc.features.push(f);
     }
     validateDrawing(fc);

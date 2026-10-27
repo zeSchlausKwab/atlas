@@ -150,8 +150,26 @@ export function workspaceTools(w: AtlasWorkspace): Plugin[] {
       descriptor: {
         id,
         title,
-        description,
-        inputSchema,
+        description:
+          w.policy === "interactive"
+            ? description
+                .replace(
+                  "Bounds are [west,south,east,north] in degrees, up to 0.25° across.",
+                  "Bounds are [west,south,east,north] in degrees.",
+                )
+                .replace(
+                  "expires after 30 minutes",
+                  "kept until released or the chat is reset",
+                )
+                .replace(
+                  "Maximum 100 rows and 256 KiB per page.",
+                  "Default page size is 100 rows.",
+                )
+            : description,
+        inputSchema:
+          w.policy === "interactive"
+            ? interactiveSchema(inputSchema)
+            : inputSchema,
         outputSchema,
         version: "1.0.0",
         requirements: [],
@@ -176,4 +194,18 @@ export function workspaceTools(w: AtlasWorkspace): Plugin[] {
       },
     }),
   );
+}
+
+/** Browser-owned sessions have no implicit workload budgets. Host endpoints retain their policy. */
+function interactiveSchema(input: unknown): any {
+  const schema = structuredClone(input) as any;
+  const props = schema.properties;
+  if (!props) return schema;
+  delete props.maxReadBytes;
+  delete props.maxMemoryBytes;
+  for (const key of ["ids", "where", "fields"])
+    if (props[key]) delete props[key].maxItems;
+  if (props.text) delete props.text.maxLength;
+  if (props.limit) delete props.limit.maximum;
+  return schema;
 }

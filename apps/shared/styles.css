@@ -1308,7 +1308,7 @@ h1 {
 
 /* A wider, tabbed workbench, with the existing paper-and-ink map style. */
 .workspace {
-  grid-template-columns: 400px minmax(0, 1fr) 270px;
+  grid-template-columns: 480px minmax(0, 1fr) 270px;
 }
 .sidebar {
   display: flex;
@@ -1547,12 +1547,12 @@ button:disabled {
 }
 @media (min-width: 1600px) {
   .workspace {
-    grid-template-columns: 440px minmax(0, 1fr) 290px;
+    grid-template-columns: 528px minmax(0, 1fr) 290px;
   }
 }
 @media (max-width: 1200px) {
   .workspace {
-    grid-template-columns: 370px minmax(0, 1fr);
+    grid-template-columns: 444px minmax(0, 1fr);
   }
   .inspector {
     display: none;
@@ -3181,3 +3181,14 @@ body[data-tab="chat"] .sidebar-content { padding: 0; }
 
 .chat-read-note { display: none; }
 body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: var(--muted); }
+
+.chat-thinking { border-left: 2px solid #9eac92; background: #e8ecdf65; margin: 8px 0 14px; white-space: normal; }
+.chat-thinking summary { cursor: pointer; padding: 8px 12px; font-size: 11px; color: var(--green); }
+.chat-thinking summary small { float: right; color: var(--muted); }
+.chat-thinking-scroll { max-height: 140px; overflow: auto; overscroll-behavior: contain; padding: 0 12px 12px; white-space: pre-wrap; font-size: 12px; line-height: 1.6; color: #647166; }
+.chat-trace-data { border-top: 1px solid var(--line); }
+.chat-trace-data summary { display: list-item; list-style-position: inside; font-weight: 600; }
+.chat-tool > summary::before { content: "▸"; }
+.chat-tool[open] > summary::before { content: "▾"; }
+.chat-tool > summary > span { flex: 1; }
+.chat-tool code { font: 11px var(--mono); }

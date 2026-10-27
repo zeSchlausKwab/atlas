@@ -1,31 +1,19 @@
 import type { Feature, FeatureCollection, Geometry, Position } from "geojson";
-export const MAX_DRAW_BYTES = 16 * 1024 ** 2;
 export function validateDrawing(
   value: unknown,
 ): asserts value is FeatureCollection {
   const fc = value as FeatureCollection;
-  if (
-    !fc ||
-    fc.type !== "FeatureCollection" ||
-    !Array.isArray(fc.features) ||
-    fc.features.length > 10000
-  )
-    throw new Error(
-      "Drawing must be a FeatureCollection with at most 10,000 objects",
-    );
-  if (JSON.stringify(fc).length > MAX_DRAW_BYTES)
-    throw new Error("Drawing exceeds 16 MiB");
-  let points = 0;
+  if (!fc || fc.type !== "FeatureCollection" || !Array.isArray(fc.features))
+    throw new Error("Drawing must be a FeatureCollection");
   const position = (p: Position) => {
     if (
       !Array.isArray(p) ||
       p.length !== 2 ||
       !p.every(Number.isFinite) ||
       Math.abs(p[0]!) > 180 ||
-      Math.abs(p[1]!) > 85 ||
-      ++points > 250000
+      Math.abs(p[1]!) > 85
     )
-      throw new Error("Invalid or oversized drawing coordinates");
+      throw new Error("Invalid drawing coordinates");
   };
   const line = (p: Position[], min = 2) => {
     if (!Array.isArray(p) || p.length < min)
@@ -118,19 +106,8 @@ export class GeometryResults {
   save(fc: FeatureCollection, meta: ResultMeta) {
     this.sweep();
     validateDrawing(fc);
-    if (
-      this.values.size >= 32 ||
-      [...this.values.values()].reduce(
-        (n, v) => n + JSON.stringify(v.collection).length,
-        JSON.stringify(fc).length,
-      ) >
-        32 * 1024 ** 2
-    )
-      throw new Error(
-        "Result geometry budget reached. Start a new chat to release results.",
-      );
     const ref = "geo-" + crypto.randomUUID(),
-      expiresAt = Date.now() + 30 * 60 * 1000;
+      expiresAt = Number.MAX_SAFE_INTEGER;
     this.values.set(ref, {
       collection: structuredClone(fc),
       meta: structuredClone(meta),

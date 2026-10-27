@@ -118,15 +118,6 @@ export class ChatLayers {
     validateDrawing(fc);
     if (!/^#[0-9a-fA-F]{6}$/.test(color))
       throw new Error("Use a six-digit hex color");
-    if (
-      this.values.length >= 8 ||
-      this.values.reduce(
-        (n, v) => n + JSON.stringify(v.collection).length,
-        JSON.stringify(fc).length,
-      ) >
-        32 * 1024 ** 2
-    )
-      throw new Error("Drawing layer budget reached. Undo a layer first.");
     const layer: ChatLayer = {
       id: "layer-" + crypto.randomUUID(),
       title,

@@ -9,6 +9,7 @@ import {
   ComposerPrimitive,
   type ThreadMessageLike,
   type ToolCallMessagePartProps,
+  type ReasoningMessagePartProps,
 } from "@assistant-ui/react";
 import {
   AtlasAgentSession,
@@ -27,12 +28,13 @@ const convert = (m: ChatMessage): ThreadMessageLike => ({
   id: m.id,
   role: m.role,
   content: [
+    ...(m.reasoning ? [{ type: "reasoning" as const, text: m.reasoning }] : []),
     ...(m.text ? [{ type: "text" as const, text: m.text }] : []),
     ...m.tools.map((t) => ({
       type: "tool-call" as const,
       toolCallId: t.id,
       toolName: t.name,
-      argsText: JSON.stringify(t.args),
+      argsText: t.argumentsText ?? JSON.stringify(t.args),
       args: t.args as never,
       result: t.result,
       isError: t.state === "error",
@@ -40,13 +42,59 @@ const convert = (m: ChatMessage): ThreadMessageLike => ({
     })),
   ],
 });
+function Thinking({ text }: ReasoningMessagePartProps) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  useEffect(() => {
+    if (scroll.current && following.current)
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [text]);
+  return (
+    <details className="chat-thinking" open>
+      <summary>
+        Thinking <small>DeepSeek</small>
+      </summary>
+      <div
+        ref={scroll}
+        className="chat-thinking-scroll"
+        tabIndex={0}
+        onScroll={() => {
+          const el = scroll.current!;
+          following.current =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+        }}
+      >
+        {text}
+      </div>
+    </details>
+  );
+}
+function TraceData({ title, value }: { title: string; value: unknown }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="chat-trace-data"
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary>{title}</summary>
+      {open && <pre tabIndex={0}>{JSON.stringify(value, null, 2)}</pre>}
+    </details>
+  );
+}
 function ToolCall({
   toolName,
   args,
+  argsText,
   result,
   isError,
   artifact,
 }: ToolCallMessagePartProps) {
+  let input: unknown = args;
+  try {
+    if (argsText) input = JSON.parse(argsText);
+  } catch {
+    input = argsText;
+  }
   const r = result as any,
     a = artifact as { elapsedMs?: number; progress?: string } | undefined;
   return (
@@ -54,7 +102,7 @@ function ToolCall({
       <summary>
         <span>
           {result === undefined ? "◌" : isError ? "!" : "✓"}{" "}
-          {toolName.replaceAll("_", " ")}
+          <code>{toolName}</code>
         </span>
         <small>
           {a?.elapsedMs !== undefined
@@ -70,7 +118,8 @@ function ToolCall({
       )}
       {r?.count !== undefined && <p>{r.count.toLocaleString()} results</p>}
       {r?.error && <p role="alert">{r.error}</p>}
-      <pre>{JSON.stringify({ input: args, result }, null, 2)}</pre>
+      <TraceData title="Arguments" value={input} />
+      {result !== undefined && <TraceData title="Response" value={result} />}
     </details>
   );
 }
@@ -102,7 +151,11 @@ function AssistantMessage() {
     <MessagePrimitive.Root className="chat-message chat-assistant">
       <span className="eyebrow">Atlas</span>
       <MessagePrimitive.Parts
-        components={{ Text: MarkdownText, tools: { Fallback: ToolCall } }}
+        components={{
+          Text: MarkdownText,
+          Reasoning: Thinking,
+          tools: { Fallback: ToolCall },
+        }}
       />
     </MessagePrimitive.Root>
   );
@@ -444,7 +497,7 @@ export function mountChat(
           ))}
         </details>
         <div className="chat-footer">
-          <span>Session references expire after 30 minutes.</span>
+          <span>Cached results stay until you start a new chat.</span>
           <button
             disabled={state.running}
             onClick={() => void clear().catch((e) => setProblem(String(e)))}

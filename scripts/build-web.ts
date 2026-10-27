@@ -23,6 +23,7 @@ export async function buildBrowserApp(kind: "client" | "host") {
           "plugin-worker",
           "compose",
           "chat-data-worker",
+          "chat-code-worker",
         ].map((n) => `apps/web/src/${n}.ts`)
       : ["apps/host/src/host.ts"];
   const result = await Bun.build({
@@ -51,6 +52,10 @@ export async function buildBrowserApp(kind: "client" | "host") {
     ...(kind === "client"
       ? [
           ["apps/web/sw.js", "sw.js"],
+          [
+            "node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm",
+            "wasm/quickjs.wasm",
+          ],
           ["apps/web/compose.html", "compose.html"],
           [
             "packages/routing/pkg/atlas_routing_wasm_bg.wasm",

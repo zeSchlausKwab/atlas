@@ -104,7 +104,7 @@ const canonical = (v: unknown): string =>
         )
       : value,
   );
-function boundsValid(b: Bounds) {
+function boundsValid(b: Bounds, interactive = false) {
   return (
     Array.isArray(b) &&
     b.length === 4 &&
@@ -115,8 +115,7 @@ function boundsValid(b: Bounds) {
     b[2] <= 180 &&
     b[1] >= -85 &&
     b[3] <= 85 &&
-    b[2] - b[0] <= 0.25 &&
-    b[3] - b[1] <= 0.25
+    (interactive || (b[2] - b[0] <= 0.25 && b[3] - b[1] <= 0.25))
   );
 }
 function rect(b: Bounds): Feature<Polygon> {
@@ -195,9 +194,21 @@ export class AtlasWorkspace {
   private preparing = false;
   private lifetime = new AbortController();
   bytesRead = 0;
-  constructor(readonly readers: readonly AtlasReader[]) {
-    if (!readers.length || readers.length > 8 || readers.some((r) => !r.index))
-      throw new WorkspaceError("invalid_request", "Open 1–8 sources first.");
+  constructor(
+    readonly readers: readonly AtlasReader[],
+    readonly policy: "bounded" | "interactive" = "bounded",
+  ) {
+    if (
+      !readers.length ||
+      (this.policy === "bounded" && readers.length > 8) ||
+      readers.some((r) => !r.index)
+    )
+      throw new WorkspaceError(
+        "invalid_request",
+        this.policy === "interactive"
+          ? "Open at least one source first."
+          : "Open 1–8 sources first.",
+      );
   }
   catalog() {
     return this.readers.map((r) => describeData(r.index.manifest));
@@ -220,27 +231,34 @@ export class AtlasWorkspace {
     this.sweep();
     signal = AbortSignal.any([signal, this.lifetime.signal]);
     const p = structuredClone(input);
-    const maxRead = p.maxReadBytes ?? 32 * MiB,
-      maxMemory = p.maxMemoryBytes ?? 64 * MiB;
+    const interactive = this.policy === "interactive";
+    const maxRead = p.maxReadBytes ?? (interactive ? Infinity : 32 * MiB),
+      maxMemory = p.maxMemoryBytes ?? (interactive ? Infinity : 64 * MiB);
     if (
-      !boundsValid(p.bounds) ||
+      !boundsValid(p.bounds, interactive) ||
       (p.geometry !== undefined && typeof p.geometry !== "boolean") ||
       !Array.isArray(p.families) ||
       !p.families.length ||
       p.families.length > FAMILIES.length ||
       p.families.some((f) => !FAMILIES.includes(f)) ||
       [maxRead, maxMemory].some(
-        (n) => !Number.isSafeInteger(n) || n < 1 || n > 64 * MiB,
+        (n) =>
+          !(interactive && n === Infinity) &&
+          (!Number.isSafeInteger(n) || n < 1 || (!interactive && n > 64 * MiB)),
       )
     )
       throw new WorkspaceError(
         "invalid_request",
-        "Choose a box up to 0.25° across, supported families, and budgets of 1–67108864 bytes.",
+        interactive
+          ? "Choose valid geographic bounds and supported families."
+          : "Choose a box up to 0.25° across, supported families, and budgets of 1–67108864 bytes.",
       );
-    if (this.preparing || this.workspaces.size >= 2)
+    if (this.preparing || (!interactive && this.workspaces.size >= 2))
       throw new WorkspaceError(
         "budget_exceeded",
-        "Release a workspace before preparing another (two active workspaces maximum).",
+        this.preparing
+          ? "Another workspace is being prepared; wait for it to finish."
+          : "Release a workspace before preparing another (two active workspaces maximum).",
       );
     const families = [...new Set(p.families)];
     if (
@@ -393,7 +411,7 @@ export class AtlasWorkspace {
               { id: row.id, family: row.family },
             );
           if (!previous) {
-            if (rows.size >= 100000)
+            if (!interactive && rows.size >= 100000)
               throw new WorkspaceError(
                 "budget_exceeded",
                 "Workspace exceeds 100,000 records; choose a smaller area.",
@@ -495,7 +513,7 @@ export class AtlasWorkspace {
       signal.throwIfAborted();
       const w: Workspace = {
         id: crypto.randomUUID(),
-        expiresAt: Date.now() + TTL,
+        expiresAt: interactive ? Number.MAX_SAFE_INTEGER : Date.now() + TTL,
         rows: [...rows.values()].sort((a, b) =>
           `${a.family}:${a.id}`.localeCompare(`${b.family}:${b.id}`),
         ),
@@ -526,13 +544,29 @@ export class AtlasWorkspace {
       for (const r of active) r.dispose();
     }
   }
+  /** Local-only full snapshot for code execution; never returned by workspace_result. */
+  snapshot(ref: string) {
+    const first = this.result(ref, 0, 1, ["id"]);
+    const result = this.results.get(ref)!;
+    const w = this.workspace(result.workspace);
+    return {
+      rows: structuredClone(result.indexes.map((i) => w.rows[i]!)),
+      meta: {
+        result: ref,
+        coverage: first.coverage,
+        snapshots: first.snapshots,
+        expiresAt: first.expiresAt,
+      },
+    };
+  }
   query(input: Query) {
     const start = performance.now(),
       w = this.workspace(input.workspace);
     if (
-      (input.text?.length ?? 0) > 120 ||
-      (input.ids?.length ?? 0) > 500 ||
-      (input.where?.length ?? 0) > 20
+      this.policy === "bounded" &&
+      ((input.text?.length ?? 0) > 120 ||
+        (input.ids?.length ?? 0) > 500 ||
+        (input.where?.length ?? 0) > 20)
     )
       throw new WorkspaceError(
         "invalid_request",
@@ -555,7 +589,7 @@ export class AtlasWorkspace {
         "expired_reference",
         "Result is absent or belongs to another workspace.",
       );
-    if (this.results.size >= 64)
+    if (this.policy === "bounded" && this.results.size >= 64)
       throw new WorkspaceError(
         "budget_exceeded",
         "Release a workspace to free result handles (64 maximum).",
@@ -594,7 +628,7 @@ export class AtlasWorkspace {
       (n, r) => n + r.indexes.length * 8,
       indexes.length * 8,
     );
-    if (resultBytes > 8 * MiB)
+    if (this.policy === "bounded" && resultBytes > 8 * MiB)
       throw new WorkspaceError(
         "budget_exceeded",
         "Result references exceed 8 MiB; release a workspace.",
@@ -639,9 +673,9 @@ export class AtlasWorkspace {
       offset < 0 ||
       !Number.isInteger(limit) ||
       limit < 1 ||
-      limit > 100 ||
+      (this.policy === "bounded" && limit > 100) ||
       projection.length < 1 ||
-      projection.length > 30 ||
+      (this.policy === "bounded" && projection.length > 30) ||
       projection.some((f) => !fieldValid(f))
     )
       throw new WorkspaceError(
@@ -653,7 +687,10 @@ export class AtlasWorkspace {
       .map((i) =>
         Object.fromEntries(projection.map((f) => [f, field(w.rows[i]!, f)])),
       );
-    if (new TextEncoder().encode(JSON.stringify(rows)).length > 256 * 1024)
+    if (
+      this.policy === "bounded" &&
+      new TextEncoder().encode(JSON.stringify(rows)).length > 256 * 1024
+    )
       throw new WorkspaceError(
         "budget_exceeded",
         "Result page exceeds 256 KiB; request fewer rows or omit geometry/tags.",
@@ -726,7 +763,10 @@ export class AtlasWorkspace {
         (n, r) => n + r.indexes.length * 8,
         indexes.length * 8,
       );
-      if (this.results.size >= 64 || bytes > 8 * MiB)
+      if (
+        this.policy === "bounded" &&
+        (this.results.size >= 64 || bytes > 8 * MiB)
+      )
         throw new WorkspaceError(
           "budget_exceeded",
           "Result budget reached; release a workspace.",
@@ -798,7 +838,7 @@ export class AtlasWorkspace {
       const group = groups.get(key) ?? { value, count: 0 };
       group.count++;
       groups.set(key, group);
-      if (groups.size > 1000)
+      if (this.policy === "bounded" && groups.size > 1000)
         throw new WorkspaceError(
           "budget_exceeded",
           "Too many distinct groups; choose another field.",

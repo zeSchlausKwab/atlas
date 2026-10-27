@@ -73,6 +73,8 @@ self.onmessage = ({ data: m }) => {
         for (const r of runtime.readers) r.offline = m.offline === true;
         let value: unknown;
         if (m.name === "__catalog") value = runtime.definitions();
+        else if (m.name === "__snapshot")
+          value = runtime.snapshot(m.input.result);
         else if (m.name === "__resolve")
           value = await runtime.resolve(m.input.result);
         else if (m.name === "__save")

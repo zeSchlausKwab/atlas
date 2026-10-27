@@ -18,10 +18,22 @@ import type { WorkspaceMap } from "../../../../packages/renderer/src/workspace-m
 import { WorkerRouter } from "../worker-router";
 import { ChatDataClient } from "./data-client";
 import { ChatLayers } from "./layers";
+import { CodeClient } from "./code-client";
 const ref = { type: "string", minLength: 1, maxLength: 100 };
 const profile = { enum: ["walking", "cycling", "driving"] };
 const text = { type: "string", minLength: 1, maxLength: 120 };
 const specs: Array<[string, string, Record<string, unknown>]> = [
+  [
+    "run_code",
+    "Run custom JavaScript on cached results in an isolated browser QuickJS worker. Pass result IDs in results; data.results[id] has rows (full retained attributes and geometry when prepared) and meta (coverage/provenance). Geo results additionally have collection. Write a synchronous function body with return for a concise summary. console.log records diagnostics. emit(GeoJSON FeatureCollection) stores computed geometry locally and returns a result ID for map_draw; never return raw geometry in the summary. geo.area(feature) returns square metres; geo.intersects(a,b) tests GeoJSON intersection. data is frozen. No fetch, DOM, imports, credentials or host APIs. A fresh JS context per call; use result references to reuse data. Stop cancels execution.",
+    objectSchema(
+      {
+        code: { type: "string", minLength: 1 },
+        results: { type: "array", items: ref, uniqueItems: true },
+      },
+      ["code"],
+    ),
+  ],
   [
     "map_context",
     "Get current viewport, selected analysis bounds, compatible datasets, drawing layers and cache state.",
@@ -108,6 +120,7 @@ const specs: Array<[string, string, Record<string, unknown>]> = [
   ],
 ];
 export class ChatTools implements AgentTools {
+  readonly code = new CodeClient();
   readonly data: ChatDataClient;
   readonly layers: ChatLayers;
   private router?: WorkerRouter;
@@ -230,7 +243,41 @@ export class ChatTools implements AgentTools {
     if (name === "route" || name === "isochrone") requirePurpose("routing");
     let result: any;
     if (name === "map_context") result = this.context();
-    else if (name === "map_draw") {
+    else if (name === "run_code") {
+      progress("Reading cached results for local code execution…");
+      const results: Record<string, unknown> = Object.create(null);
+      for (const ref of i.results ?? [])
+        results[ref] = await this.data.call(
+          "__snapshot",
+          { result: ref },
+          signal,
+        );
+      progress("Running JavaScript on this device · Stop cancels execution");
+      const output = await this.code.run(i.code, { results }, signal);
+      signal.throwIfAborted();
+      const parents = Object.values(results).map((r: any) => r.meta);
+      result = {
+        value: output.value,
+        console: output.console,
+        inputs: parents,
+      };
+      if (output.collection)
+        Object.assign(
+          result,
+          await this.data.call(
+            "__save",
+            {
+              collection: output.collection,
+              meta: {
+                operation: "run_code",
+                inputs: parents,
+                scope: "derived-from-retained-data",
+              },
+            },
+            signal,
+          ),
+        );
+    } else if (name === "map_draw") {
       if (!!i.result === !!i.geojson)
         throw new Error("Provide either result or geojson");
       const saved = i.result
@@ -345,6 +392,7 @@ export class ChatTools implements AgentTools {
     await this.data.call("__clear", {}, signal);
   }
   destroy() {
+    this.code.destroy();
     this.router?.cancel();
     this.data.destroy();
     this.layers.destroy();

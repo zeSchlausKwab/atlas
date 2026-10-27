@@ -53,7 +53,7 @@ if (import.meta.main) {
   const server = Bun.serve({
     hostname: process.env.HOST ?? "127.0.0.1",
     port: Number(process.env.PORT ?? 5173),
-    idleTimeout: 120,
+    idleTimeout: 0,
     fetch: clientHandler(
       dir,
       process.env.ATLAS_SERVER_URL,

@@ -366,9 +366,11 @@ test("inference proxy protects the key, pins provider/model, and rejects cross-o
   expect(url).toBe("https://api.deepseek.com/chat/completions");
   expect(auth).toBe("Bearer synthetic-secret");
   expect(forwarded.model).toBe("deepseek-flash");
+  expect(forwarded.thinking.type).toBe("enabled");
+  expect(forwarded.max_tokens).toBeUndefined();
   expect(forwarded.apiKey).toBeUndefined();
 });
-test("proxy releases concurrency on rejection, provider failure and stream cancellation", async () => {
+test("proxy permits concurrent requests and propagates stream cancellation", async () => {
   const proxy = chatProxy({
     key: "test",
     fetch: (async () =>
@@ -380,7 +382,9 @@ test("proxy releases concurrency on rejection, provider failure and stream cance
     expect((await proxy(request({})))!.status).toBe(400);
   const a = (await proxy(request(input)))!,
     b = (await proxy(request(input)))!;
-  expect((await proxy(request(input)))!.status).toBe(429);
+  const third = (await proxy(request(input)))!;
+  expect(third.status).toBe(200);
+  await third.body!.cancel();
   await a.body!.cancel();
   await b.body!.cancel();
   const c = (await proxy(request(input)))!;

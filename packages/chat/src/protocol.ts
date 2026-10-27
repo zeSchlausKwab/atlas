@@ -14,11 +14,13 @@ export interface ToolCall {
 export interface WireMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  reasoning_content?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
 export interface Completion {
   content: string;
+  reasoning?: string;
   calls: ToolCall[];
   usage?: {
     prompt_tokens?: number;
@@ -31,6 +33,7 @@ export type Model = (
   tools: ToolDefinition[],
   signal: AbortSignal,
   onText: (text: string) => void,
+  onReasoning?: (text: string) => void,
 ) => Promise<Completion>;
 
 /** Incremental SSE parser: frames can span arbitrary UTF-8/network chunks. */
@@ -38,6 +41,7 @@ export async function completionStream(
   response: Response,
   signal: AbortSignal,
   onText: (text: string) => void,
+  onReasoning?: (text: string) => void,
 ): Promise<Completion> {
   if (!response.ok) {
     const error = (await response.json().catch(() => ({}))) as {
@@ -56,7 +60,7 @@ export async function completionStream(
     decoder = new TextDecoder();
   let buffer = "",
     content = "",
-    received = 0,
+    reasoning = "",
     done = false,
     finish: string | undefined;
   const calls = new Map<number, ToolCall>();
@@ -87,8 +91,12 @@ export async function completionStream(
       content += delta.content;
       onText(content);
     }
+    if (typeof delta.reasoning_content === "string") {
+      reasoning += delta.reasoning_content;
+      onReasoning?.(reasoning);
+    }
     for (const part of delta.tool_calls ?? []) {
-      if (!Number.isInteger(part.index) || part.index < 0 || part.index >= 16)
+      if (!Number.isInteger(part.index) || part.index < 0)
         throw new Error("Invalid model tool-call index");
       const call = calls.get(part.index) ?? {
         id: "",
@@ -99,8 +107,6 @@ export async function completionStream(
       if (part.function?.name) call.function.name += part.function.name;
       if (part.function?.arguments)
         call.function.arguments += part.function.arguments;
-      if (call.function.arguments.length > 65536)
-        throw new Error("Tool arguments exceed 64 KiB");
       calls.set(part.index, call);
     }
   };
@@ -109,9 +115,6 @@ export async function completionStream(
       signal.throwIfAborted();
       const next = await reader.read();
       if (next.done) break;
-      received += next.value.byteLength;
-      if (received > 2 * 1024 ** 2)
-        throw new Error("Model response exceeds 2 MiB");
       buffer += decoder.decode(next.value, { stream: true });
       buffer = buffer.replaceAll("\r\n", "\n");
       let at: number;
@@ -143,14 +146,20 @@ export async function completionStream(
       throw new Error("Invalid model tool identity");
     if (finish === "tool_calls" && !result.length)
       throw new Error("Missing model tool calls");
-    return { content, calls: result, usage };
+    return { content, reasoning, calls: result, usage };
   } finally {
     signal.removeEventListener("abort", cancel);
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
-export const deepseekModel: Model = async (messages, tools, signal, onText) =>
+export const deepseekModel: Model = async (
+  messages,
+  tools,
+  signal,
+  onText,
+  onReasoning,
+) =>
   completionStream(
     await fetch("/api/chat/completions", {
       method: "POST",
@@ -169,6 +178,7 @@ export const deepseekModel: Model = async (messages, tools, signal, onText) =>
     }),
     signal,
     onText,
+    onReasoning,
   );
 
 /** Provider dialect accepts homogeneous array items, but not JSON Schema tuple items.

@@ -54,8 +54,7 @@ export class ChatDataClient {
           ![a, b].every(Number.isSafeInteger) ||
           a < 0 ||
           b <= a ||
-          b > reader.index.header.fileLength ||
-          b - a > 64 * 1024 ** 2
+          b > reader.index.header.fileLength
         )
           throw new Error("Invalid map byte request");
         this.sourceBytes += b - a;

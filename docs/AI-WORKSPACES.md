@@ -94,17 +94,22 @@ public relay publication or arbitrary plugin execution is introduced here.
   never fetches missing blocks. Prepared rows stay pinned independently of reader
   eviction/closure. Browser persistence now also admits search, feature and query
   blocks into its existing bounded LRU; persisted blocks are not permanently pinned.
-- At most two workspaces per engine, each with up to 64 MiB estimated working data,
+- The default bounded policy (including HTTP/ContextVM services) allows at most
+  two workspaces per engine, each with up to 64 MiB estimated working data,
   up to 64 MiB source reads and 100,000 records. Default read budget is 32 MiB.
   Estimates charge five times each decoded block's bytes before loading, and are
   not a hard process RSS cap. Pre-opened metadata, parser/runtime overhead and
   separate renderer/routing caches are not a claim of total process memory.
-- References expire after 30 minutes and are invalid after release, purge, session
+- Bounded-policy references expire after 30 minutes and are invalid after release, purge, session
   destruction or restart. Up to 64 result references, with 8 MiB of estimated index
   storage, and 100 rows/256 KiB per result page. Default previews omit geometry.
 - Errors carry `invalid_request`, `unsupported_data`, `outside_coverage`,
   `missing_blocks`, `budget_exceeded`, `conflicting_data`, or `expired_reference`.
   Source tags/names are untrusted data, never execution instructions.
+
+Browser chat uses the interactive policy: memory estimates are informational,
+workspace/result counts and geographic span have no demo budget, and references
+stay valid until released or the chat resets. See [AI chat](AI-CHAT-DEMO.md).
 
 The first implementation loads spatial location cells and/or feature cells. Legacy
 location archives use their whole location block; excessive size fails the budget.
