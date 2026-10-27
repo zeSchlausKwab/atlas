@@ -1,3 +1,4 @@
+import type { SourceLocation } from "./source-location";
 import { readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { SourceJob } from "../../packages/provisioning/src/source-cache";
@@ -8,11 +9,18 @@ export async function verifiedSource(
   id: string,
 ): Promise<VerifiedBuildSource> {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("Invalid cached source ID");
-  const path = resolve(directory, `${id}.osm.pbf`);
+  let path = resolve(directory, `${id}.osm.pbf`);
+  const externalFile = Bun.file(resolve(directory, `${id}.location.json`));
+  const external: SourceLocation | undefined = (await externalFile.exists())
+    ? await externalFile.json()
+    : undefined;
+  if (external) path = external.path;
   const job = (await Bun.file(
     resolve(directory, `${id}.json`),
   ).json()) as SourceJob;
-  const receipt = await Bun.file(path + ".source.json").json();
+  const receipt = await Bun.file(
+    resolve(directory, `${id}.osm.pbf.source.json`),
+  ).json();
   const file = await stat(path);
   if (
     job.id !== id ||
@@ -25,7 +33,13 @@ export async function verifiedSource(
     receipt.url !== job.url ||
     receipt.md5 !== job.md5 ||
     !receipt.verifiedAt ||
-    file.size !== job.bytes
+    file.size !== job.bytes ||
+    (external &&
+      (external.version !== 1 ||
+        external.id !== id ||
+        external.sha256 !== job.sha256 ||
+        external.bytes !== job.bytes ||
+        file.mtimeMs !== external.mtimeMs))
   )
     throw new Error("Source is not a complete, checksum-verified PBF");
   return {

@@ -1,3 +1,4 @@
+import { registerSourceLocation } from "./source-location";
 import { PbfSources } from "./pbf-sources";
 import { WORLD_SOURCE } from "../../packages/provisioning/src/global-source";
 import { validateSelectionScope } from "../../packages/provisioning/src/selection";
@@ -226,6 +227,25 @@ export class SourceCache {
     if (request.method === "GET" && url.pathname === "/admin/sources")
       return json({
         jobs: await this.list(),
+        locations: await Promise.all(
+          (await this.list()).map(async (j) => {
+            const f = Bun.file(
+              join(this.directory, j.id + ".location-progress.json"),
+            );
+            if (!(await f.exists())) return null;
+            const p = await f.json();
+            if (p.state === "verifying" && p.pid) {
+              try {
+                process.kill(p.pid, 0);
+              } catch {
+                p.state = "failed";
+                p.message =
+                  "Verification interrupted. Verify this location again; the original source is retained.";
+              }
+            }
+            return p;
+          }),
+        ).then((xs) => xs.filter(Boolean)),
         storage: await readStorage(this.directory),
         reserveBytes: SOURCE_RESERVE,
       });
@@ -237,6 +257,37 @@ export class SourceCache {
       return json({ error: "Same-origin JSON request required" }, 403);
     try {
       const body = await request.json();
+      if (url.pathname === "/admin/sources/location") {
+        if (this.busy) throw new Error("A source action is already running");
+        if (typeof body.path !== "string" || body.path.length > 2048)
+          throw new Error("Supply a mounted server file path");
+        this.busy = true;
+        void registerSourceLocation(this.directory, body.id, body.path)
+          .catch(async (error) => {
+            if (/^[a-f0-9]{32}$/.test(body.id))
+              await Bun.write(
+                join(this.directory, body.id + ".location-progress.json"),
+                JSON.stringify({
+                  id: body.id,
+                  state: "failed",
+                  path: body.path,
+                  completed: 0,
+                  bytes: 0,
+                  message: String(error),
+                }),
+              );
+          })
+          .finally(() => {
+            this.busy = false;
+          });
+        return json(
+          {
+            message:
+              "Verification started. The original source remains untouched.",
+          },
+          202,
+        );
+      }
       if (url.pathname === "/admin/sources/europe-recipe") {
         validateSelectionScope(body.selection, WORLD_SOURCE);
         const region = (await this.regions.regions()).find(

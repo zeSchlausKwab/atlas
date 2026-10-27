@@ -1,3 +1,5 @@
+import { MapDiscovery } from "./discovery";
+import type { MapOffer } from "../../packages/format/src/catalog";
 import { SourceCache } from "./source-cache";
 import { adminAccess, ADMIN_DENIED } from "./admin-access";
 import { Preparations } from "./preparations";
@@ -88,6 +90,37 @@ const library = new HostedLibrary(preparations, (reader) => {
   return child;
 });
 
+const discovery = await MapDiscovery.open(
+  resolve(dataDir, "hashtree"),
+  access,
+  () => [
+    {
+      id: "demo",
+      path: mapPath,
+      offer: {
+        id: "demo",
+        url: "/maps/demo.atlas",
+        api: "/api",
+        bytes: snapshot.size,
+        manifest: engine.reader.index.manifest,
+      },
+    },
+    ...preparations
+      .catalog()
+      .map((m) => ({
+        id: m.id,
+        path: preparations.path(m.id),
+        offer: m as MapOffer,
+      })),
+  ],
+);
+
+const releaseLibrary = preparations.beforeDelete;
+preparations.beforeDelete = async (id) => {
+  await discovery.remove(id);
+  await releaseLibrary?.(id);
+};
+
 const hostAssets = staticFiles(resolve(root, "dist/host"));
 if (!(await Bun.file(resolve(root, "dist/host/index.html")).exists()))
   throw new Error("Build the host console first: bun run build:host");
@@ -95,14 +128,22 @@ const clientUrl = serverAddress(
   process.env.ATLAS_CLIENT_URL ?? "http://127.0.0.1:5173/",
 );
 const origins = corsPolicy(process.env.ATLAS_CORS_ORIGINS ?? "*");
-const server = Bun.serve({
+const server = Bun.serve<{
+  subscriptions: Map<string, Record<string, unknown>[]>;
+}>({
   hostname: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3100),
   maxRequestBodySize: 16384,
   // Opening a large hosted package verifies its hash before responding.
   // Bun's 10-second default otherwise drops that first request mid-verification.
   idleTimeout: 120,
+  websocket: discovery.websocket,
   async fetch(request, bunServer) {
+    if (new URL(request.url).pathname === "/nostr") {
+      if (bunServer.upgrade(request, { data: { subscriptions: new Map() } }))
+        return;
+      return new Response("Nostr WebSocket endpoint", { status: 426 });
+    }
     return publicCors(request, origins, async () => {
       const path = new URL(request.url).pathname;
       if (
@@ -117,6 +158,11 @@ const server = Bun.serve({
             headers: { "Retry-After": "5", "Cache-Control": "no-store" },
           },
         );
+      const discovered = await discovery.handle(
+        request,
+        bunServer.requestIP(request)?.address,
+      );
+      if (discovered) return discovered;
       if (path.startsWith("/admin/sources"))
         return sourceCache.handle(
           request,
@@ -137,8 +183,11 @@ const server = Bun.serve({
                 api: "/api",
                 bytes: snapshot.size,
                 manifest: engine.reader.index.manifest,
+                hashtree: discovery.offer("demo"),
               },
-              ...preparations.catalog(),
+              ...preparations
+                .catalog()
+                .map((m) => ({ ...m, hashtree: discovery.offer(m.id) })),
             ],
           },
           {
@@ -209,6 +258,7 @@ console.log(
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, async () => {
+    await discovery.close();
     await sourceCache.close();
     await preparations.close();
     await library.close();

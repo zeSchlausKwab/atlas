@@ -10,6 +10,8 @@ export function publicPath(path: string) {
     path === "/" ||
     path === "/health" ||
     path === "/catalog" ||
+    path === "/discovery" ||
+    path.startsWith("/hashtree/") ||
     path.startsWith("/api/") ||
     path.startsWith("/maps/")
   );

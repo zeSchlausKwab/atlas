@@ -378,6 +378,18 @@
           The source package below continues to serve the main demo.
         </p>
       </section>
+      <section id="discovery">
+        <h2>Discovery &amp; delivery</h2>
+        <p>
+          Publish a map from your library to make it discoverable through this
+          host’s Nostr relay and readable as verified Hashtree blocks. Its
+          single Atlas file stays downloadable.
+        </p>
+        <p id="discovery-identity" class="quiet"></p>
+        <button id="discovery-base">Publish the base map</button>
+        <p id="discovery-status" role="status"></p>
+        <div id="discovery-jobs" class="host-library"></div>
+      </section>
       <details id="sources" class="host-downloads">
         <summary>
           Source files & downloads
@@ -410,6 +422,28 @@
           downloading.
         </p>
         <p id="source-space" class="quiet"></p>
+        <details>
+          <summary>Use an existing copy on a mounted NAS or disk</summary>
+          <p>
+            Mount the SMB share on the server first. Select a verified source
+            and enter its server path; Atlas checks the entire file before
+            switching to it. Disconnecting the share makes that source
+            unavailable.
+          </p>
+          <label for="source-location-id">Verified source</label
+          ><select id="source-location-id"></select>
+          <label for="source-location-path"
+            >Mounted PBF path on this server</label
+          >
+          <input
+            id="source-location-path"
+            placeholder="/mnt/maps/planet.osm.pbf"
+          />
+          <button id="source-location-register">
+            Verify &amp; use this location
+          </button>
+          <p id="source-location-status" role="status"></p>
+        </details>
         <div id="source-jobs" class="host-library" aria-live="polite"></div>
         <p class="quiet">
           These files are build inputs. Download them once and select them in

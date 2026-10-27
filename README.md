@@ -11,6 +11,12 @@ reusable result references and explicit coverage. New imports include explicit O
 house-number addresses and queryable POI tags. Run `bun run demo:workspace` for a
 small, fully local two-file proof; see [AI workspaces](docs/AI-WORKSPACES.md).
 
+## Hashtree and Nostr
+
+Publish a map from the host console, discover its signed offer in the client
+composer, and fetch verified chunks from one or more providers. The `.atlas`
+remains a standalone file. See [Hashtree setup, measurements and current limits](docs/HASHTREE.md).
+
 ## Run locally
 
 No remote Atlas server, account, SSH access, Nostr relay or planet download is

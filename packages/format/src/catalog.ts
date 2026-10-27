@@ -1,3 +1,4 @@
+import { parseTree, type TreeOffer } from "../../hashtree/src/source";
 import { MAP_LAYERS, type Manifest } from "./index";
 export interface MapOffer {
   id: string;
@@ -5,17 +6,10 @@ export interface MapOffer {
   api: string;
   bytes: number;
   manifest: Manifest;
+  hashtree?: TreeOffer;
 }
-export function httpUrl(value: string, base?: string) {
-  const url = new URL(value, base);
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    url.username ||
-    url.password
-  )
-    throw new Error("Use an HTTP(S) URL without credentials.");
-  return url.href;
-}
+import { httpUrl } from "./urls";
+export { httpUrl } from "./urls";
 /** Offers are discovery hints. The reader validates the actual package, and its
  * snapshot must agree before a catalog offer can participate in a composition. */
 export function parseCatalog(value: unknown, base: string): MapOffer[] {
@@ -65,6 +59,7 @@ export function parseCatalog(value: unknown, base: string): MapOffer[] {
       api: httpUrl(m.api, base),
       bytes: m.bytes,
       manifest: f,
+      ...(m.hashtree ? { hashtree: parseTree(m.hashtree, m.bytes) } : {}),
     };
   });
 }

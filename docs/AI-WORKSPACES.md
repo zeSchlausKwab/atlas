@@ -150,6 +150,7 @@ ContextVM transport on an isolated local relay. `bun run verify:workspace-build`
 compiles the small local PBF at z0–16 with all capabilities and tests a real address
 after closing its file reader. Temporary build files are removed afterwards.
 
-Hashtree/Nostr discovery and transport are a separate follow-up. This workspace
-contract uses the existing verified byte-range reader and can accept another byte
-source later; it does not claim Hashtree delivery is implemented.
+Workspaces now accept the Hashtree byte source through the same reader interface.
+The real two-map rehearsal proves cached location/address queries after both
+providers close. See [Hashtree delivery](HASHTREE.md) for measurements and limits,
+including the remaining coarse feature-cell memory cost in dense cities.

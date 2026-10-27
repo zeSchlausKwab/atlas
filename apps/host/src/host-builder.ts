@@ -1,3 +1,4 @@
+import { publishMap } from "./host-discovery";
 import {
   currentObservation,
   type CompilerObservation,
@@ -503,6 +504,10 @@ function jobs(values: PreparationJob[]) {
         }
         links.append(a);
       }
+      const publish = document.createElement("button");
+      publish.textContent = "Publish with Hashtree";
+      publish.onclick = () => void publishMap(job.id);
+      links.append(publish);
       const details = document.createElement("details");
       details.append(
         text("summary", "Package manifest"),

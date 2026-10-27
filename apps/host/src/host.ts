@@ -1,3 +1,4 @@
+import { startDiscovery } from "./host-discovery";
 import { startSources } from "./host-sources";
 import { openClient } from "./client-link";
 import { startBuilder } from "./host-builder";
@@ -92,7 +93,12 @@ async function start() {
       : config.administration.message;
     if (!config.administration.allowed)
       throw new Error(config.administration.message);
-    await Promise.all([load(), startBuilder(), startSources()]);
+    await Promise.all([
+      load(),
+      startBuilder(),
+      startSources(),
+      startDiscovery(),
+    ]);
   } catch (error) {
     el("access").textContent = String(error);
     for (const id of [

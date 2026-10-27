@@ -103,6 +103,22 @@ export async function startSources() {
       el("space").textContent =
         `${storageSize(available)} free · source downloads preserve ${storageSize(reserve)} for other work. Compilation requires additional workspace.`;
       render(data.jobs);
+      const locations = el<HTMLSelectElement>("location-id"),
+        selected = locations.value;
+      locations.replaceChildren(
+        ...data.jobs
+          .filter((j: SourceJob) => j.state === "ready")
+          .map((j: SourceJob) => new Option(j.name, j.id)),
+      );
+      if ([...locations.options].some((o) => o.value === selected))
+        locations.value = selected;
+      if (data.locations?.length)
+        el("location-status").textContent = data.locations
+          .map(
+            (l: any) =>
+              `${l.state}: ${l.path} · ${l.bytes ? ((100 * l.completed) / l.bytes).toFixed(1) : 0}% · ${l.message}`,
+          )
+          .join("\n");
     } catch (e) {
       el("space").textContent = String(e);
     } finally {
@@ -148,6 +164,17 @@ export async function startSources() {
     } finally {
       action = false;
       await refresh();
+    }
+  };
+  el("location-register").onclick = async () => {
+    try {
+      const r = await post("location", {
+        id: el<HTMLSelectElement>("location-id").value,
+        path: el<HTMLInputElement>("location-path").value,
+      });
+      el("location-status").textContent = r.message;
+    } catch (e) {
+      el("location-status").textContent = String(e);
     }
   };
   await refresh();

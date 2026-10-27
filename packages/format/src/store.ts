@@ -13,6 +13,7 @@ export interface BlockStore {
   keys(snapshot: string): Promise<string[]>;
 }
 const eligible = (key: string) =>
+  key.startsWith("hashtree/") ||
   key.startsWith("tile/") ||
   key.startsWith("labels/") ||
   key.startsWith("search/") ||

@@ -215,6 +215,24 @@
                     required
                   /><button type="submit">Discover maps</button>
                 </form>
+                <form id="composition-nostr-form" class="composition-rule">
+                  <label for="composition-relay">Discover through Nostr</label>
+                  <input
+                    id="composition-relay"
+                    type="url"
+                    placeholder="ws://localhost:3100/nostr"
+                    required
+                  />
+                  <label for="composition-publisher"
+                    >Publisher public key (hex)</label
+                  >
+                  <input
+                    id="composition-publisher"
+                    pattern="[a-f0-9]{64}"
+                    required
+                  />
+                  <button type="submit">Listen for maps</button>
+                </form>
                 <p class="quiet">
                   Cross-map routing requires one shared compiled graph.
                   Independent snapshots can share a display. Composition uses 2D
