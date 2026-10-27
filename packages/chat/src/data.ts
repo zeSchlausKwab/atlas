@@ -20,7 +20,17 @@ import {
   prepareChart,
   type ChartInput,
 } from "./analysis";
+import { distanceBands, constructShape } from "../../spatial/src/construction";
+import {
+  createField,
+  fieldContours,
+  type SampledField,
+} from "../../spatial/src/fields";
 export class ChatDataRuntime {
+  private readonly fields = new Map<
+    string,
+    { field: SampledField; meta: ResultMeta }
+  >();
   readonly workspace: AtlasWorkspace;
   readonly results = new GeometryResults();
   readonly registry: OperationRegistry;
@@ -87,7 +97,84 @@ export class ChatDataRuntime {
     const start = performance.now(),
       before = this.bytesRead;
     let value: any;
-    if (name.startsWith("spatial_")) {
+    if (name === "spatial_bands" || name === "spatial_shape") {
+      const source = input.result
+        ? await this.resolve(input.result)
+        : undefined;
+      if (name === "spatial_bands" && !source)
+        throw new Error("Distance bands need a cached source result");
+      const result =
+        name === "spatial_bands"
+          ? await distanceBands(input, source!.collection, signal, progress)
+          : await constructShape(input, source?.collection, signal, progress);
+      signal.throwIfAborted();
+      value = this.results.save(result.collection, {
+        operation: name,
+        parameters: input,
+        inputs: source ? [source.meta] : [],
+        summary: result.summary,
+        units: result.units,
+        notes: result.notes,
+        scope: source ? "derived-from-retained-data" : "authored-geometry",
+      });
+    } else if (name === "field_create") {
+      const source = await this.resolve(input.result);
+      const field = await createField(
+        input,
+        source.collection,
+        signal,
+        progress,
+      );
+      const ref = "field-" + crypto.randomUUID();
+      const meta: ResultMeta = {
+        operation: name,
+        parameters: input,
+        inputs: [source.meta],
+        scope: "derived-from-retained-data",
+      };
+      signal.throwIfAborted();
+      this.fields.set(ref, { field, meta });
+      value = { field: ref, ...field.description, provenance: meta };
+    } else if (
+      name === "field_contours" ||
+      name === "field_inspect" ||
+      name === "field_release"
+    ) {
+      const saved = this.fields.get(input.field);
+      if (!saved)
+        throw new Error("Unknown or released field; create a field first");
+      if (name === "field_release") {
+        this.fields.delete(input.field);
+        value = {
+          released: input.field,
+          sampleBytesFreed: saved.field.values.byteLength,
+        };
+      } else if (name === "field_inspect")
+        value = {
+          field: input.field,
+          ...saved.field.description,
+          provenance: saved.meta,
+        };
+      else {
+        const result = await fieldContours(
+          saved.field,
+          input,
+          signal,
+          progress,
+        );
+        signal.throwIfAborted();
+        value = this.results.save(result.collection, {
+          operation: name,
+          parameters: input,
+          inputs: [saved.meta],
+          summary: result.summary,
+          units: result.units,
+          notes: result.notes,
+          field: input.field,
+          scope: "derived-from-retained-data",
+        });
+      }
+    } else if (name.startsWith("spatial_")) {
       const source = await this.resolve(input.result),
         target = input.other ? await this.resolve(input.other) : undefined;
       const result = await spatialOperation(
@@ -290,6 +377,7 @@ export class ChatDataRuntime {
     );
   }
   clear() {
+    this.fields.clear();
     this.workspace.clear();
     this.results.clear();
   }

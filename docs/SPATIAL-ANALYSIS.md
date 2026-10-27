@@ -115,3 +115,6 @@ multilines, ties, radius cutoffs, hulls, clipping and cancellation.
 Geometry primitives use modular [Turf](https://turfjs.org/docs/api/buffer)
 packages pinned to 7.4.0; [nearestPointOnLine](https://turfjs.org/docs/api/nearestPointOnLine)
 provides the spherical point-to-segment distance. No external spatial API is used.
+
+For dissolved distance bands, validated shape constructors, reusable distance/density
+fields and contour lines, see [Continuous geometry](CONTINUOUS-GEOMETRY.md).

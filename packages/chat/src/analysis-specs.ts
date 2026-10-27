@@ -1,4 +1,5 @@
 import { objectSchema } from "../../operations/src/registry";
+import { constructionSpecs } from "./construction-specs";
 const ref = { type: "string", minLength: 1 };
 const field = {
   type: "string",
@@ -22,6 +23,7 @@ export const conditionSchema = objectSchema(
   ["field", "op", "value"],
 );
 export const analysisSpecs: Array<[string, string, Record<string, unknown>]> = [
+  ...constructionSpecs,
   [
     "spatial_measure",
     "Add areaM2 for polygons, lengthM for roads/rails/water lines, perimeterM for polygon outer and hole boundaries. Spherical units; non-applicable values null. Returns a cached result with original attributes. Use result_summary, result_filter, chart_show or map_draw next.",

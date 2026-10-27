@@ -25,7 +25,7 @@ import type {
 
 export type Bounds = [number, number, number, number];
 export type Shape = Feature<Exclude<Geometry, { type: "GeometryCollection" }>>;
-type Surface = Feature<Polygon | MultiPolygon>;
+export type Surface = Feature<Polygon | MultiPolygon>;
 export type Properties = Record<string, unknown>;
 export interface Output {
   collection: FeatureCollection;
@@ -54,11 +54,14 @@ export interface SpatialInput {
   excludeSameId?: boolean;
   invert?: boolean;
 }
-export const fc = (features: Feature[]): FeatureCollection => ({
-  type: "FeatureCollection",
-  features,
-});
-const polygon = (f: Feature): f is Surface =>
+export function fc(
+  features: Surface[],
+): FeatureCollection<Polygon | MultiPolygon>;
+export function fc(features: Feature[]): FeatureCollection;
+export function fc(features: Feature[]): FeatureCollection {
+  return { type: "FeatureCollection", features };
+}
+export const polygon = (f: Feature): f is Surface =>
   f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon";
 const identity = (f: Feature, index: number) =>
   String(f.id ?? f.properties?.id ?? `feature-${index}`);
@@ -85,7 +88,7 @@ export function boundsOf(f: Feature): Bounds {
   });
   return b;
 }
-function coordinates(g: Geometry): Position[] {
+export function coordinates(g: Geometry): Position[] {
   if (g.type === "GeometryCollection")
     throw new Error("Flatten GeometryCollections before spatial analysis");
   if (g.type === "Point") return [g.coordinates];
@@ -94,7 +97,7 @@ function coordinates(g: Geometry): Position[] {
     return g.coordinates.flat();
   return g.coordinates.flat(2);
 }
-function segments(g: Geometry): Position[][] {
+export function segments(g: Geometry): Position[][] {
   switch (g.type) {
     case "LineString":
       return [g.coordinates];
@@ -125,7 +128,7 @@ export function rect(b: Bounds): Surface {
     },
   };
 }
-function validBounds(b?: Bounds): asserts b is Bounds {
+export function validBounds(b?: Bounds): asserts b is Bounds {
   if (
     !b ||
     b.length !== 4 ||
@@ -141,7 +144,7 @@ function validBounds(b?: Bounds): asserts b is Bounds {
       "Use non-crossing [west,south,east,north] bounds within ±85° latitude",
     );
 }
-function positive(
+export function positive(
   value: number | undefined,
   name: string,
 ): asserts value is number {
@@ -160,7 +163,7 @@ function derived(
     properties: { ...f.properties, ...props, geometryType: geometry.type },
   };
 }
-function checkedGeometry(f: Feature) {
+export function checkedGeometry(f: Feature) {
   if (!f.geometry)
     throw new Error("Prepare geometry:true for spatial operations");
   if (!coordinates(f.geometry).length)
@@ -173,7 +176,7 @@ function checkedGeometry(f: Feature) {
         );
 }
 /** Static bounding-box tree for repeated candidate lookups in a task. */
-class BoxTree {
+export class BoxTree {
   private node?: {
     box: Bounds;
     left?: BoxTree;

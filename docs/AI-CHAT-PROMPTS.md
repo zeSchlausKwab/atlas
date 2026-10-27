@@ -120,3 +120,32 @@ a depot, time windows, service durations, load limits and a lunch break. Paste
 [the ready-made prompt](../examples/delivery/PROMPT.md) to test address geocoding,
 stitched routing, scheduling and labeled map visualization. The separate developer
 verification file records a feasible tour without giving coordinates to the AI.
+
+## Constructed polygons and continuous fields
+
+Reload the client to receive the new tool catalog. Existing Vienna archives work;
+no map redownload is needed. Pin an area within coverage and request padded source
+data when comparing proximity near its edges.
+
+- **Danube bank bands:** “Within this analysis area, draw land within 100, 250 and
+  500 metres of the mapped Danube banks as three non-overlapping blue bands. Use
+  river polygons and exclude water interiors. Clip after buffering and explain
+  source coverage. These are proximity zones, not flood risk.”
+- **Reusable contours:** “Make a 25 m distance field from these river polygons and
+  draw contour lines at 75, 200 and 400 metres. Then reuse the same field for 150,
+  350 and 700 metres. Tell me whether the second operation read any map bytes.”
+- **Café concentrations:** “Find retained cafés in this neighborhood and its 1 km
+  surroundings. Build a density field with 250 m bandwidth and 40 m spacing, then
+  show labeled contour bands within the neighborhood. Choose levels from the
+  reported range and state the units. This is café density, not popularity.”
+- **Railway proximity:** “Draw dissolved 50, 150 and 300 metre bands around retained
+  railway lines. Highlight buildings whose footprints intersect the nearest
+  band; report unknown heights separately. Do not call this noise exposure.”
+- **A corridor through the city:** “Find a walking route between these two resolved
+  addresses. Draw a 100 m corridor on either side of its line and highlight parks
+  intersecting that corridor. Treat this as straight-line proximity to the route,
+  not proof of an entrance or reachable park.”
+- **Service-gap exploration:** “Use the retained drinking-water locations to make
+  a distance field. Highlight land more than 300 metres from a retained point,
+  and compare with a 500 metre threshold using the same field. Distinguish data
+  gaps from claims that no drinking water exists.”

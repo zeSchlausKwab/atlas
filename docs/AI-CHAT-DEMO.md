@@ -275,7 +275,7 @@ this illustrates why keeping intermediate calls and results is useful for evalua
 
 ## Reusable spatial analysis and linked charts
 
-The browser chat now exposes ten `spatial_*` operations plus result filtering,
+The browser chat exposes reusable `spatial_*` operations plus result filtering,
 summaries, feature inspection, and linked charts. The common pipeline is
 `workspace_prepare → workspace_query → spatial_* → result_filter/summary →
 chart_show/map_draw`. Cached results preserve source IDs, all retained attributes,
@@ -301,3 +301,7 @@ highlighted ten longest segments with labels, then plotted length against neares
 railway distance in a second turn with zero additional source reads. An initial
 model geometryType query exposed a query-field mismatch; geometryType is now
 supported by both workspace_query and result_filter, with a regression test.
+
+Constructed polygons, distance bands and reusable numeric fields now run in the
+chat worker too. See [continuous geometry](CONTINUOUS-GEOMETRY.md) for tool contracts,
+accuracy limits and the Danube regression. Reload the client to load the new catalog.
