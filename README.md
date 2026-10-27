@@ -11,8 +11,12 @@ reusable result references and explicit coverage. New imports include explicit O
 house-number addresses and queryable POI tags. Run `bun run demo:workspace` for a
 small, fully local two-file proof; see [AI workspaces](docs/AI-WORKSPACES.md).
 [Feature paging](docs/FEATURE-PAGING.md) separates bounded attribute and geometry
-reads. The [client-owned chat demo design](docs/AI-CHAT-DEMO.md) describes the next
-UI and agent layer; the chat panel is not implemented yet.
+reads. The **Chat** tab now runs a browser-owned agent with local analysis,
+address search, routing, isochrones and removable map drawings. Put `DS_API_KEY`
+in your ignored `.env`, then restart `bun run dev` to enable DeepSeek Flash through
+a same-origin credential proxy. The key stays in the client server; map tools and
+cached workspaces stay in the browser. Inference needs internet. See the
+[chat demo and measured Vienna tests](docs/AI-CHAT-DEMO.md).
 
 ## Hashtree and Nostr
 

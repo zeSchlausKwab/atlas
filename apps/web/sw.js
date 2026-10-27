@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v23";
+const CACHE = "atlas-shell-v24";
 let generation = 0;
 let paused = false;
 const writes = new Set();
@@ -90,6 +90,7 @@ self.addEventListener("fetch", (event) => {
     url.origin !== location.origin ||
     !(
       SHELL.includes(url.pathname) ||
+      ["/chat-panel.js", "/chat-data-worker.js"].includes(url.pathname) ||
       /^\/plugins\/[a-f0-9]{64}\.js$/.test(url.pathname)
     )
   )

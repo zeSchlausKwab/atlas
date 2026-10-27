@@ -1,3 +1,4 @@
+import booleanIntersects from "@turf/boolean-intersects";
 import difference from "@turf/difference";
 import type { Feature, Polygon, MultiPolygon, Geometry } from "geojson";
 import { AtlasReader } from "../../format/src/reader";
@@ -668,6 +669,147 @@ export class AtlasWorkspace {
       coverage: structuredClone(w.coverage),
       snapshots: [...w.snapshots],
       expiresAt: w.expiresAt,
+    };
+  }
+  /** Deterministic statistics or spatial filtering of already pinned rows; no reads. */
+  analyze(input: {
+    result: string;
+    operation: "count" | "stats" | "group" | "within";
+    field?: string;
+    region?: Feature<Polygon | MultiPolygon>;
+  }) {
+    this.sweep();
+    const source = this.results.get(input.result);
+    if (!source)
+      throw new WorkspaceError(
+        "expired_reference",
+        "Result is unknown or expired.",
+      );
+    const w = this.workspace(source.workspace),
+      started = performance.now();
+    const evidence = {
+      result: input.result,
+      count: source.indexes.length,
+      coverage: structuredClone(w.coverage),
+      snapshots: [...w.snapshots],
+      expiresAt: w.expiresAt,
+      sourceBytes: 0,
+    };
+    if (input.operation === "count") return evidence;
+    if (input.operation === "within") {
+      if (
+        !input.region ||
+        !["Polygon", "MultiPolygon"].includes(input.region.geometry.type)
+      )
+        throw new WorkspaceError(
+          "invalid_request",
+          "Spatial filter requires a polygon result.",
+        );
+      const indexes = source.indexes.filter((i) => {
+        const row = w.rows[i]!;
+        const geometry =
+          row.geometry ??
+          (row.family === "locations"
+            ? { type: "Point" as const, coordinates: row.coordinates }
+            : undefined);
+        if (!geometry)
+          throw new WorkspaceError(
+            "unsupported_data",
+            "Prepare with geometry:true for spatial filtering.",
+          );
+        return booleanIntersects(
+          { type: "Feature", geometry, properties: {} },
+          input.region!,
+        );
+      });
+      const bytes = [...this.results.values()].reduce(
+        (n, r) => n + r.indexes.length * 8,
+        indexes.length * 8,
+      );
+      if (this.results.size >= 64 || bytes > 8 * MiB)
+        throw new WorkspaceError(
+          "budget_exceeded",
+          "Result budget reached; release a workspace.",
+        );
+      const result = crypto.randomUUID();
+      this.results.set(result, { workspace: w.id, indexes });
+      return {
+        ...evidence,
+        result,
+        workspace: w.id,
+        count: indexes.length,
+        method: "geometry-intersects; locations use retained anchors",
+        computeMs: performance.now() - started,
+        preview: this.result(result, 0, 5).rows,
+      };
+    }
+    if (
+      !input.field ||
+      !fieldValid(input.field) ||
+      ["geometry", "tags", "address"].includes(input.field)
+    )
+      throw new WorkspaceError("invalid_request", "Choose a scalar field.");
+    const values = source.indexes.map((i) => field(w.rows[i]!, input.field!));
+    if (input.operation === "stats") {
+      let known = 0,
+        unknown = 0,
+        min = Infinity,
+        max = -Infinity,
+        sum = 0;
+      for (const value of values) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          unknown++;
+          continue;
+        }
+        known++;
+        sum += value;
+        min = Math.min(min, value);
+        max = Math.max(max, value);
+      }
+      return {
+        ...evidence,
+        field: input.field,
+        known,
+        unknown,
+        min: known ? min : null,
+        max: known ? max : null,
+        sum: known ? sum : null,
+        mean: known ? sum / known : null,
+        units: input.field === "heightMeters" ? "metres" : "field units",
+        computeMs: performance.now() - started,
+      };
+    }
+    if (input.operation !== "group")
+      throw new WorkspaceError(
+        "invalid_request",
+        "Unknown analysis operation.",
+      );
+    const groups = new Map<string, { value: unknown; count: number }>();
+    for (const value of values) {
+      if (
+        value !== null &&
+        !["string", "number", "boolean"].includes(typeof value)
+      )
+        throw new WorkspaceError(
+          "invalid_request",
+          "Grouping requires a scalar field.",
+        );
+      const key = JSON.stringify(value);
+      const group = groups.get(key) ?? { value, count: 0 };
+      group.count++;
+      groups.set(key, group);
+      if (groups.size > 1000)
+        throw new WorkspaceError(
+          "budget_exceeded",
+          "Too many distinct groups; choose another field.",
+        );
+    }
+    return {
+      ...evidence,
+      field: input.field,
+      groups: [...groups.values()].sort((a, b) => b.count - a.count),
+      unknown: values.filter((v) => v === null).length,
+      computeMs: performance.now() - started,
     };
   }
   release(id: string) {

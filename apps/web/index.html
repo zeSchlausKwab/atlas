@@ -47,6 +47,7 @@
           <h1>Map workspace.</h1>
         </div>
         <div class="tool-tabs" role="tablist" aria-label="Map tools">
+          <button id="tab-chat" role="tab" data-tab="chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Chat</button>
           <button
             id="tab-composer"
             role="tab"
@@ -143,6 +144,7 @@
           </p>
         </div>
         <div class="sidebar-content">
+          <div id="panel-chat" role="tabpanel" data-panel="chat" aria-labelledby="tab-chat" hidden><div id="chat-root">Open a map to chat with it.</div></div>
           <div
             id="panel-composer"
             role="tabpanel"
@@ -1312,6 +1314,7 @@
           <span class="eyebrow">UNDER THE SURFACE</span>
           <h2>Follow the bytes.</h2>
           <p id="read-scope">Reads across the selected map sources.</p>
+          <p class="chat-read-note">Chat analysis reads are measured separately in the Chat panel.</p>
         </div>
         <div class="execution-ledger">
           <span class="tiny-note">LAST OPERATION</span>

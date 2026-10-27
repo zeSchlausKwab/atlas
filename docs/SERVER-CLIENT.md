@@ -7,7 +7,7 @@ Atlas now has two executable entry points and two browser builds.
 | Map server | `apps/server/index.ts` | TypeScript run by Bun; Rust native tools/WASM | Atlas storage, catalog, byte ranges, operations, preparation, ContextVM |
 | Server's host console | `apps/host/` | `dist/host/` | Administer that server; preview/select areas and prepare maps |
 | Consumer demo | `apps/web/` | `dist/client/` | Render/compose maps, run local tools or call remote operations |
-| Optional static client server | `apps/web/server.ts` | None | Serve client assets/config only; no map files, operation engine or proxy |
+| Optional static client server | `apps/web/server.ts` | None | Serve client assets/config and optional DeepSeek credential proxy; no map storage or tool execution |
 
 Shared format, rendering, operation and routing libraries remain under `packages/`.
 The browser and server still use the same implementations for corresponding tools.
@@ -40,7 +40,9 @@ The backend root and `/health` identify `atlas-server`. It serves `/host`, publi
 `/catalog`, `/maps/...`, `/api/...` and local administration endpoints. Consumer
 `/main.js`, `/routing-worker.js`, `/sw.js` and `/compose` return 404 there.
 The optional client server identifies `atlas-client` at `/health` and returns 404
-for the backend catalog, API, map and administration paths.
+for the backend catalog, map-operation API, map and administration paths.
+Its own `/api/chat/status` and `/api/chat/completions` endpoints support optional
+chat inference; the browser executes all chat map tools.
 
 ## Configuration
 
@@ -52,6 +54,7 @@ for the backend catalog, API, map and administration paths.
 | `ATLAS_CORS_ORIGINS` | Map server | `*` for public map consumers; optional comma-separated exact HTTP(S) origins |
 | `ATLAS_FILE`, `ATLAS_DATA_DIR` | Map server | Source package and persistent storage; never needed by the consumer |
 | `ATLAS_CLIENT_DIR` | Optional static server | `dist/client`; allows serving a separately copied client build |
+| `DS_API_KEY` | Client server only | Optional DeepSeek Flash credential; never included in static assets |
 | `HOST`, `PORT` | Each process independently | Loopback; server 3100 / client 5173 |
 
 Build a portable website with `ATLAS_SERVER_URL=https://maps.example bun run build:client`,
@@ -156,3 +159,6 @@ instead of leaving sections in a loading state.
 Unset both variables to restore local-only administration. Configure authenticated
 HTTPS before exposing administration beyond a trusted LAN. Public map consumers
 remain independent of administration permissions.
+
+Static hosting supports map tools without a backend. Chat inference additionally needs
+the same-origin credential proxy; see [the chat demo](AI-CHAT-DEMO.md).

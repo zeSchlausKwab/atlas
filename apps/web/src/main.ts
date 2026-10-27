@@ -1,3 +1,5 @@
+import { ChatLauncher } from "./chat-launcher";
+let chat: ChatLauncher | undefined;
 import { clientConnection } from "./connection";
 import { createComposer, type ClientComposer } from "./client-composer";
 import {
@@ -272,6 +274,8 @@ function closeSession() {
   map = undefined;
 }
 function closeTools() {
+  chat?.destroy();
+  chat = undefined;
   tools?.destroy();
   tools = undefined;
   extractor?.destroy();
@@ -462,6 +466,12 @@ function bindTools() {
     }),
   );
   configureOperations();
+  chat = new ChatLauncher(
+    map,
+    compositionSources?.map((s) => s.reader) ?? [reader],
+    () => new Set(operations?.enabled ?? []),
+    () => el<HTMLInputElement>("offline").checked,
+  );
   if (m.selection && !compositionSources) map.setSelection(m.selection.polygon);
   if (!compositionSources && m.name === "Vienna Plus") {
     map.center = project(16.373, 48.208);
@@ -733,6 +743,15 @@ function configureOperations() {
     | "device"
     | "server";
   operations.configure(mode, enabled);
+  if (chat && map) {
+    chat.destroy();
+    chat = new ChatLauncher(
+      map,
+      compositionSources?.map((s) => s.reader) ?? [reader],
+      () => new Set(operations?.enabled ?? []),
+      () => el<HTMLInputElement>("offline").checked,
+    );
+  }
   el("execution-hint").textContent =
     operations.mode === "server"
       ? "Receive results; the source data stays on the server."

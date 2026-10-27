@@ -1,4 +1,5 @@
 export function activateTab(name: string, focus = false) {
+  document.body.dataset.tab = name;
   for (const tab of document.querySelectorAll<HTMLButtonElement>(
     '[role="tab"]',
   )) {
@@ -11,6 +12,7 @@ export function activateTab(name: string, focus = false) {
     '[role="tabpanel"]',
   ))
     panel.hidden = panel.dataset.panel !== name;
+  document.dispatchEvent(new Event("atlas-tab"));
 }
 export function setupTabs() {
   const tabs = [

@@ -1,199 +1,186 @@
-# Atlas chat demo — client-owned map intelligence
+# Atlas chat — browser-owned map intelligence
 
-Status: design proposal, 27 October 2026. Feature paging is implemented; this document
-specifies the chat slice. No chat panel or agent loop is installed yet.
+Implemented 27 October 2026. Open **Chat** in the normal map client. It uses a lazy
+assistant-ui React panel, a browser-owned agent loop, an analysis worker, and the
+existing Rust/WASM routing worker. The map renderer remains outside React.
 
-## The claim we will demonstrate
+## Run it
 
-The browser discovers compatible `.atlas` sources, reads the parts relevant to a
-question, pins a task workspace, performs analysis locally, and draws the results.
-The model receives compact evidence and opaque references. Bulk map geometry stays in
-the browser; model context contains only bounded evidence, anchors and references.
+After the normal local setup, put `DS_API_KEY` in your ignored `.env` (or the client
+process environment), then run `bun run dev`. The model is fixed to
+`deepseek-flash`. Existing running client processes need restarting after setting
+the key; frontend edits need `bun run build:client` and a refresh.
 
-DeepSeek Flash is remote inference. Chat state, the tool loop, geospatial tools,
-result handles, drawing, cancellation and caching belong to the client. A small
-same-origin credential proxy forwards inference requests to DeepSeek; it performs
-no map queries. `DS_API_KEY` stays in the local/server environment and is never a
-Bun browser build define, browser config value, static asset, or committed secret.
-The model ID can be fixed to `deepseek-flash` for this demo.
+Select compatible maps in **Composer**, open **Chat → Analysis area**, then draw a
+rectangle or pin the visible view. The Vienna rehearsal has a **Use Vienna test
+area** shortcut. Example requests:
 
-"Offline" in this demo means the map data providers can disconnect after the
-needed data is cached. DeepSeek still needs a connection. Fully disconnected chat
-would require a local inference provider, which is a later independent adapter.
+- “Count buildings here with height at least 20 metres. Separate unknown heights
+  and distinguish explicit heights from level estimates. Highlight the matches.”
+- “Now only those at least 30 metres, using the cached data.”
+- “Find Handelskai 300 in Vienna and show it on the map.”
+- “Draw a five-minute walking area around that address.”
+
+**Drawings** lists removable layers; each can be fitted or removed independently.
+**Stop** aborts the reply and prevents late tool results from changing the map.
+Completed drawings remain until undone. **New chat** releases workspaces and result
+references. Changing selected sources or data-purpose permissions resets chat so
+old work cannot act on a different dataset. References expire after 30 minutes.
+
+A static-only client still supports map operations; chat inference requires the
+client server's `/api/chat/*` endpoints. The map host does not need the API key.
+The proxy is intended for a local development client, not an unauthenticated
+public inference service.
+
+## What executes where
 
 ```mermaid
 flowchart LR
-  Human[User] --> UI[Chat panel + map]
+  Human[User] --> UI[Chat panel and map]
   UI <--> Agent[Browser agent session]
-  Agent <-->|text, schemas, compact evidence| Proxy[Credential proxy]
+  Agent <-->|text, schemas, compact evidence| Proxy[Same-origin credential proxy]
   Proxy <--> Model[DeepSeek Flash]
-  Agent --> Tools[Validated client tool registry]
-  Tools --> Worker[Local analysis and routing workers]
-  Worker <--> Cache[Verified cache + task workspaces]
+  Agent --> Tools[Validated client tools]
+  Tools --> Worker[Analysis and routing workers]
+  Worker <--> Cache[Verified blocks and pinned workspaces]
   Cache <-->|selective reads| Files[Atlas files / HTTP / Hashtree]
-  Tools --> Layers[Result layers + undo history]
-  Layers --> UI
+  Tools --> Layers[Drawing layers and undo]
 ```
 
-## What to reuse from Earthly
+The browser keeps conversation state and dispatches every tool. The proxy only
+forwards inference requests to one fixed provider/model. It checks request origin,
+limits concurrent requests, bounds request/response sizes, and propagates
+cancellation. `DS_API_KEY` never becomes browser configuration or a build define.
+Tool execution continues to use the selected `.atlas` files, independent of a
+server's operation API. No map geometry is automatically sent to DeepSeek.
 
-Read: `/Users/schlaus/workspace/earthly/docs/architecture/chat.md` and
-`src/features/chat/{tools,requestContext.ts,sandbox,safeEditing}`.
-Earthly already runs a client-side agent. The improvement here comes from the data
-format and local execution contract, not from moving an already local loop.
+“Offline” means cached map operations can run after map providers disconnect;
+DeepSeek inference still needs internet. Fully disconnected conversation requires
+a local model adapter. A new uncached area fails explicitly in cache-only mode.
 
-Reuse the *patterns* and small transferable modules after checking dependencies:
+## Tool contracts
 
-- One registry owns schemas, validation, handlers and availability. Derive the model
-  tool list from live registry state; do not maintain a second handwritten list.
-- Capture compact, fresh map context on each user turn. Separate user intent from
-  observed source metadata and untrusted OSM text.
-- Keep complete assistant/tool-result exchanges and tool-call IDs across streaming,
-  retries, cancellation and context trimming. Preserve provider-required reasoning
-  fields internally when thinking mode is enabled; do not invent reasoning text.
-- Group tool activity in a collapsible progress display; retain timings and bytes.
-- Apply drawing changes through a small transactional interface, with undo tied to
-  the exact layer/revision. A late result from a cancelled run cannot alter the map.
-- Reuse the QuickJS worker design for a later code tool: warm compiled WASM,
-  fresh execution context per run, curated geospatial functions, deadline/memory/
-  output budgets, no DOM/network/credentials and no unrestricted `eval`.
+| Tools | Behavior |
+| --- | --- |
+| `map_context` | Current viewport, pinned analysis area, enabled purposes, sources and layers |
+| `workspace_catalog` | Available retained families, semantics, units and limitations |
+| `workspace_prepare` | Selective reads across compatible sources; pins bounded rows and optional geometry |
+| `workspace_query` | Typed filters on cached rows; returns a result ID and bounded preview |
+| `workspace_result` | Small projected pages; geometry is excluded from model-facing responses |
+| `analyze` | Count, numeric statistics including unknowns, scalar grouping, or spatial intersection with one polygon result |
+| `search`, `reverse` | Cross-source place/address candidates and nearest retained street; search reports per-source match totals and truncation |
+| `route`, `isochrone` | Composed walking/cycling/driving graph computation in WASM; returns a geometry result reference |
+| `map_draw` | Resolve shapes locally from a result, or draw bounded authored GeoJSON |
+| `map_view`, `map_undo` | Fit or remove the specified drawing/result; source data stays immutable |
+| `workspace_release` | Release pinned data and invalidate its result references |
 
-Do not transplant Earthly's monolithic store, Nostr account/payment workflows,
-MapLibre editor or publishing model into Atlas. Earthly's "Atlas" documents are
-curated map collections; they are unrelated to this repository's `.atlas` archive.
+Workspace IDs and result IDs are distinct: to analyze all rows, call
+`workspace_query` with only the workspace ID, then pass its **result** ID to
+`analyze`. Shared workspace schemas come from the existing operation registry;
+chat-only adapters are defined and validated in one table. Provider-facing schemas
+translate JSON Schema tuple arrays into a compatible representation, while local
+AJV validation retains each coordinate's exact bounds.
 
-## Chat UI choice
+Tools execute sequentially, with at most 12 model rounds and 32 tool calls per
+reply. SSE parsing preserves fragmented arguments and UTF-8, rejects incomplete
+streams, and keeps complete tool-call/result pairs through errors and cancellation.
+Source text is treated as evidence, not instructions. No arbitrary JavaScript,
+shell, network-fetch or dataset-administration tool is exposed.
 
-| Option | What it supplies | Fit here |
-| --- | --- | --- |
-| assistant-ui | React chat primitives, streaming/tool presentation, thread and cancellation interfaces | Recommended: a lazy React island in the existing TypeScript app; use ExternalStoreRuntime with our browser-owned session |
-| AI Elements / shadcn | Copyable presentation components, including tool disclosures | Viable, but its official site currently announces a move to shadcn/ui; check the current installation path before adopting |
-| Small custom panel | Full visual control with the existing DOM/CSS stack | Lowest framework cost, but we would own streaming, accessibility, scrolling and tool presentation |
+## Data and evidence
 
-Recommendation: assistant-ui for presentation, with our own `AtlasAgentSession`
-behind ExternalStoreRuntime. Keep the existing map/renderer outside React. Disable
-any automatic tool executor in the UI runtime when our session owns dispatch, so
-each call executes once. Do not enable a hosted chat service or persist conversations
-remotely by default. Add React/assistant-ui only with the actual UI slice, not now.
+Preparation uses the existing 0.25-degree maximum span, read/memory budgets,
+snapshot compatibility checks, exact boundary intersection and OSM-ID deduplication.
+Feature selection retains whole objects touching the boundary; it does not clip
+footprints. `geometry:false` saves shape reads for attribute-only work. Drawing or
+spatial filtering of those rows requires preparation with `geometry:true`.
 
-## A small tool vocabulary with deep local operations
+Derived analysis runs in a dedicated worker. The main thread brokers byte reads
+and persistent-cache access, sharing the existing verified block store with the
+map. Cancellation and session revocation gate late responses. Drawing uses separate
+bounded overlays: at most eight layers, 10,000 objects per drawing and 32 MiB of
+serialized geometry across layers. Geometry result storage has its own 32 MiB cap.
+These are payload limits, not a promise about total browser RSS.
 
-These are proposed public contracts, built from existing operation descriptors
-where possible. Names marked **existing** already work; the rest are new demo work.
+Results retain snapshots, coverage and expiry. Complete means complete within
+retained OSM source data, not real-world completeness. Missing height or
+accessibility remains unknown. Building levels imply an estimate of 3 m/floor;
+isochrones explicitly report their resolution and approximation. Spatial filtering
+uses intersection; POIs/addresses use their retained representative points.
 
-| Tool | Input and output | Execution / status |
-| --- | --- | --- |
-| `map_context` | Current bounds/camera, selected area/layers, pinned sources and roots, cache summary, limits and available tools | Client; new |
-| `workspace_catalog` | Retained families, tags/units, addresses, coverage and limitations | Existing, metadata only |
-| `search` / `reverse` | Place/address text or coordinate → bounded candidates with stable IDs | Existing; add composition-wide search/deduplication wrapper (current convenience tools use Tool source) |
-| `workspace_prepare` | Area, families, semantic requirements, geometry need and budgets → pinned workspace and completeness | Existing; new `geometry:false` selects attributes with exact boundary checks |
-| `workspace_query` | Workspace/result ref plus typed predicates → count, preview and result ref | Existing; repeated local queries need no new source reads |
-| `workspace_result` | Result ref, page and fields → bounded evidence | Existing; geometry omitted by default |
-| `analyze` | Result refs + typed steps such as group/count, min/max, measure, buffer, intersects, nearest → derived result ref and statistics | New deterministic worker operations; start with aggregates and a spatial filter |
-| `route` / `isochrone` | Coordinates or resolved feature anchors, mode and limits → result ref with geometry, metrics, coverage | Existing engines; add result-ref wrappers using composed client routing |
-| `map_draw` | Result ref or bounded authored GeoJSON, label and style → layer ref/change ref | New client drawing interface; geometries resolved locally, no coordinate echo through the model |
-| `map_view` / `map_undo` | Fit a result/layer, set camera, undo a specific change | New client presentation tools |
-| `workspace_release` | Workspace ref → release pinned data/results | Existing |
+Chat displays per-tool local time and logical source bytes, cumulative chat source
+reads, model rounds/tokens, and last reply duration. Chat analysis reads are measured
+separately from the main map inspector. Logical bytes are not Hashtree wire bytes:
+Hashtree can fetch a larger verified chunk than the requested range. There is no
+claim of an Earthly speedup without an equivalent workload measurement.
 
-Do not expose millions of possible questions as millions of tools. Prefer typed
-composable operations over rows/results, with installable, versioned operators for
-specialized algorithms. The host/client advertises the operators it actually has.
-Nostr advertisements describe data and capabilities; they never authorize fetching
-and executing arbitrary plugin code.
+## Vienna acceptance checks
 
-### Evidence and references
+Tested with local `west-paged.atlas` and `east-paged.atlas`, one shared source
+snapshot. The running LAN compiler/download was not restarted or deployed over.
 
-A common tool envelope should carry `resultRef`, count, bounded preview, source
-snapshots/Hashtree roots, requested scope, coverage, unknown-field counts, method,
-units, execution location, compute time, logical source bytes, actual transfer bytes
-and cache reuse. Keep these measurements distinct.
+Pinned area: `[16.368, 48.198, 16.392, 48.218]`.
 
-- `complete` means complete within retained source data, not a claim that OSM maps
-  every real-world object. Empty, partial, unsupported and unknown are distinct.
-- Never treat missing wheelchair/height/address tags as negative evidence.
-- Every derived result records its input references and analysis method.
-- References are session-scoped, expire/release explicitly, and never turn into
-  silently re-evaluated queries against a newer snapshot.
-- Stable results can be cited in answers and clicked to highlight the corresponding
-  objects. Large row sets and raw GeoJSON never become automatic tool text.
-- Result handles from the browser cannot be passed unchanged to a remote ContextVM
-  executor. It needs its own workspace or an explicit bounded transfer.
+| Observation | Result |
+| --- | ---: |
+| Distinct buildings | 3,260 |
+| Tagged height / levels estimate / unknown | 1,408 / 1,467 / 385 |
+| Height at least 20 m | 1,511 |
+| Height at least 30 m | 512 |
+| Cold workspace archive bytes, including footprints | 2,030,359 |
+| Workspace memory estimate | 46,566,740 bytes |
+| Follow-up query and drawing with providers blocked | 0 new map reads |
+| Cross-chunk walking route | 7.31 km; both providers used |
 
-### Geometry on demand
+On one visible Chromium run, preparation took about 0.95 s, cached filters 3–5 ms,
+and drawing resolution 18–43 ms. The route took about 189 ms including reads/worker
+startup, reading about 1.61 MB. A five-minute walking isochrone drew successfully
+with a 25 m resolution and an approximate 0.395 km² area. These are local rehearsal
+observations, not general performance guarantees.
 
-The first demo can request `geometry:true` when a task requires drawing/spatial
-analysis, then reuse those pinned shapes. For attribute-only counting/filtering,
-use `geometry:false`. This already saves reads for interior candidates.
+A live DeepSeek run chose the map tools, reported the counts and unknowns, drew
+footprints, reused the pinned data for a follow-up, and resolved Handelskai 300 as
+an explicit OSM address. Early live calls exposed a provider schema incompatibility
+and confusion between workspace and result references; the schema adapter and tool
+guidance now address those. The final live run completed 14 tools with no tool
+errors; its first analysis reply took 12.6 s and seven model rounds on this machine.
+Model reasoning remains fallible; inspect tool evidence.
 
-A later `workspace_materialize` operation should hydrate only the geometries of a
-filtered result, with a second explicit read budget and cache-only option. This
-requires keeping source/page references per row; it is not implemented yet. Until
-then the UI/model must not interpret missing workspace geometry as missing source
-geometry or promise drawing from an attribute-only workspace after disconnecting.
+Regression coverage includes SSE fragmentation/truncation, argument errors,
+cancellation with valid provider history, overlap deduplication, unknown values,
+spatial filtering, expired refs, geometry validation and proxy origin/concurrency
+rules. The full suite passes 208 tests and TypeScript validation. Browser checks used the real worker, renderer and routing engine with only
+the model scripted, then repeated key questions with live inference. They verified
+zero-read follow-up drawing, undo, cancellation during a blocked map read, stale
+handle rejection, and successful isochrone drawing.
 
-## First executable story
+```sh
+bun run typecheck
+bun test
+# Existing paged Vienna rehearsal files; no model/key needed:
+bun run verify:chat-pair
+# Or pass both paths explicitly:
+bun run verify:chat-pair /path/west.atlas /path/east.atlas
+```
 
-Start with the two compatible rehearsal maps and a user-drawn area crossing their
-seam. Suggested prompt:
+See [feature paging](FEATURE-PAGING.md) to create the paged rehearsal archives.
+The original published legacy chunks still need repacking for dense analysis at
+this scope; a browser update alone cannot change their storage layout.
 
-> How many buildings here have a recorded or estimated height of at least 20 m?
-> Separate unknown heights, highlight the matching buildings, and draw a walking
-> route between these two selected addresses.
+## Next boundaries
 
-1. Capture selection, both pinned datasets and available tools.
-2. Prepare `buildings` with geometry because the request includes highlighting;
-   retain the height source (`tagged`, `levels-estimate`, `unknown`).
-3. Query/count the classes locally, save result references and draw from those refs.
-4. Resolve addresses and route with the existing composed routing worker; draw the
-   route by reference. Explain source coverage and the height estimation convention.
-5. Follow up with "only those above 30 m"; reuse the same workspace with zero map reads.
-6. Disable map-provider network access while leaving model inference available;
-   repeat cached operations. A new uncached area must produce `missing_blocks`.
+- No arbitrary-code sandbox yet. Typed tools cover this slice; a later confined
+  worker can expose curated geometry operators with explicit budgets.
+- Statistics operate on workspace results. Spatial filtering currently accepts one
+  polygon/multipolygon region, e.g. one isochrone band.
+- Filtered-result geometry hydration, automatic spatial subdivision, clickable
+  answer citations, persistent conversations and standalone model selection remain
+  follow-ups. Responses and tool details are available for inspection now.
+- Tools can use Hashtree through the existing reader, but this slice's recorded
+  browser acceptance test used local HTTP ranges. Hashtree amplification and
+  offline-reload measurements remain separate work.
+- Drawing is a 2D overlay projected through the current camera. It does not create
+  editable source objects or true 3D extrusions.
 
-Next story: cafés or pharmacies within a 15-minute reachable area, grouping explicit
-accessibility tags separately from unknowns. This needs a new spatial filter between
-POI results and an isochrone, not just a prompt change. Surface the engine's method
-and approximation limits in the result.
-
-## Implementation order and acceptance gates
-
-1. **Done now:** feature paging, separate attributes/geometry, bounded excerpts,
-   legacy compatibility, exact intersection and a feature-only repacker.
-2. Add a client session/registry adapter and result-layer store with undo; a narrow
-   same-origin DeepSeek SSE proxy. Fixed upstream/model, bounded input/output,
-   cancellation and request limits; no arbitrary proxy URL or tool execution there.
-3. Add assistant-ui as a lazy panel. Validate arguments before dispatch. Initially
-   serialize tool calls: the current operation session cancels its previous plugin
-   invocation, so naive parallel model calls would cancel each other.
-4. Add aggregate/spatial-filter workers and route/isochrone result references.
-   Keep source geometry immutable and derived layers removable.
-5. Run deterministic scripted model tests and a small live DeepSeek evaluation.
-   Only then consider the confined custom-code tool and additional ContextVM hosts.
-
-Acceptance tests must exercise the real browser executors, not mock all tool results:
-
-- Cross-map IDs/counts match direct engine results; unknowns and coverage are correct.
-- A reference-driven drawing highlights exactly the selected IDs, with stable undo.
-- Identical follow-up queries produce zero map-provider reads (including Hashtree),
-  while inference traffic is reported separately.
-- Cancelling during streaming, reading or analysis prevents late drawing changes.
-- Malformed tool arguments, stale handles and unavailable capabilities yield typed
-  recoverable errors. Failed exchanges stay well-formed for the next model round.
-- Record map transfer, model bytes/tokens/rounds, tool time, total response time and
-  cold/warm cache separately. Compare with Earthly on equivalent data/scope rather
-  than presenting a different source or task as a speed comparison.
-- Cached geospatial data and runtime overhead have separate budgets. Large geometry
-  stays out of model context and geometry-only overlays do not mutate source files.
-
-## Provider and UI references checked
-
-- [DeepSeek first call and current model ID](https://api-docs.deepseek.com/quick_start/agent_integrations/)
-- [DeepSeek tool calls](https://api-docs.deepseek.com/guides/tool_calls/)
-- [assistant-ui LocalRuntime](https://www.assistant-ui.com/docs/runtimes/custom/local-runtime)
-- [assistant-ui ExternalStoreRuntime](https://www.assistant-ui.com/docs/runtimes/custom/external-store)
-- [assistant-ui source / MIT license](https://github.com/assistant-ui/assistant-ui)
-- [AI Elements tool component / migration notice](https://elements.ai-sdk.dev/components/tool)
-
-The configured DeepSeek connection returned HTTP 200, `model: deepseek-flash` and
-an expected synthetic function call in a single smoke request on 27 October 2026.
-That checks connection/tool-call compatibility, not map reasoning quality.
+References: [assistant-ui ExternalStoreRuntime](https://www.assistant-ui.com/docs/runtimes/custom/external-store),
+[DeepSeek tool calls](https://api-docs.deepseek.com/guides/tool_calls/).

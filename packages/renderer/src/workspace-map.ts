@@ -3,6 +3,7 @@ import type { AtlasMap } from "./map";
 export type WorkspaceMap = Pick<
   AtlasMap,
   | "canvas"
+  | "overlays"
   | "reader"
   | "center"
   | "zoom"

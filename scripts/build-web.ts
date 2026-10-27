@@ -22,10 +22,14 @@ export async function buildBrowserApp(kind: "client" | "host") {
           "routing-worker",
           "plugin-worker",
           "compose",
+          "chat-data-worker",
         ].map((n) => `apps/web/src/${n}.ts`)
       : ["apps/host/src/host.ts"];
   const result = await Bun.build({
-    entrypoints: entries.map((p) => resolve(root, p)),
+    entrypoints: [
+      ...entries,
+      ...(kind === "client" ? ["apps/web/src/chat-panel.tsx"] : []),
+    ].map((p) => resolve(root, p)),
     outdir: directory,
     target: "browser",
     minify: true,
