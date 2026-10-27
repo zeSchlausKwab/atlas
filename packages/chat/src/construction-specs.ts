@@ -18,12 +18,13 @@ export const constructionSpecs: Array<
 > = [
   [
     "spatial_bands",
-    "Construct dissolved, non-overlapping proximity polygons around cached points, lines or areas, with holes preserved. distancesMeters is strictly increasing, e.g. [100,250,500]. excludeSource defaults true: water/building interiors are removed. Optional bounds clip AFTER buffering. Returns bandIndex/fromMeters/toMeters/label/areaM2 for map_draw styling. Prefer this to grid squares or handwritten buffer code. Polygon distances start at banks/footprints; lines start at centerlines. Prepare padded source bounds first. This is NOT flood hazard modeling.",
+    "Construct dissolved, non-overlapping proximity polygons around cached points, lines or areas, with holes preserved. distancesMeters is strictly increasing, e.g. [100,250,500]. excludeSource defaults true: water/building interiors are removed. excludeResult optionally removes a separate polygon mask, e.g. ALL retained water rather than only the selected river. Optional bounds clip AFTER buffering. Returns bandIndex/fromMeters/toMeters/label/areaM2 for map_draw styling. Prefer this to grid squares or handwritten buffer code. Polygon distances start at banks/footprints; lines start at centerlines. Prepare padded source bounds first. This is NOT flood hazard modeling.",
     objectSchema(
       {
         result: ref,
         distancesMeters: { type: "array", items: positive, minItems: 1 },
         excludeSource: { type: "boolean" },
+        excludeResult: ref,
         bounds,
         toleranceMeters: positive,
       },

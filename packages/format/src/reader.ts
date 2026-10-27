@@ -168,6 +168,8 @@ export class AtlasReader {
       directoryBudget?: number;
       /** Called before cached or fetched block decoding; scoped consumers enforce resource budgets here. */
       beforeBlock?: (block: Block) => void;
+      /** Observe completed source transfers, including independent scoped forks. Cache hits do not transfer bytes. */
+      onTransfer?: (event: ReadEvent) => void;
     } = {},
   ) {
     this.cache = new DecodedCache(options.cacheBudgets);
@@ -242,7 +244,9 @@ export class AtlasReader {
     this.bytesByPurpose[purposeOf(key)] += bytes.length;
     if (key.startsWith("tile/"))
       this.bytesByLayer[tileLayer(key) ?? "combined"] += bytes.length;
-    this.onRead?.({ key, start, end, bytes: bytes.length, cached: false });
+    const event = { key, start, end, bytes: bytes.length, cached: false };
+    this.onRead?.(event);
+    this.options.onTransfer?.(event);
     return bytes;
   }
   private pagesFor(

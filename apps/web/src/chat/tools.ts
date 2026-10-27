@@ -1,3 +1,4 @@
+import { ChatRecipes } from "./recipes";
 import Ajv, { type ValidateFunction } from "ajv";
 import type { AgentTools } from "../../../../packages/chat/src/agent";
 import type { ToolDefinition } from "../../../../packages/chat/src/protocol";
@@ -11,7 +12,10 @@ import {
   positionSchema,
 } from "../../../../packages/operations/src/registry";
 import type { CatalogEntry } from "../../../../packages/operations/src/registry";
-import type { AtlasReader } from "../../../../packages/format/src/reader";
+import type {
+  AtlasReader,
+  ReadEvent,
+} from "../../../../packages/format/src/reader";
 import { RoutingComposition } from "../../../../packages/routing/src/composition";
 import type { TransportMode } from "../../../../packages/routing/src/index";
 import type { WorkspaceMap } from "../../../../packages/renderer/src/workspace-map";
@@ -152,6 +156,7 @@ export class ChatTools implements AgentTools {
   readonly data: ChatDataClient;
   readonly layers: ChatLayers;
   readonly insights: ChatInsights;
+  readonly recipes: ChatRecipes;
   private router?: WorkerRouter;
   private definitionsCache?: ToolDefinition[];
   private validators = new Map<string, ValidateFunction>();
@@ -162,10 +167,12 @@ export class ChatTools implements AgentTools {
     readonly readers: AtlasReader[],
     readonly enabled: () => Set<string>,
     readonly offline: () => boolean,
+    readonly onTransfer?: (event: ReadEvent) => void,
   ) {
-    this.data = new ChatDataClient(readers, offline);
+    this.data = new ChatDataClient(readers, offline, onTransfer);
     this.layers = new ChatLayers(map);
     this.insights = new ChatInsights(this.data, this.layers);
+    this.recipes = new ChatRecipes(this.data, this.layers);
     try {
       const composition = new RoutingComposition(
         readers
@@ -206,6 +213,17 @@ export class ChatTools implements AgentTools {
         featureSchema: r.index.manifest.featureSchema ?? 1,
       })),
       routingAvailable: !!this.router,
+      recipes: this.recipes
+        .getSnapshot()
+        .map((r) => ({
+          recipe: r.recipe,
+          title: r.definition.title,
+          parameters: r.parameters,
+          result: r.result,
+          count: r.count,
+          running: r.running,
+          error: r.error,
+        })),
       charts: this.insights
         .getSnapshot()
         .charts.map(({ id, title, kind, result }) => ({
@@ -289,6 +307,16 @@ export class ChatTools implements AgentTools {
     if (name === "route" || name === "isochrone") requirePurpose("routing");
     let result: any;
     if (name === "map_context") result = this.context();
+    else if (name === "recipe_define") {
+      result = await this.data.call(name, i, signal, progress);
+      this.recipes.add(result);
+    } else if (name === "recipe_run")
+      result = await this.recipes.run(
+        i.recipe,
+        i.parameters ?? {},
+        signal,
+        progress,
+      );
     else if (name === "chart_show")
       result = await this.insights.show(i, signal);
     else if (name === "chart_remove") result = this.insights.remove(i.chart);
@@ -338,8 +366,8 @@ export class ChatTools implements AgentTools {
         i.title,
         i.color,
         i.result,
-        i.style,
-        i.legend,
+        i.style ?? saved.meta?.style,
+        i.legend ?? saved.meta?.legend,
         saved.meta,
       );
     } else if (name === "map_style") {
@@ -449,6 +477,7 @@ export class ChatTools implements AgentTools {
   }
   async clear(signal: AbortSignal) {
     this.map.endPicking("chat-inspect");
+    this.recipes.clear();
     this.insights.clear();
     this.layers.clear();
     await this.data.call("__clear", {}, signal);

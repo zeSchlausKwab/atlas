@@ -298,7 +298,7 @@ export async function spatialOperation(
     lastYield = performance.now();
   const tick = async () => {
     signal.throwIfAborted();
-    if (++steps % 64 === 0 || performance.now() - lastYield > 30) {
+    if (++steps === 1 || performance.now() - lastYield > 30) {
       progress(`${input.operation} · ${steps.toLocaleString()} items checked`);
       await new Promise<void>((r) => setTimeout(r, 0));
       lastYield = performance.now();

@@ -50,6 +50,8 @@ self.onmessage = ({ data: m }) => {
           store,
           purposes: ["search", "features"],
           cacheBudgets: { semantic: 8 * 1024 ** 2 },
+          onTransfer: (event) =>
+            postMessage({ type: "transfer", source, event }),
         },
       );
       seed.index = s.index;

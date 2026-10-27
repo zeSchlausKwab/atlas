@@ -1,3 +1,4 @@
+import { RecipePanel } from "./recipe-panel";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -17,9 +18,18 @@ import {
   type ChatMessage,
 } from "../../../../packages/chat/src/agent";
 import type { WorkspaceMap } from "../../../../packages/renderer/src/workspace-map";
-import type { AtlasReader } from "../../../../packages/format/src/reader";
+import type {
+  AtlasReader,
+  ReadEvent,
+} from "../../../../packages/format/src/reader";
 import { InsightsPanel } from "./insights-panel";
 import { ChatTools } from "./tools";
+const duration = (ms: number) =>
+  ms < 1000
+    ? `${Math.round(ms)} ms`
+    : ms < 60000
+      ? `${(ms / 1000).toFixed(1)} s`
+      : `${Math.floor(ms / 60000)} min ${Math.floor(ms / 1000) % 60} s`;
 const bytes = (n: number) =>
   n < 1000
     ? n + " B"
@@ -40,7 +50,11 @@ const convert = (m: ChatMessage): ThreadMessageLike => ({
       args: t.args as never,
       result: t.result,
       isError: t.state === "error",
-      artifact: { elapsedMs: t.elapsedMs, progress: t.progress },
+      artifact: {
+        elapsedMs: t.elapsedMs,
+        progress: t.progress,
+        startedAt: t.startedAt,
+      },
     })),
   ],
 });
@@ -98,7 +112,18 @@ function ToolCall({
     input = argsText;
   }
   const r = result as any,
-    a = artifact as { elapsedMs?: number; progress?: string } | undefined;
+    a = artifact as
+      | { elapsedMs?: number; progress?: string; startedAt?: string }
+      | undefined;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (result !== undefined) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [result]);
+  const elapsed =
+    a?.elapsedMs ??
+    (a?.startedAt ? Math.max(0, now - new Date(a.startedAt).getTime()) : 0);
   return (
     <details className={"chat-tool" + (isError ? " chat-tool-error" : "")}>
       <summary>
@@ -107,12 +132,16 @@ function ToolCall({
           <code>{toolName}</code>
         </span>
         <small>
-          {a?.elapsedMs !== undefined
-            ? Math.round(a.elapsedMs) + " ms"
-            : "working"}
+          {result === undefined ? "Working · " : ""}
+          {duration(elapsed)}
         </small>
+        {result === undefined && (
+          <span className="chat-tool-progress" role="status">
+            {a?.progress ?? "Preparing operation…"}
+          </span>
+        )}
       </summary>
-      {a?.progress && <p>{a.progress}</p>}
+      {result !== undefined && a?.progress && <p>{a.progress}</p>}
       {r?.execution && (
         <p className="chat-evidence">
           This device · {bytes(r.execution.sourceBytes ?? 0)} source reads
@@ -168,8 +197,9 @@ export function mountChat(
   readers: AtlasReader[],
   enabled: () => Set<string>,
   offline: () => boolean,
+  onTransfer?: (event: ReadEvent) => void,
 ) {
-  const tools = new ChatTools(map, readers, enabled, offline),
+  const tools = new ChatTools(map, readers, enabled, offline, onTransfer),
     agent = new AtlasAgentSession(tools);
   let dead = false;
   const root = createRoot(element);
@@ -179,6 +209,11 @@ export function mountChat(
       tools.layers.subscribe,
       tools.layers.getSnapshot,
     );
+    const recipes = useSyncExternalStore(
+      tools.recipes.subscribe,
+      tools.recipes.getSnapshot,
+    );
+    const recipeRunning = recipes.some((r) => r.running);
     const [status, setStatus] = useState("Checking DeepSeek…"),
       [available, setAvailable] = useState(false);
     const [scope, setScope] = useState("Current map view"),
@@ -216,8 +251,9 @@ export function mountChat(
       messages: state.messages,
       convertMessage: convert,
       isRunning: state.running,
-      isDisabled: !available,
+      isDisabled: !available || recipeRunning,
       onNew: async (message) => {
+        if (recipeRunning) return;
         const text = message.content
           .filter((p) => p.type === "text")
           .map((p) => p.text)
@@ -323,6 +359,7 @@ export function mountChat(
           model: { provider: "DeepSeek", model: "deepseek-flash" },
           camera: map.camera,
           insights: tools.insights.getSnapshot(),
+          recipes: tools.recipes.getSnapshot(),
           layers: tools.layers.getSnapshot(),
           sourceBytes: tools.sourceBytes - byteBaseline.current,
         });
@@ -390,7 +427,7 @@ export function mountChat(
           <div className="chat-row">
             <strong>Analysis area</strong>
             <button
-              disabled={state.running}
+              disabled={state.running || recipeRunning}
               onClick={() => {
                 tools.selectedBounds = undefined;
                 setScope("Current map view");
@@ -403,11 +440,11 @@ export function mountChat(
             {picking ? "Click two corners on the map…" : scope}
           </p>
           <div className="chat-row">
-            <button disabled={state.running} onClick={pick}>
+            <button disabled={state.running || recipeRunning} onClick={pick}>
               Draw rectangle
             </button>
             <button
-              disabled={state.running}
+              disabled={state.running || recipeRunning}
               onClick={() => select(map.viewBounds())}
             >
               Pin visible area
@@ -420,7 +457,7 @@ export function mountChat(
           ) && (
             <button
               className="chat-example-area"
-              disabled={state.running}
+              disabled={state.running || recipeRunning}
               onClick={testArea}
             >
               Use Vienna test area ↗
@@ -498,9 +535,18 @@ export function mountChat(
               components={{ UserMessage, AssistantMessage }}
             />
             <InsightsPanel insights={tools.insights} />
+            <RecipePanel
+              recipes={tools.recipes}
+              disabled={state.running || recipeRunning}
+            />
             {state.running && (
               <p className="chat-working" role="status">
-                Working with your map…
+                {state.messages
+                  .flatMap((m) => m.tools)
+                  .slice()
+                  .reverse()
+                  .find((t) => t.state === "running")?.progress ??
+                  "Working with your map…"}
               </p>
             )}
           </ThreadPrimitive.Viewport>
@@ -599,7 +645,7 @@ export function mountChat(
               </button>
               <button
                 aria-label={"Remove " + l.title}
-                disabled={state.running}
+                disabled={state.running || recipeRunning}
                 onClick={() =>
                   safely(() => {
                     tools.layers.undo(l.id);
@@ -621,7 +667,7 @@ export function mountChat(
             Export JSON ↓
           </button>
           <button
-            disabled={state.running}
+            disabled={state.running || recipeRunning}
             onClick={() => void clear().catch((e) => setProblem(String(e)))}
           >
             New chat

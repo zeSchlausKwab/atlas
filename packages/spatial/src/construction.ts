@@ -140,6 +140,7 @@ export async function distanceBands(
   source: FeatureCollection,
   signal: AbortSignal,
   progress?: (s: string) => void,
+  exclusion?: FeatureCollection,
 ): Promise<Output> {
   const tick = checkpoint(signal, progress);
   await tick("Preparing distance bands");
@@ -159,6 +160,14 @@ export async function distanceBands(
     );
   positive(tolerance, "toleranceMeters");
   if (input.bounds) validBounds(input.bounds);
+  if (exclusion) {
+    validateCoordinates(exclusion);
+    if (exclusion.features.some((f) => !polygon(f)))
+      throw new Error("Exclusion mask must contain only polygons");
+  }
+  const mask = exclusion
+    ? await dissolve(exclusion.features as Surface[], tick)
+    : null;
   const surfaces = source.features.filter(polygon);
   const original = await dissolve(surfaces, tick);
   let previous = input.excludeSource === false ? null : original;
@@ -171,6 +180,7 @@ export async function distanceBands(
     let band =
       current && previous ? difference(fc([current, previous])) : current;
     previous = current;
+    if (band && mask) band = difference(fc([band, mask]));
     if (band && input.bounds) band = intersect(fc([band, rect(input.bounds)]));
     if (band)
       features.push({
@@ -196,6 +206,7 @@ export async function distanceBands(
     requestedBands: distances.length,
     returnedBands: features.length,
     excludeSource: input.excludeSource !== false,
+    exclusionFeatures: exclusion?.features.length ?? 0,
   });
 }
 export interface ShapeInput {

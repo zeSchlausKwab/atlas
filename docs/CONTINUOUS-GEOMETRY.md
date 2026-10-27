@@ -54,8 +54,11 @@ not load missing neighboring objects automatically. Coverage provenance survives
 into the result; a complete retained extract is not proof of real-world completeness.
 
 The result properties `bandIndex`, `fromMeters`, `toMeters`, `label` and `areaM2`
-can feed filters, summaries, charts and drawing styles. Existing `run_code` can
-assign a palette per band, then `map_draw` binds `colorProperty` with a legend.
+can feed filters, summaries, charts and drawing styles. `result_style` assigns a
+palette and labels natively; `map_draw` inherits its bindings and counted legend.
+Pass `excludeResult` for a separate polygon mask (such as all retained water), then
+use `result_check` to measure exclusions, disjointness and clip bounds. See
+[reusable analysis recipes](ANALYSIS-RECIPES.md) for adjustable cached workflows.
 
 ### Shapes
 

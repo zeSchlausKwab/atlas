@@ -44,6 +44,7 @@ import {
   type MapLayer,
 } from "../../format/src/index";
 import { AtlasReader } from "../../format/src/reader";
+import { DEFAULT_DECODED_BUDGETS } from "../../format/src/cache";
 import { decodePlaces, PLACE_LABEL_KEY } from "../../labels/src/places";
 export interface CompositionMapSource extends CompositionSource {
   reader: AtlasReader;
@@ -301,7 +302,7 @@ export class CompositionMap implements WorkspaceMap {
     const sessions = [...this.sessions.values()],
       readers = sessions.map((s) => s.source.reader.memory);
     const decoded = Object.fromEntries(
-      Object.keys(this.reader.memory.decoded).map((k) => [
+      Object.keys(DEFAULT_DECODED_BUDGETS).map((k) => [
         k,
         sum(readers.map((r) => r.decoded[k as keyof typeof r.decoded])),
       ]),

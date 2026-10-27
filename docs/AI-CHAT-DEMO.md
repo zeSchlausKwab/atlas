@@ -305,3 +305,7 @@ supported by both workspace_query and result_filter, with a regression test.
 Constructed polygons, distance bands and reusable numeric fields now run in the
 chat worker too. See [continuous geometry](CONTINUOUS-GEOMETRY.md) for tool contracts,
 accuracy limits and the Danube regression. Reload the client to load the new catalog.
+
+Native styles, explicit exclusion masks, result checks and adjustable cached recipes
+are available; see [Analysis recipes](ANALYSIS-RECIPES.md). Running tool progress is
+visible when collapsed, and the shared session byte meter includes AI package reads.

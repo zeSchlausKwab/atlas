@@ -1,5 +1,8 @@
 import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
-import type { AtlasReader } from "../../../packages/format/src/reader";
+import type {
+  AtlasReader,
+  ReadEvent,
+} from "../../../packages/format/src/reader";
 export class ChatLauncher {
   private panel?: ReturnType<typeof import("./chat/panel").mountChat>;
   private alive = true;
@@ -10,6 +13,7 @@ export class ChatLauncher {
     readonly readers: AtlasReader[],
     readonly enabled: () => Set<string>,
     readonly offline: () => boolean,
+    readonly onTransfer?: (event: ReadEvent) => void,
   ) {
     document.addEventListener("atlas-tab", () => void this.open(), {
       signal: this.abort.signal,
@@ -44,6 +48,7 @@ export class ChatLauncher {
           this.readers,
           this.enabled,
           this.offline,
+          this.onTransfer,
         );
     } catch (e) {
       if (this.alive) element.textContent = "Could not open chat: " + String(e);

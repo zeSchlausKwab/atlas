@@ -44,7 +44,8 @@
     "source:register": "bun scripts/register-source.ts",
     "verify:chat-pair": "bun scripts/verify-chat-pair.ts",
     "verify:spatial-pair": "bun scripts/verify-spatial-pair.ts",
-    "verify:continuous-pair": "bun scripts/verify-continuous-pair.ts"
+    "verify:continuous-pair": "bun scripts/verify-continuous-pair.ts",
+    "verify:recipes-pair": "bun scripts/verify-recipes-pair.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.31",

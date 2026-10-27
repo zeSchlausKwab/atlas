@@ -1,3 +1,8 @@
+import Ajv from "ajv";
+import { analysisSpecs } from "./analysis-specs";
+import { AnalysisRecipes, canonical } from "./recipes";
+import { thematic } from "./thematic";
+import { checkPolygons } from "../../spatial/src/checks";
 import type {
   FeatureCollection,
   Feature,
@@ -10,7 +15,11 @@ import { workspaceTools } from "../../workspace/src/tools";
 import { AtlasGeocoder } from "../../geocoding/src/index";
 import { OperationRegistry } from "../../operations/src/registry";
 import { GeometryResults, validateDrawing, type ResultMeta } from "./geometry";
-import { spatialOperation, type SpatialInput } from "../../spatial/src/index";
+import {
+  spatialOperation,
+  property,
+  type SpatialInput,
+} from "../../spatial/src/index";
 import {
   normalizeRows,
   rowFeatures,
@@ -31,6 +40,13 @@ export class ChatDataRuntime {
     string,
     { field: SampledField; meta: ResultMeta }
   >();
+  readonly recipes = new AnalysisRecipes();
+  private validators = new Map(
+    analysisSpecs.map(([name, , schema]) => [
+      name,
+      new Ajv({ strict: false, ownProperties: true }).compile(schema),
+    ]),
+  );
   readonly workspace: AtlasWorkspace;
   readonly results = new GeometryResults();
   readonly registry: OperationRegistry;
@@ -97,21 +113,156 @@ export class ChatDataRuntime {
     const start = performance.now(),
       before = this.bytesRead;
     let value: any;
-    if (name === "spatial_bands" || name === "spatial_shape") {
+    if (name === "recipe_define") value = this.recipes.define(input);
+    else if (name === "recipe_run")
+      value = await this.recipes.run(
+        input.recipe,
+        input.parameters ?? {},
+        async (tool, args) => {
+          const validate = this.validators.get(tool);
+          if (!validate || !validate(args))
+            throw new Error(
+              `Invalid recipe arguments for ${tool}: ${JSON.stringify(validate?.errors)}`,
+            );
+          return this.invoke(tool, args, signal, progress);
+        },
+        signal,
+        progress,
+      );
+    else if (
+      name === "result_rows" ||
+      (name === "workspace_result" && input.result.startsWith("geo-"))
+    ) {
+      const saved = this.snapshot(input.result),
+        rows = normalizeRows(saved.rows);
+      const offset = input.offset ?? 0,
+        limit = input.limit ?? 20;
+      if (
+        !Number.isInteger(offset) ||
+        offset < 0 ||
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > 100
+      )
+        throw new Error("Invalid result page");
+      if (input.fields?.includes("geometry"))
+        throw new Error("Use map_draw; raw geometry stays on the device");
+      const page: unknown[] = [];
+      let bytes = 0;
+      for (const row of rows.slice(offset, offset + limit)) {
+        const properties = input.fields
+          ? Object.fromEntries(
+              input.fields.map((k: string) => [
+                k,
+                property(row.properties, k) ?? null,
+              ]),
+            )
+          : row.properties;
+        const item =
+          name === "workspace_result"
+            ? { id: row.id, ...properties }
+            : {
+                id: row.id,
+                geometryType: row.geometry?.type ?? null,
+                properties,
+              };
+        const size = new TextEncoder().encode(JSON.stringify(item)).length;
+        if (bytes + size > 256 * 1024) {
+          if (!page.length)
+            throw new Error("Row exceeds page size; select fewer fields");
+          break;
+        }
+        bytes += size;
+        page.push(item);
+      }
+      value = {
+        result: input.result,
+        rows: page,
+        total: rows.length,
+        count: rows.length,
+        offset,
+        nextOffset:
+          offset + page.length < rows.length ? offset + page.length : null,
+        provenance: saved.meta,
+      };
+    } else if (name === "result_merge") {
+      const entries = new Map<string, Feature>(),
+        parents: ResultMeta[] = [];
+      for (const ref of input.results) {
+        const saved = await this.resolve(ref);
+        parents.push(saved.meta);
+        for (const feature of saved.collection.features) {
+          const id = feature.id ?? feature.properties?.id;
+          if (id == null) throw new Error("Merging requires stable source IDs");
+          const key = String(id),
+            previous = entries.get(key);
+          if (previous && canonical(previous) !== canonical(feature))
+            throw new Error("Conflicting copies of " + key);
+          entries.set(key, feature);
+        }
+      }
+      value = this.results.save(
+        { type: "FeatureCollection", features: [...entries.values()] },
+        { operation: name, inputs: parents },
+      );
+    } else if (name === "result_style") {
+      const saved = await this.resolve(input.result),
+        styled = thematic(saved.collection, input);
+      value = this.results.save(styled.collection, {
+        operation: name,
+        inputs: [saved.meta],
+        units: saved.meta.units,
+        style: styled.style,
+        legend: styled.legend,
+        counts: styled.counts,
+        unknown: styled.unknown,
+        parameters: input,
+      });
+    } else if (name === "result_check") {
+      const saved = await this.resolve(input.result),
+        mask = input.excludeResult
+          ? await this.resolve(input.excludeResult)
+          : undefined;
+      const checks = await checkPolygons(
+        saved.collection,
+        input,
+        mask?.collection,
+        signal,
+        progress,
+      );
+      value = {
+        result: input.result,
+        count: saved.collection.features.length,
+        checks,
+        provenance: saved.meta,
+      };
+    } else if (name === "spatial_bands" || name === "spatial_shape") {
       const source = input.result
         ? await this.resolve(input.result)
         : undefined;
       if (name === "spatial_bands" && !source)
         throw new Error("Distance bands need a cached source result");
+      const mask = input.excludeResult
+        ? await this.resolve(input.excludeResult)
+        : undefined;
       const result =
         name === "spatial_bands"
-          ? await distanceBands(input, source!.collection, signal, progress)
+          ? await distanceBands(
+              input,
+              source!.collection,
+              signal,
+              progress,
+              mask?.collection,
+            )
           : await constructShape(input, source?.collection, signal, progress);
       signal.throwIfAborted();
       value = this.results.save(result.collection, {
         operation: name,
         parameters: input,
-        inputs: source ? [source.meta] : [],
+        inputs: [
+          ...(source ? [source.meta] : []),
+          ...(mask ? [mask.meta] : []),
+        ],
         summary: result.summary,
         units: result.units,
         notes: result.notes,
@@ -377,6 +528,7 @@ export class ChatDataRuntime {
     );
   }
   clear() {
+    this.recipes.clear();
     this.fields.clear();
     this.workspace.clear();
     this.results.clear();

@@ -1,3 +1,4 @@
+import { TransferLedger } from "../../../packages/format/src/transfer-ledger";
 import { ChatLauncher } from "./chat-launcher";
 let chat: ChatLauncher | undefined;
 import { clientConnection } from "./connection";
@@ -114,6 +115,11 @@ function error(message: string) {
   el("error").textContent = message;
   el("error").hidden = false;
 }
+const aiTransfers = new TransferLedger();
+function aiTransfer(event: ReadEvent) {
+  aiTransfers.record(event);
+  telemetry({ ...event, key: `AI · ${event.key}` });
+}
 function telemetry(event?: ReadEvent) {
   if (event && !event.cached) {
     events.unshift(event);
@@ -123,12 +129,16 @@ function telemetry(event?: ReadEvent) {
   const readers = compositionSources?.map((s) => s.reader) ?? [reader];
   const sum = (f: (r: AtlasReader) => number) =>
     readers.reduce((n, r) => n + f(r), 0);
-  const bytes = formatBytes(sum((r) => r.bytesRead)).split(" ");
+  const bytes = formatBytes(sum((r) => r.bytesRead) + aiTransfers.bytes).split(
+    " ",
+  );
   el("bytes-read").replaceChildren(
     document.createTextNode(`${bytes[0]} `),
     Object.assign(document.createElement("span"), { textContent: bytes[1] }),
   );
-  el("request-count").textContent = String(sum((r) => r.requests));
+  el("request-count").textContent = String(
+    sum((r) => r.requests) + aiTransfers.requests,
+  );
   el("cached-count").textContent = String(sum((r) => r.cache.size));
   for (const purpose of [
     "directory",
@@ -146,16 +156,21 @@ function telemetry(event?: ReadEvent) {
         (r) =>
           r.bytesByPurpose[purpose] +
           (purpose === "streetNames" ? r.bytesByPurpose.labels : 0),
-      ),
+      ) +
+        aiTransfers.forPurpose(purpose) +
+        (purpose === "streetNames" ? aiTransfers.forPurpose("labels") : 0) +
+        (purpose === "features" ? aiTransfers.forPurpose("source") : 0),
     );
   }
   for (const layer of [...MAP_LAYERS, "combined"] as const)
     el(`bytes-layer-${layer}`).textContent = formatBytes(
-      sum((r) => r.bytesByLayer[layer]),
+      sum((r) => r.bytesByLayer[layer]) + (aiTransfers.layers.get(layer) ?? 0),
     );
   if (reader.index) {
     const percent = sum((r) => r.index.header.fileLength)
-      ? (sum((r) => r.bytesRead) / sum((r) => r.index.header.fileLength)) * 100
+      ? ((sum((r) => r.bytesRead) + aiTransfers.bytes) /
+          sum((r) => r.index.header.fileLength)) *
+        100
       : 0;
     el("transfer-meter").style.width = `${Math.min(percent, 100)}%`;
     el("transfer-percent").textContent =
@@ -307,6 +322,7 @@ async function open(source: ByteSource) {
     .forEach((e) => (e.inert = false));
   el("render-status").textContent = "Opening map package…";
   events = [];
+  aiTransfers.clear();
   el("error").hidden = true;
   el("query-result").hidden = true;
   el<HTMLButtonElement>("highest-peak").disabled = true;
@@ -471,6 +487,7 @@ function bindTools() {
     compositionSources?.map((s) => s.reader) ?? [reader],
     () => new Set(operations?.enabled ?? []),
     () => el<HTMLInputElement>("offline").checked,
+    aiTransfer,
   );
   if (m.selection && !compositionSources) map.setSelection(m.selection.polygon);
   if (!compositionSources && m.name === "Vienna Plus") {
@@ -515,6 +532,7 @@ async function openComposition() {
   const opening = session;
   const abort = (composerAbort = new AbortController());
   events = [];
+  aiTransfers.clear();
   compositionSources = [];
   el("cache-paused").hidden = true;
   el("map").style.visibility = "";
@@ -750,6 +768,7 @@ function configureOperations() {
       compositionSources?.map((s) => s.reader) ?? [reader],
       () => new Set(operations?.enabled ?? []),
       () => el<HTMLInputElement>("offline").checked,
+      aiTransfer,
     );
   }
   el("execution-hint").textContent =

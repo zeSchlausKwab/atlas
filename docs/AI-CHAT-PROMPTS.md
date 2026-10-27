@@ -149,3 +149,21 @@ data when comparing proximity near its edges.
   a distance field. Highlight land more than 300 metres from a retained point,
   and compare with a 500 metre threshold using the same field. Distinguish data
   gaps from claims that no drinking water exists.”
+
+## Adjustable analyses on cached data
+
+- “Make an adjustable recipe: highlight buildings within 400 m of mapped park polygons,
+  outside a 100 m railway corridor, and within 800 m of retained tram stops. Give me
+  sliders for all three distances. Use one combined workspace, buffer individual
+  targets, and state the rail classes and boundary coverage used.”
+- “Draw Danube bank-distance bands at 100, 250 and 500 m, excluding ALL retained water
+  polygons, not only the selected river. Check disjointness, exclusions and clip
+  bounds before drawing. Make the outer distance adjustable; label and color the bands.”
+- “Color the selected buildings by known/estimated height: below 15 m, 15–30 m and
+  at least 30 m. Gray means unknown. Use native thematic styling and show counts.”
+- “Create a reusable distance field around retained tram stops. Show bands for
+  0–200, 200–400 and 400–800 m and make the outer contour adjustable. Reuse the
+  field samples when I change it. Explain why this is not walking accessibility.”
+
+Recipes remain local to the current chat; exported JSON records definitions and run
+history. See [Analysis recipes](ANALYSIS-RECIPES.md) for contracts and verification.

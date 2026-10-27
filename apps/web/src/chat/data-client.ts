@@ -1,4 +1,7 @@
-import type { AtlasReader } from "../../../../packages/format/src/reader";
+import type {
+  AtlasReader,
+  ReadEvent,
+} from "../../../../packages/format/src/reader";
 export class ChatDataClient {
   private worker = new Worker("/chat-data-worker.js", { type: "module" });
   private sequence = 0;
@@ -17,8 +20,14 @@ export class ChatDataClient {
   constructor(
     readonly readers: AtlasReader[],
     readonly offline: () => boolean,
+    readonly onTransfer?: (event: ReadEvent) => void,
   ) {
     this.worker.onmessage = ({ data: m }) => {
+      if (m.type === "transfer") {
+        this.sourceBytes += m.event.bytes;
+        this.onTransfer?.(m.event);
+        return;
+      }
       if (m.type === "read") {
         void this.read(m);
         return;
@@ -62,7 +71,6 @@ export class ChatDataClient {
           b > reader.index.header.fileLength
         )
           throw new Error("Invalid map byte request");
-        this.sourceBytes += b - a;
         value = await reader.source.read(
           a,
           b,
