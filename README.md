@@ -10,6 +10,9 @@ Prepare a bounded data workspace across selected maps, then query it locally wit
 reusable result references and explicit coverage. New imports include explicit OSM
 house-number addresses and queryable POI tags. Run `bun run demo:workspace` for a
 small, fully local two-file proof; see [AI workspaces](docs/AI-WORKSPACES.md).
+[Feature paging](docs/FEATURE-PAGING.md) separates bounded attribute and geometry
+reads. The [client-owned chat demo design](docs/AI-CHAT-DEMO.md) describes the next
+UI and agent layer; the chat panel is not implemented yet.
 
 ## Hashtree and Nostr
 

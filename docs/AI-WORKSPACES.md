@@ -47,6 +47,7 @@ const task = await tasks.prepare({
   bounds: [16.36, 48.20, 16.39, 48.23], // west, south, east, north
   families: ["locations", "buildings"],
   required: ["addresses", "poi-tags"],
+  geometry: false, // attributes only; exact boundary checks still load shapes when needed
   maxReadBytes: 16 * 1024 ** 2,
 });
 const cafes = tasks.query({
@@ -107,10 +108,15 @@ public relay publication or arbitrary plugin execution is introduced here.
 
 The first implementation loads spatial location cells and/or feature cells. Legacy
 location archives use their whole location block; excessive size fails the budget.
-Geometry and attributes share feature blocks today: projection limits **tool output**,
-not the geometry bytes fetched for a feature family. Separate attribute columns,
-a general spatial join planner, resumable preparation and persistent task handles
-remain future work. Routing continues to use its existing progressive graph-cell
+New feature archives separate attributes and geometry into bounded pages.
+`prepare({geometry:false})` skips geometry for features whose bounding boxes lie
+fully inside the request; boundary candidates still load shapes for exact
+intersection, including holes. `geometryAvailable` reports whether shapes were
+pinned. The default is `true`, preserving existing callers. Legacy feature blocks
+still need full geometry reads, even with `geometry:false`. Result projection alone
+only limits **tool output**. See [feature paging and measurements](FEATURE-PAGING.md).
+A general spatial join planner, filtered-result geometry hydration, resumable
+preparation and persistent task handles remain future work. Routing continues to use its existing progressive graph-cell
 engine; query-result references are not yet direct route/isochrone inputs.
 
 ## Retention and measured address cost
@@ -153,4 +159,6 @@ after closing its file reader. Temporary build files are removed afterwards.
 Workspaces now accept the Hashtree byte source through the same reader interface.
 The real two-map rehearsal proves cached location/address queries after both
 providers close. See [Hashtree delivery](HASHTREE.md) for measurements and limits,
-including the remaining coarse feature-cell memory cost in dense cities.
+and [feature paging](FEATURE-PAGING.md) for the subsequent dense-building improvement.
+The [client chat design](AI-CHAT-DEMO.md) builds an agent around these tools; the
+chat UI and model loop are not implemented yet.
