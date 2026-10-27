@@ -251,7 +251,7 @@ bun run verify:chat-pair data/pair-rehearsal/west.atlas data/pair-rehearsal/east
 ```
 
 See [feature paging](FEATURE-PAGING.md) for the newer archive layout. Persistent
-conversations, additional geo helpers, clickable answer citations and automatic
+conversations, clickable answer citations and automatic
 spatial subdivision remain follow-ups. Drawings are 2D overlays projected through
 the camera, not editable source features or true 3D extrusions.
 
@@ -271,3 +271,33 @@ read 2,030,359 source bytes initially and zero on the opacity/label-size follow-
 The exported JSON retained ten model rounds, all nine tool traces and the styled
 geometry. The model corrected an initial code-level geometry lookup on its own;
 this illustrates why keeping intermediate calls and results is useful for evaluation.
+
+
+## Reusable spatial analysis and linked charts
+
+The browser chat now exposes ten `spatial_*` operations plus result filtering,
+summaries, feature inspection, and linked charts. The common pipeline is
+`workspace_prepare → workspace_query → spatial_* → result_filter/summary →
+chart_show/map_draw`. Cached results preserve source IDs, all retained attributes,
+coverage and operation provenance. This works for roads, rails, water, land and
+location points as well as buildings; no archive migration is required.
+
+See [the operation reference](SPATIAL-ANALYSIS.md) and
+[the expanded prompts](AI-CHAT-PROMPTS.md). Conversation JSON now also contains
+current chart data/memberships, chart selection and inspected-feature evidence.
+Charts and drawings are ephemeral until exported; chart membership does not add
+raw geometry to the model conversation.
+
+`bun run verify:spatial-pair` exercises all six families on the Vienna rehearsal
+pair. Its 24,178 rows required 7,338,459 source bytes, followed by zero new reads
+for clipping, measurements, water proximity, nearest rail, grids and chart
+selection. Of these rows, 6,556 are roads, 408 rails, 18 water, 716 land,
+3,260 buildings and 13,220 locations (including addresses, not only POIs).
+
+A visible browser check exercises four chart types, histogram/table selection,
+scatterplot brushing, map inspection, JSON export and new-chat cleanup with
+subsequent archive reads blocked. A live DeepSeek test measured the roads,
+highlighted ten longest segments with labels, then plotted length against nearest
+railway distance in a second turn with zero additional source reads. An initial
+model geometryType query exposed a query-field mismatch; geometryType is now
+supported by both workspace_query and result_filter, with a regression test.

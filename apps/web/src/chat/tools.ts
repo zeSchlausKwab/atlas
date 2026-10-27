@@ -17,6 +17,7 @@ import type { TransportMode } from "../../../../packages/routing/src/index";
 import type { WorkspaceMap } from "../../../../packages/renderer/src/workspace-map";
 import { WorkerRouter } from "../worker-router";
 import { ChatDataClient } from "./data-client";
+import { ChatInsights } from "./insights";
 import { ChatLayers } from "./layers";
 import { CodeClient } from "./code-client";
 import {
@@ -24,10 +25,16 @@ import {
   drawingStyleSchema,
   legendSchema,
 } from "../../../../packages/chat/src/drawing-style";
+import {
+  analysisSpecs,
+  chartSpecs,
+} from "../../../../packages/chat/src/analysis-specs";
 const ref = { type: "string", minLength: 1, maxLength: 100 };
 const profile = { enum: ["walking", "cycling", "driving"] };
 const text = { type: "string", minLength: 1, maxLength: 120 };
 const specs: Array<[string, string, Record<string, unknown>]> = [
+  ...analysisSpecs,
+  ...chartSpecs,
   [
     "run_code",
     "Run custom JavaScript on cached results in an isolated browser QuickJS worker. Pass result IDs in results; data.results[id] has rows (full retained attributes and geometry when prepared) and meta (coverage/provenance). Geo results additionally have collection. Write a synchronous function body with return for a concise summary. console.log records diagnostics. emit(GeoJSON FeatureCollection) stores computed geometry locally and returns a result ID for map_draw; never return raw geometry in the summary. geo.area(feature) returns square metres; geo.intersects(a,b) tests GeoJSON intersection. data is frozen. No fetch, DOM, imports, credentials or host APIs. A fresh JS context per call; use result references to reuse data. Stop cancels execution.",
@@ -144,6 +151,7 @@ export class ChatTools implements AgentTools {
   readonly code = new CodeClient();
   readonly data: ChatDataClient;
   readonly layers: ChatLayers;
+  readonly insights: ChatInsights;
   private router?: WorkerRouter;
   private definitionsCache?: ToolDefinition[];
   private validators = new Map<string, ValidateFunction>();
@@ -157,6 +165,7 @@ export class ChatTools implements AgentTools {
   ) {
     this.data = new ChatDataClient(readers, offline);
     this.layers = new ChatLayers(map);
+    this.insights = new ChatInsights(this.data, this.layers);
     try {
       const composition = new RoutingComposition(
         readers
@@ -197,6 +206,14 @@ export class ChatTools implements AgentTools {
         featureSchema: r.index.manifest.featureSchema ?? 1,
       })),
       routingAvailable: !!this.router,
+      charts: this.insights
+        .getSnapshot()
+        .charts.map(({ id, title, kind, result }) => ({
+          id,
+          title,
+          kind,
+          result,
+        })),
       layers: this.layers
         .getSnapshot()
         .map(({ id, title, count, result, color, style, legend }) => ({
@@ -272,6 +289,9 @@ export class ChatTools implements AgentTools {
     if (name === "route" || name === "isochrone") requirePurpose("routing");
     let result: any;
     if (name === "map_context") result = this.context();
+    else if (name === "chart_show")
+      result = await this.insights.show(i, signal);
+    else if (name === "chart_remove") result = this.insights.remove(i.chart);
     else if (name === "run_code") {
       progress("Reading cached results for local code execution…");
       const results: Record<string, unknown> = Object.create(null);
@@ -320,6 +340,7 @@ export class ChatTools implements AgentTools {
         i.result,
         i.style,
         i.legend,
+        saved.meta,
       );
     } else if (name === "map_style") {
       const { layer, ...update } = i;
@@ -415,7 +436,7 @@ export class ChatTools implements AgentTools {
         signal.removeEventListener("abort", cancel);
         this.progress = undefined;
       }
-    } else result = await this.data.call(name, i, signal);
+    } else result = await this.data.call(name, i, signal, progress);
     signal.throwIfAborted();
     return {
       ...result,
@@ -427,14 +448,18 @@ export class ChatTools implements AgentTools {
     };
   }
   async clear(signal: AbortSignal) {
+    this.map.endPicking("chat-inspect");
+    this.insights.clear();
     this.layers.clear();
     await this.data.call("__clear", {}, signal);
   }
   destroy() {
+    this.insights.destroy();
     this.code.destroy();
     this.router?.cancel();
     this.data.destroy();
     this.layers.destroy();
     this.map.endPicking("chat");
+    this.map.endPicking("chat-inspect");
   }
 }

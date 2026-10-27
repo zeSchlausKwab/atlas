@@ -1,4 +1,4 @@
-import type { FeatureCollection, Position } from "geojson";
+import type { Feature, FeatureCollection, Position } from "geojson";
 import { project } from "../../../../packages/format/src/index";
 import { worldProjector } from "../../../../packages/renderer/src/camera";
 import type { WorkspaceMap } from "../../../../packages/renderer/src/workspace-map";
@@ -13,6 +13,14 @@ import {
   type DrawingStyle,
   type LegendEntry,
 } from "../../../../packages/chat/src/drawing-style";
+export interface InspectedFeature {
+  id?: string | number;
+  layer: string;
+  result?: string;
+  properties: Feature["properties"];
+  geometryType: string;
+  provenance?: Record<string, unknown>;
+}
 export interface ChatLayer {
   id: string;
   title: string;
@@ -22,6 +30,7 @@ export interface ChatLayer {
   legend: LegendEntry[];
   result?: string;
   collection: FeatureCollection;
+  provenance?: Record<string, unknown>;
   bounds: [number, number, number, number] | null;
 }
 export class ChatLayers {
@@ -31,6 +40,7 @@ export class ChatLayers {
   private cachedKey = "";
   private paths: Array<{
     layer: ChatLayer;
+    feature: Feature;
     path: Path2D;
     area: boolean;
     point: boolean;
@@ -133,6 +143,7 @@ export class ChatLayers {
               }
               this.paths.push({
                 layer,
+                feature: f,
                 path,
                 area,
                 point,
@@ -259,6 +270,7 @@ export class ChatLayers {
     result?: string,
     style: DrawingStyle = {},
     legend: LegendEntry[] = [],
+    provenance?: Record<string, unknown>,
   ) {
     validateDrawing(fc);
     validateLayerStyle(fc, color, style, legend);
@@ -271,6 +283,7 @@ export class ChatLayers {
       legend: structuredClone(legend),
       result,
       collection: structuredClone(fc),
+      provenance: provenance ? structuredClone(provenance) : undefined,
       bounds: drawingBounds(fc),
     };
     this.values = [...this.values, layer];
@@ -320,6 +333,27 @@ export class ChatLayers {
     this.values = this.values.map((l) => (l.id === id ? layer : l));
     this.changed();
     return this.describe(layer);
+  }
+  inspect(point: [number, number]): InspectedFeature | null {
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    const [x, y] = worldProjector(this.map.camera)(project(...point));
+    for (let i = this.paths.length - 1; i >= 0; i--) {
+      const { path, feature, layer, area, point: marker } = this.paths[i]!;
+      ctx.lineWidth = Math.max(8, layer.style.strokeWidth ?? 3.5);
+      if (
+        ((area || marker) && ctx.isPointInPath(path, x, y, "evenodd")) ||
+        ctx.isPointInStroke(path, x, y)
+      )
+        return {
+          id: feature.id,
+          layer: layer.title,
+          result: layer.result,
+          properties: feature.properties,
+          geometryType: feature.geometry.type,
+          provenance: layer.provenance,
+        };
+    }
+    return null;
   }
   undo(id = this.values.at(-1)?.id) {
     if (!id || !this.values.some((v) => v.id === id))

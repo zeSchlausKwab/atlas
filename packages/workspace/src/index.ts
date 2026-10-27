@@ -167,6 +167,7 @@ const fields = new Set([
   "heightSource",
   "geometry",
   "geometryAvailable",
+  "geometryType",
   "address",
   "tags",
   "context",
@@ -180,6 +181,11 @@ function fieldValid(f: string) {
   );
 }
 function field(row: Row, f: string): unknown {
+  if (f === "geometryType")
+    return (
+      row.geometry?.type ??
+      (row.family === "locations" && row.coordinates ? "Point" : null)
+    );
   if (f === "geometryAvailable") return row.geometry !== undefined;
   if (f.startsWith("tags."))
     return Object.hasOwn(row.tags, f.slice(5)) ? row.tags[f.slice(5)] : null;

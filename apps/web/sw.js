@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v26";
+const CACHE = "atlas-shell-v27";
 let generation = 0;
 let paused = false;
 const writes = new Set();

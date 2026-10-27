@@ -9,6 +9,7 @@ export class ChatDataClient {
       reject(e: Error): void;
       signal: AbortSignal;
       cleanup(): void;
+      progress?: (message: string) => void;
     }
   >();
   private lifetime = new AbortController();
@@ -24,6 +25,10 @@ export class ChatDataClient {
       }
       const job = this.jobs.get(m.id);
       if (!job) return;
+      if (m.type === "progress") {
+        job.progress?.(m.message);
+        return;
+      }
       this.jobs.delete(m.id);
       job.cleanup();
       if (m.type === "error")
@@ -87,7 +92,12 @@ export class ChatDataClient {
         });
     }
   }
-  call(name: string, input: unknown, signal: AbortSignal): Promise<any> {
+  call(
+    name: string,
+    input: unknown,
+    signal: AbortSignal,
+    progress?: (message: string) => void,
+  ): Promise<any> {
     signal.throwIfAborted();
     this.lifetime.signal.throwIfAborted();
     const id = ++this.sequence;
@@ -102,6 +112,7 @@ export class ChatDataClient {
         resolve,
         reject,
         signal,
+        progress,
         cleanup: () => signal.removeEventListener("abort", cancel),
       });
       this.worker.postMessage({

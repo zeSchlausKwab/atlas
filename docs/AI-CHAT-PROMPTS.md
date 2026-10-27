@@ -44,15 +44,64 @@ correctness of counts, explicit unknowns/coverage, source bytes on cold vs cache
 turns, number and duration of tool/model calls, understandable legends, correct
 units and whether the claimed drawing matches the exported geometry and style.
 
-## Next tools worth adding
+## Spatial tools: more than buildings
 
-- **Reusable spatial operations:** typed nearest-neighbor, buffer, intersection,
-  spatial join and grid aggregation. Cache derived results and their provenance.
-  This reduces repeated model-written geometry code and makes distance/area
-  semantics consistent, especially at large extents and across map chunks.
-- **Linked charts and feature inspection:** histograms, scatterplots and tables
-  backed by local result references; brush a chart to highlight matching map
-  features. Clicking a feature should reveal its evidence, units and unknowns.
+These prompts now use reusable local spatial tools. Pin a neighborhood first;
+select the relevant feature families and retain geometry. Labels/colors can use
+cached `run_code` output, while the spatial calculations use the typed tools.
+
+10. **Read the street fabric.** “Clip roads and railways to the analysis area and
+    measure their lengths. Show separate linked histograms in metres. Highlight
+    the ten longest road segments and label their lengths. Explain OSM segment
+    and parallel-track counting.”
+11. **Water's neighbors.** “Buffer retained water geometry by 100 m and dissolve
+    the buffers. Highlight buildings intersecting that corridor. Draw water in
+    blue and nearby buildings in amber, with a legend and counts. This is a
+    proximity study, not a flood-risk assessment.”
+12. **Railway corridors.** “From the cached railway lines, make 50 m and 200 m
+    buffers. Show the inner corridor and outer ring in different colors. Count
+    retained buildings intersecting each, distinguishing those touching both.
+    This is distance from tracks, not access to a station.”
+13. **Café clusters.** “Prepare locations with POI tags and select cafés. Aggregate
+    them into approximately 250 m cells and color cells by café count. Include
+    empty cells, show a linked bar chart, and label the three busiest cells.
+    Do not count address records as POIs.”
+14. **A useful nearest-neighbor map.** “For each retained café, find the nearest
+    water geometry within 500 m. Show connectors for matches, color cafés by
+    distance, and show unmatched cafés in gray. Add a distance histogram. Explain
+    that this is straight-line proximity, not a walking route.”
+15. **What kinds of green space?** “Inspect the retained land tags, then select
+    parks and grass. Clip them to the area, measure and color by category, and
+    compare areas in a linked chart. Report missing categories. Distinguish sums
+    of overlapping feature areas from a dissolved area.”
+16. **Counting inside places.** “Select retained park polygons and café POIs.
+    Spatially join them to count cafés inside or touching each park. Label parks
+    with counts and show a linked table. Explain overlaps and source coverage.”
+17. **Compare length and proximity.** “For the ten longest cached road segments,
+    measure representative-point distance to the nearest railway within 500 m.
+    Show a linked scatterplot of length versus distance, both in metres. Keep
+    unmatched observations separate. Reuse the existing results.”
+18. **Footbridges to investigate.** “Inspect road tags for explicitly tagged
+    bridges and pedestrian/cycle access near the retained water geometry. Draw
+    and label candidates and show their tags in a table. Don't infer that every
+    road-water intersection is a bridge or claim access from a missing tag.”
+19. **The shape of a cluster.** “Create representative points for retained cafés,
+    then draw their convex hull. Compare it with a union of 100 m buffers. Show
+    the two areas and explain why neither polygon proves service coverage.”
+20. **Explore interactively.** “Show building footprint area versus known height
+    in a linked scatterplot. Report unknown heights separately and let me select
+    a cluster to highlight it on the map. Keep tagged and estimated heights
+    distinguishable.”
+
+Click histogram/category bars, scatterplot points (or drag a rectangle), or table
+rows to highlight their cached map features. Under **Drawings → Inspect drawings**,
+click a colored geometry to inspect attributes and source evidence. Export JSON
+includes the current charts, memberships, selection, inspection and drawings.
+
+See [spatial operation semantics](SPATIAL-ANALYSIS.md) for units and limitations.
+
+## Still proposed
+
 - **Multi-stop routing and entrances:** route matrices, heuristic/optimized stop
   order, entrance-aware access points and explicit duplicate building-part handling.
   These would improve the tallest-buildings tour beyond repeated point-to-point calls.
@@ -60,6 +109,6 @@ units and whether the claimed drawing matches the exported geometry and style.
   against verified snapshot IDs, and replay deterministic tool/code steps. Compare
   expected counts, bytes and drawings across compiler, tool and model versions.
 
-These are proposals, not current tools. Population, flood exposure, opening hours
+The two items above remain proposals. Population, flood exposure, opening hours
 and precise shade analysis need additional data/semantics; a convincing drawing
 alone does not establish those facts.

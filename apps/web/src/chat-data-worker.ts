@@ -79,10 +79,19 @@ self.onmessage = ({ data: m }) => {
           value = await runtime.resolve(m.input.result);
         else if (m.name === "__save")
           value = runtime.results.save(m.input.collection, m.input.meta);
+        else if (m.name === "__chart") value = runtime.chart(m.input);
+        else if (m.name === "__select")
+          value = runtime.select(m.input.result, m.input.indexes);
         else if (m.name === "__clear") {
           runtime.clear();
           value = {};
-        } else value = await runtime.invoke(m.name, m.input, controller.signal);
+        } else
+          value = await runtime.invoke(
+            m.name,
+            m.input,
+            controller.signal,
+            (message) => postMessage({ type: "progress", id: m.id, message }),
+          );
         controller.signal.throwIfAborted();
         postMessage({ type: "result", id: m.id, value });
       } catch (e) {

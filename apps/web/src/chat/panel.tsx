@@ -18,6 +18,7 @@ import {
 } from "../../../../packages/chat/src/agent";
 import type { WorkspaceMap } from "../../../../packages/renderer/src/workspace-map";
 import type { AtlasReader } from "../../../../packages/format/src/reader";
+import { InsightsPanel } from "./insights-panel";
 import { ChatTools } from "./tools";
 const bytes = (n: number) =>
   n < 1000
@@ -183,6 +184,7 @@ export function mountChat(
     const [scope, setScope] = useState("Current map view"),
       [picking, setPicking] = useState(false);
     const [problem, setProblem] = useState("");
+    const [inspecting, setInspecting] = useState(false);
     const [dataBytes, setDataBytes] = useState(0);
     const byteBaseline = useRef(tools.sourceBytes);
     const areaDetails = useRef<HTMLDetailsElement>(null);
@@ -309,6 +311,7 @@ export function mountChat(
       }
     };
     const clear = async () => {
+      setInspecting(false);
       agent.clear();
       await tools.clear(new AbortController().signal);
       byteBaseline.current = tools.sourceBytes;
@@ -319,6 +322,7 @@ export function mountChat(
         const dump = agent.exportConversation({
           model: { provider: "DeepSeek", model: "deepseek-flash" },
           camera: map.camera,
+          insights: tools.insights.getSnapshot(),
           layers: tools.layers.getSnapshot(),
           sourceBytes: tools.sourceBytes - byteBaseline.current,
         });
@@ -462,6 +466,26 @@ export function mountChat(
                   disabled={!available}
                   onClick={() =>
                     void agent.send(
+                      "In this analysis area, prepare water and buildings with geometry. Make a 100-metre water buffer, union it, and select buildings that intersect it. Show the water and selected buildings with a legend. Report retained counts and clarify this is proximity, not flood risk.",
+                    )
+                  }
+                >
+                  Buildings near water <span>↗</span>
+                </button>
+                <button
+                  disabled={!available}
+                  onClick={() =>
+                    void agent.send(
+                      "Measure the retained road and railway features in this analysis area after clipping them to its bounds. Compare their length distributions in linked histograms in metres. Explain that OSM ways and parallel tracks are separate features, not necessarily whole named streets or rail lines.",
+                    )
+                  }
+                >
+                  Roads & rails, measured <span>↗</span>
+                </button>
+                <button
+                  disabled={!available}
+                  onClick={() =>
+                    void agent.send(
                       "What kinds of map data can you use here, and which operations can run from cached data on this device?",
                     )
                   }
@@ -473,6 +497,7 @@ export function mountChat(
             <ThreadPrimitive.Messages
               components={{ UserMessage, AssistantMessage }}
             />
+            <InsightsPanel insights={tools.insights} />
             {state.running && (
               <p className="chat-working" role="status">
                 Working with your map…
@@ -523,6 +548,32 @@ export function mountChat(
             Drawings <span>{layers.length}</span>
           </summary>
           <div className="chat-row">
+            <button
+              disabled={!layers.length}
+              onClick={() => {
+                if (inspecting) {
+                  map.endPicking("chat-inspect");
+                  setInspecting(false);
+                  return;
+                }
+                setInspecting(true);
+                map.beginPicking(
+                  "chat-inspect",
+                  (point) => {
+                    const value = tools.layers.inspect(point);
+                    tools.insights.inspect(value);
+                    if (value) {
+                      map.endPicking("chat-inspect");
+                      setInspecting(false);
+                    }
+                  },
+                  () => setInspecting(false),
+                  "Inspect a colored chat drawing. Click a feature; Escape cancels.",
+                );
+              }}
+            >
+              {inspecting ? "Cancel inspection" : "Inspect drawings"}
+            </button>
             <strong>
               Drawings <span className="quiet">{layers.length}</span>
             </strong>

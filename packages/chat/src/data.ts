@@ -10,6 +10,16 @@ import { workspaceTools } from "../../workspace/src/tools";
 import { AtlasGeocoder } from "../../geocoding/src/index";
 import { OperationRegistry } from "../../operations/src/registry";
 import { GeometryResults, validateDrawing, type ResultMeta } from "./geometry";
+import { spatialOperation, type SpatialInput } from "../../spatial/src/index";
+import {
+  normalizeRows,
+  rowFeatures,
+  summary,
+  filterRows,
+  inspectRow,
+  prepareChart,
+  type ChartInput,
+} from "./analysis";
 export class ChatDataRuntime {
   readonly workspace: AtlasWorkspace;
   readonly results = new GeometryResults();
@@ -40,50 +50,100 @@ export class ChatDataRuntime {
     ref: string,
   ): Promise<{ collection: FeatureCollection; meta: ResultMeta }> {
     if (ref.startsWith("geo-")) return this.results.get(ref);
-    const first = this.workspace.result(ref, 0, 1, ["id"]);
-    const fc: FeatureCollection = { type: "FeatureCollection", features: [] };
-    for (let offset = 0; offset < first.count; offset++) {
-      const r = this.workspace.result(ref, offset, 1, [
-        "id",
-        "family",
-        "name",
-        "geometry",
-        "coordinates",
-      ]).rows[0]!;
-      const geometry =
-        r.geometry ??
-        (r.family === "locations"
-          ? { type: "Point", coordinates: r.coordinates }
-          : null);
-      if (!geometry)
-        throw new Error(
-          "This workspace has no shapes. Prepare with geometry:true before drawing.",
-        );
-      const f = {
-        type: "Feature",
-        id: r.id,
-        geometry,
-        properties: { name: r.name, family: r.family },
-      } as unknown as Feature;
-      fc.features.push(f);
-    }
-    validateDrawing(fc);
-    return {
-      collection: fc,
-      meta: {
-        result: ref,
-        coverage: first.coverage,
-        snapshots: first.snapshots,
-        expiresAt: first.expiresAt,
-      },
-    };
+    const { rows, meta } = this.workspace.snapshot(ref);
+    const collection = rowFeatures(normalizeRows(rows));
+    validateDrawing(collection);
+    return { collection, meta: { units: { heightMeters: "m" }, ...meta } };
   }
-  async invoke(name: string, input: any, signal: AbortSignal) {
+  chart(input: ChartInput) {
+    const saved = this.snapshot(input.result);
+    return prepareChart(input, normalizeRows(saved.rows), saved.meta);
+  }
+  select(ref: string, indexes: number[]) {
+    const saved = this.snapshot(ref),
+      rows = normalizeRows(saved.rows);
+    if (
+      !Array.isArray(indexes) ||
+      indexes.some((i) => !Number.isInteger(i) || i < 0 || i >= rows.length)
+    )
+      throw new Error("Invalid chart row selection");
+    return this.results.save(
+      rowFeatures([...new Set(indexes)].map((i) => rows[i]!)),
+      {
+        operation: "chart_selection",
+        inputs: [saved.meta],
+        units: (saved.meta as ResultMeta).units,
+        sourceResult: ref,
+      },
+    );
+  }
+  async invoke(
+    name: string,
+    input: any,
+    signal: AbortSignal,
+    progress: (message: string) => void = () => {},
+  ) {
     signal.throwIfAborted();
     const start = performance.now(),
       before = this.bytesRead;
     let value: any;
-    if (name.startsWith("workspace_")) {
+    if (name.startsWith("spatial_")) {
+      const source = await this.resolve(input.result),
+        target = input.other ? await this.resolve(input.other) : undefined;
+      const result = await spatialOperation(
+        { ...input, operation: name.slice(8) } as SpatialInput,
+        source.collection,
+        target?.collection,
+        signal,
+        progress,
+      );
+      signal.throwIfAborted();
+      if (input.field && (name === "spatial_join" || name === "spatial_grid")) {
+        const meta = name === "spatial_join" ? target?.meta : source.meta;
+        const unit = (meta?.units as Record<string, string> | undefined)?.[
+          input.field
+        ];
+        if (unit)
+          for (const metric of ["sum", "mean", "min", "max"])
+            result.units[metric] = unit;
+      }
+      value = this.results.save(result.collection, {
+        operation: name,
+        parameters: input,
+        inputs: [source.meta, ...(target ? [target.meta] : [])],
+        summary: result.summary,
+        units: {
+          ...((source.meta.units as Record<string, string>) ?? {}),
+          ...result.units,
+        },
+        notes: result.notes,
+        scope: "derived-from-retained-data",
+      });
+    } else if (
+      name === "result_filter" ||
+      name === "result_summary" ||
+      name === "feature_inspect"
+    ) {
+      const saved = this.snapshot(input.result),
+        rows = normalizeRows(saved.rows);
+      if (name === "result_summary")
+        value = { ...summary(rows, input.field), provenance: saved.meta };
+      else if (name === "feature_inspect")
+        value = { ...inspectRow(rows, input), provenance: saved.meta };
+      else {
+        const filtered = filterRows(rows, input);
+        value = {
+          ...this.results.save(rowFeatures(filtered.rows), {
+            operation: name,
+            parameters: input,
+            inputs: [saved.meta],
+            units: (saved.meta as ResultMeta).units,
+          }),
+          matched: filtered.matched,
+          limited: filtered.limited,
+        };
+      }
+    } else if (name.startsWith("workspace_")) {
       if (name === "workspace_result" && input.fields?.includes("geometry"))
         throw new Error(
           "Use map_draw with the result reference; raw geometry is not sent to the model.",

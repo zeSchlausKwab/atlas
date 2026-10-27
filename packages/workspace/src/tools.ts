@@ -80,7 +80,7 @@ const definitions = [
   [
     "workspace_query",
     "Query cached data",
-    "Filter a prepared workspace without network reads. Supports exact OSM IDs, text, and typed fields including tags.*, address.*, heightMeters. Missing values are unknown; exists:false selects them. Optional from refines a previous result. Returns a bounded preview and reusable result reference.",
+    "Filter a prepared workspace without network reads. Supports exact OSM IDs, text, and typed fields including family, tags.*, address.*, heightMeters and geometryType. geometryType is Point for locations, the retained shape type when geometry was prepared, otherwise unknown. Missing values are unknown; exists:false selects them. Optional from refines a previous result. Returns a bounded preview and reusable result reference.",
     objectSchema(
       {
         workspace: ref,
