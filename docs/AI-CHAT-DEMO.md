@@ -70,7 +70,7 @@ Reasoning text is model output, not proof; inspect actual tool responses.
 | Tools | Behavior |
 | --- | --- |
 | `map_context`, `workspace_catalog` | Current view, selection, retained data, sources and limitations |
-| `workspace_prepare` | Read selected families across compatible sources and pin rows/optional geometry |
+| `workspace_prepare` | Plan selected families and typed predicates across compatible sources; pin matching rows/optional geometry |
 | `workspace_query`, `workspace_result` | Typed cached filters and projected result pages; geometry stays local |
 | `analyze` | Count, numeric statistics including unknowns, grouping, or polygon intersection |
 | `run_code` | Custom synchronous JavaScript over cached result snapshots in QuickJS |
@@ -366,3 +366,76 @@ checks z0–16/capabilities/shared graph identity, a buildings workspace across 
 seam, cached follow-up reads, explicit addresses, named polygons and checked
 proximity bands, then all three routing profiles from Vienna to Bratislava. It
 uses HTTP ranges and requires both prepared child files, not the shared parent.
+
+
+## Preparing larger analysis areas
+
+`workspace_prepare` accepts the same AND-combined `where` predicates as
+`workspace_query`. Push known attribute predicates into preparation, rather than
+loading every object and filtering afterward. For example, a request about cities:
+
+```json
+{
+  "bounds": [14.1, 47, 19.8, 49.4],
+  "families": ["locations"],
+  "where": [
+    {"field": "kind", "op": "eq", "value": "place"},
+    {"field": "category", "op": "eq", "value": "city"}
+  ]
+}
+```
+
+A prepared workspace is complete only for its declared source coverage, families
+and **selection**, which is returned in `coverage.selection` and preserved in
+result provenance. Querying it cannot recover objects excluded at preparation;
+prepare another workspace when the task broadens. Empty results never imply
+real-world absence. A city ranking uses retained `tags.population`, not label
+priority or a guessed population.
+
+The planner currently recognizes an exact city selection on archives produced by
+the partitioned compiler. That compiler's settlement overview contains every
+retained city anchor; prepared excerpts preserve settlement anchors too. The
+planner uses those anchors to select location cells, then reads the original
+records, applies all predicates and retains their original IDs/tags. Display
+labels do not substitute for source records. Unknown producers, missing labels
+and other selections fall back to the full spatial scan. This is a compatibility
+optimization for existing archives; a general semantic index independent of
+optional display labels remains a useful format improvement.
+
+Both paths use at most eight concurrent cell readers. Attribute filters run
+before retaining rows and before requesting feature footprint pages. Workspace
+scans skip text-search normalization and no longer retain a second serialized
+copy of each object merely to detect overlap conflicts. Broad unfiltered requests
+still retain all matching data and can take time and memory; this does not add a
+hidden record limit or return a sampled answer.
+
+Progress is sent immediately and periodically, including planning/reading phase,
+completed cells, records checked/retained, bytes requested, elapsed time and an
+approximate ETA for the current read pass once there is enough evidence. The
+shared transfer meter counts successfully transferred bytes, so failed/cancelled
+reads can make that meter lower than the in-flight progress estimate. **Stop**
+aborts readers and drains concurrent batches; a subsequent preparation can run.
+
+### Large-area acceptance, 27 October 2026
+
+The reported Central Europe request, “Can you show me the biggest cities on my
+map?”, previously prepared all locations with no predicates: 5,488,812 records
+across 40,424 spatial cells. A 15-second reproduction issued 1,508 reads without a
+single preparation progress update before it was cancelled.
+
+With selection planning, the real browser/DeepSeek run prepared the **19 retained
+cities in 1.21 seconds**, transferred **5.31 MB of new data**, and drew the ten
+largest using retained population tags. The whole model/tool exchange took
+15.3 seconds. This browser had reusable index/map data; a separate fresh-reader
+run took 0.77 seconds including opening the archive and transferred 10.49 MB.
+Timings and cache state are measured examples, not throughput guarantees.
+
+An independent exhaustive filtered scan read **273.6 MB in 47.4 seconds** and
+found the same 19 cities. Deterministic regressions cover original attributes,
+selection provenance, pre-geometry filtering, bounded concurrency, progress,
+cancellation/retry during both directory planning and payload reading, prepared
+excerpts and safe fallback without a trusted index. A browser test with a scripted
+model and real archive reads verified collapsed progress, Stop responding in
+40 ms, and a subsequent city selection succeeding with no page errors.
+No archive rebuild or server restart is required; rebuild/refresh the client and
+start a new chat to use the new tool schema and planning guidance.

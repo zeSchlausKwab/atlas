@@ -10,7 +10,10 @@ export function supports(m: Manifest, family: Family) {
         (m.featureKinds ?? FEATURE_KINDS).includes(family);
 }
 /** No payload reads. Metadata describes retained data, never real-world completeness. */
-export function describeData(m: Manifest) {
+export function describeData(
+  m: Manifest,
+  policy: "bounded" | "interactive" = "bounded",
+) {
   return {
     version: 1,
     snapshot: m.snapshot,
@@ -66,9 +69,12 @@ export function describeData(m: Manifest) {
     limitations: m.limitations,
     workspace: {
       version: 1,
-      maxSpanDegrees: 0.25,
-      maxSources: 8,
-      maxMemoryBytes: 64 * 1024 ** 2,
+      policy,
+      selection:
+        "Pass where filters to prepare before downloading and retaining unrelated records. Without a usable index, filters stream over the requested cells; geometry pages for nonmatching features are skipped.",
+      maxSpanDegrees: policy === "interactive" ? null : 0.25,
+      maxSources: policy === "interactive" ? null : 8,
+      maxMemoryBytes: policy === "interactive" ? null : 64 * 1024 ** 2,
       operations: ["prepare", "query", "result", "release"],
       unsupported: [
         "administrative containment",

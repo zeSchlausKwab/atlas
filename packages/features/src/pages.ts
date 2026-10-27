@@ -155,6 +155,7 @@ export async function* readFeatureCell(
   signal?: AbortSignal,
   budget?: { remaining: number },
   exactId?: string,
+  predicate: (record: FeatureRecord) => boolean = () => true,
 ): AsyncGenerator<FeatureRecord> {
   signal?.throwIfAborted();
   const read = async (key: string) => {
@@ -173,6 +174,7 @@ export async function* readFeatureCell(
   const data = JSON.parse(new TextDecoder().decode(root));
   if (data?.schema === "features-v1") {
     for (const f of decodeFeatures(root)) {
+      if (!predicate(f)) continue;
       signal?.throwIfAborted();
       if (
         exactId
@@ -198,8 +200,9 @@ export async function* readFeatureCell(
       rows.some((r) => !contains(page.bounds, r.bbox))
     )
       throw new Error("Feature page metadata mismatch");
-    const candidates = rows.filter((r) =>
-      exactId ? r.id === exactId : overlaps(r.bbox, bounds),
+    const candidates = rows.filter(
+      (r) =>
+        predicate(r) && (exactId ? r.id === exactId : overlaps(r.bbox, bounds)),
     );
     if (!candidates.length) continue;
     let geometries: Map<string, Geometry> | undefined;

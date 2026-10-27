@@ -377,10 +377,15 @@ export class AtlasReader {
     // Collect owned results before LRU eviction. A broad query must not silently
     // lose its first pages when its descriptor working set exceeds the budget.
     for (let i = 0; i < pages.length; i += 8) {
-      const batch = await Promise.all(
+      const batch = await Promise.allSettled(
         pages.slice(i, i + 8).map((p) => this.loadPage(p)),
       );
-      for (const blocks of batch) result.push(...blocks.filter(matches));
+      // Drain the batch before releasing a scoped reader on cancellation/failure.
+      // Promise.all would leave sibling reads racing the next preparation.
+      for (const outcome of batch) {
+        if (outcome.status === "rejected") throw outcome.reason;
+        result.push(...outcome.value.filter(matches));
+      }
     }
     return result.sort((a, b) => a.offset - b.offset);
   }

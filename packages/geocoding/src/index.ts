@@ -59,7 +59,7 @@ function baseValid(r: unknown): r is Location | Street {
     aliasesValid(v.aliases)
   );
 }
-export function locations(bytes: Uint8Array) {
+export function decodeLocations(bytes: Uint8Array) {
   const data = JSON.parse(new TextDecoder().decode(bytes)) as LocationBlock;
   if (
     data?.schema !== "locations-v1" ||
@@ -101,7 +101,11 @@ export function locations(bytes: Uint8Array) {
     throw new Error("Invalid location search block");
   if (new Set(data.records.map((r) => r.id)).size !== data.records.length)
     throw new Error("Duplicate search identity");
-  return data.records.map((record) => ({
+  return data.records;
+}
+/** Name normalization is only needed for text search, not spatial workspace scans. */
+export function locations(bytes: Uint8Array) {
+  return decodeLocations(bytes).map((record) => ({
     record,
     names: [record.name, ...record.aliases].map(normalize),
     context: normalize(record.context ?? ""),

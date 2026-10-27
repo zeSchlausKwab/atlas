@@ -1,3 +1,4 @@
+import { cityCandidateCells } from "./selection";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
 import booleanIntersects from "@turf/boolean-intersects";
 import difference from "@turf/difference";
@@ -6,7 +7,7 @@ import { AtlasReader } from "../../format/src/reader";
 import { project, type Block } from "../../format/src/index";
 import { type Bounds } from "../../features/src/index";
 import { readFeatureCell, geometryHash } from "../../features/src/pages";
-import { locations } from "../../geocoding/src/index";
+import { decodeLocations } from "../../geocoding/src/index";
 import { normalize, type Address } from "../../geocoding/src/model";
 import { STREET_ZOOM } from "../../geocoding/src/paging";
 import { buildingHeight } from "../../format/src/heights";
@@ -39,6 +40,8 @@ export interface Prepare {
   families: Family[];
   /** false pins attributes only; geometry may still be read for exact boundary checks. */
   geometry?: boolean;
+  /** AND predicates applied before retaining rows and fetching feature geometry. */
+  where?: Filter[];
   required?: ("addresses" | "poi-tags")[];
   cacheOnly?: boolean;
   allowPartial?: boolean;
@@ -79,6 +82,7 @@ interface Coverage {
   realWorldCompleteness: "unknown";
   requested: Bounds;
   requirements: ("addresses" | "poi-tags")[];
+  selection: Filter[];
   families: {
     family: Family;
     status: "complete" | "outside_coverage" | "unsupported_data";
@@ -194,6 +198,42 @@ function field(row: Row, f: string): unknown {
     return row.address?.[f.slice(8) as keyof Address] ?? null;
   return row[f as keyof Row] ?? null;
 }
+function validateFilters(filters: Filter[]) {
+  if (!Array.isArray(filters))
+    throw new WorkspaceError("invalid_request", "Expected typed filters.");
+  for (const f of filters)
+    if (
+      !f ||
+      !fieldValid(f.field) ||
+      !["eq", "exists", "gte", "lte", "contains"].includes(f.op) ||
+      (f.op === "exists"
+        ? typeof f.value !== "boolean"
+        : f.op === "gte" || f.op === "lte"
+          ? typeof f.value !== "number" || !Number.isFinite(f.value)
+          : !["string", "number", "boolean"].includes(typeof f.value))
+    )
+      throw new WorkspaceError("invalid_request", "Invalid typed filter.");
+}
+function matches(row: Row, filters: Filter[]) {
+  return filters.every((f) => {
+    const value = field(row, f.field);
+    if (f.op === "exists") return (value !== null) === f.value;
+    if (value === null) return false;
+    if (f.op === "eq") return value === f.value;
+    if (f.op === "contains")
+      return (
+        typeof value === "string" &&
+        typeof f.value === "string" &&
+        normalize(value).includes(normalize(f.value))
+      );
+    return (
+      typeof value === "number" &&
+      (f.op === "gte"
+        ? value >= (f.value as number)
+        : value <= (f.value as number))
+    );
+  });
+}
 /** Task-local, pinned data and opaque results. No network access occurs during query/result. */
 export class AtlasWorkspace {
   private workspaces = new Map<string, Workspace>();
@@ -218,7 +258,7 @@ export class AtlasWorkspace {
       );
   }
   catalog() {
-    return this.readers.map((r) => describeData(r.index.manifest));
+    return this.readers.map((r) => describeData(r.index.manifest, this.policy));
   }
   private sweep() {
     for (const [id, w] of this.workspaces)
@@ -234,11 +274,17 @@ export class AtlasWorkspace {
       );
     return w;
   }
-  async prepare(input: Prepare, signal = new AbortController().signal) {
+  async prepare(
+    input: Prepare,
+    signal = new AbortController().signal,
+    progress: (message: string) => void = () => {},
+  ) {
     this.sweep();
-    signal = AbortSignal.any([signal, this.lifetime.signal]);
+    const controller = new AbortController();
+    signal = AbortSignal.any([signal, this.lifetime.signal, controller.signal]);
     const p = structuredClone(input);
     const interactive = this.policy === "interactive";
+    validateFilters(p.where ?? []);
     const maxRead = p.maxReadBytes ?? (interactive ? Infinity : 32 * MiB),
       maxMemory = p.maxMemoryBytes ?? (interactive ? Infinity : 64 * MiB);
     if (
@@ -293,6 +339,7 @@ export class AtlasWorkspace {
       realWorldCompleteness: "unknown",
       requested: p.bounds,
       requirements: p.required ?? [],
+      selection: p.where ?? [],
       families: families.map((family) => {
         const providers = this.readers.filter((r) => eligible(r, family));
         return {
@@ -333,17 +380,35 @@ export class AtlasWorkspace {
     this.preparing = true;
     let readBytes = 0,
       memoryEstimateBytes = 0;
-    const rows = new Map<string, Row>(),
-      identities = new Map<string, string>();
+    const rows = new Map<string, Row>();
     const charged = new Set<string>();
     const active: AtlasReader[] = [];
+    const started = performance.now();
+    let phase = "Planning requested data",
+      completed = 0,
+      total = 0,
+      scanned = 0,
+      phaseStart = started;
+    const report = () => {
+      const seconds = (performance.now() - started) / 1000;
+      const elapsed = (performance.now() - phaseStart) / 1000;
+      const eta =
+        completed >= 8 && elapsed >= 1 && completed < total
+          ? ` · ~${Math.ceil((elapsed * (total - completed)) / completed)}s remaining in this pass`
+          : "";
+      progress(
+        `${phase} · ${completed.toLocaleString()}/${total.toLocaleString()} cells · ${scanned.toLocaleString()} checked · ${rows.size.toLocaleString()} retained · ${(readBytes / MiB).toFixed(2)} MiB read · ${Math.floor(seconds)}s elapsed${eta}`,
+      );
+    };
+    const heartbeat = setInterval(report, 750);
     try {
+      report();
       for (const base of this.readers) {
         signal.throwIfAborted();
         const m = base.index.manifest;
         const reader = base.fork(
           {
-            purposes: ["features", "search"],
+            purposes: ["features", "search", "labels"],
             cacheBudgets: {
               map: 0,
               routing: 0,
@@ -403,15 +468,18 @@ export class AtlasWorkspace {
         reader.offline = p.cacheOnly === true || base.offline;
         active.push(reader);
         const add = (row: Row) => {
+          if (!matches(row, p.where ?? [])) return;
           const key = `${row.family}:${row.id}`,
             previous = rows.get(key);
           // Source-context labels may differ at extract borders. Source attributes and geometry may not.
-          const signature = canonical({
-            ...row,
-            context: undefined,
-            aliases: undefined,
-          });
-          if (previous && identities.get(key) !== signature)
+          const signature = (r: Row) =>
+            canonical({
+              ...r,
+              geometry: r.geometryHash ? undefined : r.geometry,
+              context: undefined,
+              aliases: undefined,
+            });
+          if (previous && signature(previous) !== signature(row))
             throw new WorkspaceError(
               "conflicting_data",
               "Overlapping sources disagree on an object; use compatible snapshots.",
@@ -424,7 +492,6 @@ export class AtlasWorkspace {
                 "Workspace exceeds 100,000 records; choose a smaller area.",
               );
             rows.set(key, row);
-            identities.set(key, signature);
           }
         };
         for (const family of families) {
@@ -433,13 +500,21 @@ export class AtlasWorkspace {
             2 ** (family === "locations" ? STREET_ZOOM : m.featureZoom!);
           const nw = project(p.bounds[0], p.bounds[3]),
             se = project(p.bounds[2], p.bounds[1]);
+          phase = `Planning ${family} in ${m.name}`;
+          completed = total = 0;
+          report();
           let keys: string[];
           if (family === "locations") {
             const root = JSON.parse(
               new TextDecoder().decode(await reader.block("search/locations")),
             );
-            keys =
+            const candidates =
               root.schema === "locations-paged-v1"
+                ? await cityCandidateCells(reader, p.bounds, p.where ?? [])
+                : undefined;
+            keys =
+              candidates ??
+              (root.schema === "locations-paged-v1"
                 ? (
                     await reader.spatial(
                       "search/locations-data",
@@ -450,7 +525,7 @@ export class AtlasWorkspace {
                       Math.floor(se[1] * n),
                     )
                   ).map((b) => b.key)
-                : ["search/locations"];
+                : ["search/locations"]);
           } else
             keys = (
               await reader.spatial(
@@ -462,7 +537,11 @@ export class AtlasWorkspace {
                 Math.floor(se[1] * n),
               )
             ).map((b) => b.key);
-          for (const key of keys) {
+          total = keys.length;
+          phaseStart = performance.now();
+          phase = `Reading ${family} in ${m.name}`;
+          report();
+          const consume = async (key: string) => {
             signal.throwIfAborted();
             if (family === "locations") {
               for await (const bytes of readSearchCell(
@@ -472,7 +551,8 @@ export class AtlasWorkspace {
                 p.bounds,
                 signal,
               ))
-                for (const { record: r } of locations(bytes)) {
+                for (const r of decodeLocations(bytes)) {
+                  scanned++;
                   const [x, y] = r.coordinates;
                   if (
                     x < p.bounds[0] ||
@@ -496,6 +576,41 @@ export class AtlasWorkspace {
                 p.bounds,
                 p.geometry !== false,
                 signal,
+                undefined,
+                undefined,
+                (f) => {
+                  scanned++;
+                  const h = buildingHeight(f.properties.tags);
+                  // geometry-dependent predicates are applied after the exact geometry read.
+                  return matches(
+                    {
+                      id: f.id,
+                      family,
+                      name: f.properties.name,
+                      kind: family,
+                      category: family,
+                      tags: f.properties.tags,
+                      heightMeters:
+                        family === "buildings" && h.height >= 0
+                          ? h.height
+                          : null,
+                      heightSource:
+                        family !== "buildings" || (h.source & 3) === 0
+                          ? "unknown"
+                          : (h.source & 3) === 1
+                            ? "tagged"
+                            : "levels-estimate",
+                    },
+                    (p.where ?? []).filter(
+                      (f) =>
+                        ![
+                          "geometry",
+                          "geometryType",
+                          "geometryAvailable",
+                        ].includes(f.field),
+                    ),
+                  );
+                },
               )) {
                 if (f.properties.kind !== family) continue;
                 const h = buildingHeight(f.properties.tags);
@@ -520,10 +635,37 @@ export class AtlasWorkspace {
                         : "levels-estimate",
                 });
               }
-          }
+            completed++;
+          };
+          let next = 0;
+          const workers = Array.from(
+            { length: Math.min(8, keys.length) },
+            async () => {
+              try {
+                while (next < keys.length) {
+                  signal.throwIfAborted();
+                  await consume(keys[next++]!);
+                  // Permit worker cancellation even when all data is already cached.
+                  if (completed % 32 === 0)
+                    await new Promise((r) => setTimeout(r, 0));
+                }
+              } catch (error) {
+                controller.abort(error);
+                throw error;
+              }
+            },
+          );
+          const outcomes = await Promise.allSettled(workers);
+          const failed = outcomes.find(
+            (v): v is PromiseRejectedResult => v.status === "rejected",
+          );
+          if (failed) throw controller.signal.reason ?? failed.reason;
+          report();
         }
       }
       signal.throwIfAborted();
+      phase = "Finalizing cached workspace";
+      report();
       const w: Workspace = {
         id: crypto.randomUUID(),
         expiresAt: interactive ? Number.MAX_SAFE_INTEGER : Date.now() + TTL,
@@ -536,6 +678,8 @@ export class AtlasWorkspace {
         readBytes,
       };
       this.workspaces.set(w.id, w);
+      phase = "Workspace ready";
+      report();
       return structuredClone({
         workspace: w.id,
         expiresAt: w.expiresAt,
@@ -553,6 +697,7 @@ export class AtlasWorkspace {
         });
       throw e;
     } finally {
+      clearInterval(heartbeat);
       this.preparing = false;
       for (const r of active) r.dispose();
     }
@@ -585,17 +730,7 @@ export class AtlasWorkspace {
         "invalid_request",
         "Query limits: 120 text characters, 500 IDs, 20 filters.",
       );
-    for (const f of input.where ?? [])
-      if (
-        !fieldValid(f.field) ||
-        !["eq", "exists", "gte", "lte", "contains"].includes(f.op) ||
-        (f.op === "exists"
-          ? typeof f.value !== "boolean"
-          : f.op === "gte" || f.op === "lte"
-            ? typeof f.value !== "number" || !Number.isFinite(f.value)
-            : !["string", "number", "boolean"].includes(typeof f.value))
-      )
-        throw new WorkspaceError("invalid_request", "Invalid typed filter.");
+    validateFilters(input.where ?? []);
     const parent = input.from ? this.results.get(input.from) : undefined;
     if (input.from && (!parent || parent.workspace !== w.id))
       throw new WorkspaceError(
@@ -618,24 +753,7 @@ export class AtlasWorkspace {
         [r.name, ...(r.aliases ?? []), r.context ?? ""].join(" "),
       );
       if (!tokens.every((t) => text.includes(t))) return false;
-      return (input.where ?? []).every((f) => {
-        const value = field(r, f.field);
-        if (f.op === "exists") return (value !== null) === f.value;
-        if (value === null) return false;
-        if (f.op === "eq") return value === f.value;
-        if (f.op === "contains")
-          return (
-            typeof value === "string" &&
-            typeof f.value === "string" &&
-            normalize(value).includes(normalize(f.value))
-          );
-        return (
-          typeof value === "number" &&
-          (f.op === "gte"
-            ? value >= (f.value as number)
-            : value <= (f.value as number))
-        );
-      });
+      return matches(r, input.where ?? []);
     });
     const resultBytes = [...this.results.values()].reduce(
       (n, r) => n + r.indexes.length * 8,

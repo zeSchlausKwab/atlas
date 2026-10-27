@@ -390,7 +390,7 @@ export class ChatDataRuntime {
         );
       const d = this.registry.describe(name);
       if (!d) throw new Error("Unknown workspace tool");
-      value = await this.registry.invoke(d, input, signal);
+      value = await this.registry.invoke(d, input, signal, progress);
     } else if (name === "analyze") {
       let region: Feature<Polygon | MultiPolygon> | undefined;
       let regionMeta: ResultMeta | undefined;

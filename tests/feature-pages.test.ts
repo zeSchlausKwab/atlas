@@ -391,3 +391,22 @@ test("exact source ID lookup resolves an anchor in a polygon hole in legacy and 
     expect(byId[0]!.geometry).toEqual(shape.features[0]!.geometry);
   }
 });
+
+test("prepare filters attributes before requesting footprint pages and preserves the selected universe", async () => {
+  const f = await fixture(),
+    w = new AtlasWorkspace([f.reader]);
+  const p = await w.prepare({
+    bounds: query,
+    families: ["buildings"],
+    geometry: true,
+    where: [{ field: "heightMeters", op: "gte", value: 100 }],
+  });
+  expect(p.records).toBe(0);
+  expect(f.readKeys.some((k) => k.startsWith("features/geometry/"))).toBe(
+    false,
+  );
+  expect(w.query({ workspace: p.workspace }).coverage.selection).toEqual([
+    { field: "heightMeters", op: "gte", value: 100 },
+  ]);
+  f.reader.dispose();
+});
