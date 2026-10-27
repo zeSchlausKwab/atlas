@@ -112,3 +112,11 @@ See [spatial operation semantics](SPATIAL-ANALYSIS.md) for units and limitations
 The two items above remain proposals. Population, flood exposure, opening hours
 and precise shade analysis need additional data/semantics; a convincing drawing
 alone does not establish those facts.
+
+## A complete delivery-day exercise
+
+[Vienna delivery day](../examples/delivery/README.md) includes 12 fictional orders,
+a depot, time windows, service durations, load limits and a lunch break. Paste
+[the ready-made prompt](../examples/delivery/PROMPT.md) to test address geocoding,
+stitched routing, scheduling and labeled map visualization. The separate developer
+verification file records a feasible tour without giving coordinates to the AI.

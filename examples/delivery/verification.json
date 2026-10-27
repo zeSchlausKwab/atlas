@@ -1,0 +1,385 @@
+{
+  "schema": "atlas-delivery-verification-v1",
+  "verifiedAt": "2026-10-27T14:45:17.941Z",
+  "scope": "One feasible tour, not an optimum. Static cycling estimates; minutes rounded up per leg.",
+  "maps": [
+    {
+      "name": "Vienna west · rehearsal",
+      "snapshot": "44e0cb2c1f287c21eab6090f3dda2b2c0d1d656dc65ab04dd33041f158c0c55e",
+      "capabilities": [
+        "vector-rendering",
+        "building-heights",
+        "map-labels",
+        "location-search",
+        "semantic-locations",
+        "address-search",
+        "reverse-street",
+        "peak-query",
+        "feature-extraction",
+        "transport-routing"
+      ]
+    },
+    {
+      "name": "Vienna east · rehearsal",
+      "snapshot": "aa8fece10d231f385875c06a106e76e619330166bc47795c8326c5b07b3f9731",
+      "capabilities": [
+        "vector-rendering",
+        "building-heights",
+        "map-labels",
+        "location-search",
+        "semantic-locations",
+        "address-search",
+        "reverse-street",
+        "peak-query",
+        "feature-extraction",
+        "transport-routing"
+      ]
+    }
+  ],
+  "addresses": {
+    "DEPOT": {
+      "id": "way/99866729",
+      "name": "Lerchenfelder Straße 25 1070 Wien AT",
+      "coordinates": [16.351952265204183, 48.2060237],
+      "kind": "address",
+      "category": "building",
+      "address": {
+        "houseNumber": "25",
+        "source": "osm-explicit",
+        "street": "Lerchenfelder Straße",
+        "city": "Wien",
+        "postcode": "1070",
+        "country": "AT"
+      }
+    },
+    "D06": {
+      "id": "node/618002256",
+      "name": "Handelskai 300 1020 Wien AT",
+      "coordinates": [16.4218088, 48.2131002],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "300",
+        "source": "osm-explicit",
+        "street": "Handelskai",
+        "city": "Wien",
+        "postcode": "1020",
+        "country": "AT"
+      }
+    },
+    "D02": {
+      "id": "way/140810877",
+      "name": "Lindengasse 15 1070 Wien AT",
+      "coordinates": [16.353539657162905, 48.200824499999996],
+      "kind": "address",
+      "category": "building",
+      "address": {
+        "houseNumber": "15",
+        "source": "osm-explicit",
+        "street": "Lindengasse",
+        "city": "Wien",
+        "postcode": "1070",
+        "country": "AT"
+      }
+    },
+    "D11": {
+      "id": "node/11516674181",
+      "name": "Währinger Straße 12 1090 Wien AT",
+      "coordinates": [16.3599457, 48.2167403],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "12",
+        "source": "osm-explicit",
+        "street": "Währinger Straße",
+        "city": "Wien",
+        "postcode": "1090",
+        "country": "AT"
+      }
+    },
+    "D04": {
+      "id": "node/354672144",
+      "name": "Wiedner Hauptstraße 8-10 1040 Wien AT",
+      "coordinates": [16.367573, 48.1989808],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "8-10",
+        "source": "osm-explicit",
+        "street": "Wiedner Hauptstraße",
+        "city": "Wien",
+        "postcode": "1040",
+        "country": "AT"
+      }
+    },
+    "D09": {
+      "id": "node/1725650091",
+      "name": "Taborstraße 18 1020 Wien AT",
+      "coordinates": [16.3804992, 48.2155011],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "18",
+        "source": "osm-explicit",
+        "street": "Taborstraße",
+        "city": "Wien",
+        "postcode": "1020",
+        "country": "AT"
+      }
+    },
+    "D01": {
+      "id": "node/728538339",
+      "name": "Neubaugasse 42 1070 Wien AT",
+      "coordinates": [16.3491849, 48.2017167],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "42",
+        "source": "osm-explicit",
+        "street": "Neubaugasse",
+        "city": "Wien",
+        "postcode": "1070",
+        "country": "AT"
+      }
+    },
+    "D12": {
+      "id": "node/2527209746",
+      "name": "Josefstädter Straße 26 1080 Wien AT",
+      "coordinates": [16.3509595, 48.209515499999995],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "26",
+        "source": "osm-explicit",
+        "street": "Josefstädter Straße",
+        "city": "Wien",
+        "postcode": "1080",
+        "country": "AT"
+      }
+    },
+    "D07": {
+      "id": "node/1733302930",
+      "name": "Lassallestraße 7 1020 Wien AT",
+      "coordinates": [16.3973094, 48.2220942],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "7",
+        "source": "osm-explicit",
+        "street": "Lassallestraße",
+        "city": "Wien",
+        "postcode": "1020",
+        "country": "AT"
+      }
+    },
+    "D03": {
+      "id": "node/1566503959",
+      "name": "Mariahilfer Straße 2 1070 Wien AT",
+      "coordinates": [16.360245, 48.2017933],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "2",
+        "source": "osm-explicit",
+        "street": "Mariahilfer Straße",
+        "city": "Wien",
+        "postcode": "1070",
+        "country": "AT"
+      }
+    },
+    "D10": {
+      "id": "node/566997605",
+      "name": "Schottenring 1 1010 Wien AT",
+      "coordinates": [16.362495, 48.2143053],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "1",
+        "source": "osm-explicit",
+        "street": "Schottenring",
+        "city": "Wien",
+        "postcode": "1010",
+        "country": "AT"
+      }
+    },
+    "D05": {
+      "id": "node/1922367771",
+      "name": "Landstraßer Hauptstraße 1 1030 Wien AT",
+      "coordinates": [16.3834203, 48.2065681],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "1",
+        "source": "osm-explicit",
+        "street": "Landstraßer Hauptstraße",
+        "city": "Wien",
+        "postcode": "1030",
+        "country": "AT"
+      }
+    },
+    "D08": {
+      "id": "node/1731066506",
+      "name": "Praterstraße 20 1020 Wien AT",
+      "coordinates": [16.3830968, 48.213616699999996],
+      "kind": "address",
+      "category": "address",
+      "address": {
+        "houseNumber": "20",
+        "source": "osm-explicit",
+        "street": "Praterstraße",
+        "city": "Wien",
+        "postcode": "1020",
+        "country": "AT"
+      }
+    }
+  },
+  "order": [
+    "DEPOT",
+    "D01",
+    "D02",
+    "D03",
+    "D04",
+    "D05",
+    "D06",
+    "D07",
+    "D08",
+    "D09",
+    "D10",
+    "D11",
+    "D12",
+    "DEPOT"
+  ],
+  "schedule": [
+    {
+      "from": "DEPOT",
+      "to": "D01",
+      "meters": 730.2790311831803,
+      "travelMinutes": 3,
+      "arrival": "09:03",
+      "serviceStart": "09:03",
+      "serviceEnd": "09:15"
+    },
+    {
+      "from": "D01",
+      "to": "D02",
+      "meters": 2241.4511483390133,
+      "travelMinutes": 8,
+      "arrival": "09:23",
+      "serviceStart": "09:23",
+      "serviceEnd": "09:31"
+    },
+    {
+      "from": "D02",
+      "to": "D03",
+      "meters": 657.7343230413053,
+      "travelMinutes": 3,
+      "arrival": "09:34",
+      "serviceStart": "09:34",
+      "serviceEnd": "09:44"
+    },
+    {
+      "from": "D03",
+      "to": "D04",
+      "meters": 2625.5879917639304,
+      "travelMinutes": 10,
+      "arrival": "09:54",
+      "serviceStart": "09:54",
+      "serviceEnd": "10:09"
+    },
+    {
+      "from": "D04",
+      "to": "D05",
+      "meters": 1830.5707364487166,
+      "travelMinutes": 7,
+      "arrival": "10:16",
+      "serviceStart": "10:16",
+      "serviceEnd": "10:26"
+    },
+    {
+      "from": "D05",
+      "to": "D06",
+      "meters": 4470.946458485985,
+      "travelMinutes": 15,
+      "arrival": "10:41",
+      "serviceStart": "11:00",
+      "serviceEnd": "11:20"
+    },
+    {
+      "from": "D06",
+      "to": "D07",
+      "meters": 2871.5879754515604,
+      "travelMinutes": 10,
+      "arrival": "11:30",
+      "serviceStart": "11:30",
+      "serviceEnd": "11:38"
+    },
+    {
+      "kind": "break",
+      "at": "D08",
+      "start": "12:00",
+      "end": "12:30"
+    },
+    {
+      "from": "D07",
+      "to": "D08",
+      "meters": 1499.4410188896095,
+      "travelMinutes": 5,
+      "arrival": "11:43",
+      "serviceStart": "12:30",
+      "serviceEnd": "12:42"
+    },
+    {
+      "from": "D08",
+      "to": "D09",
+      "meters": 616.8335648736636,
+      "travelMinutes": 3,
+      "arrival": "12:45",
+      "serviceStart": "12:45",
+      "serviceEnd": "12:55"
+    },
+    {
+      "from": "D09",
+      "to": "D10",
+      "meters": 2041.6522408482006,
+      "travelMinutes": 7,
+      "arrival": "13:02",
+      "serviceStart": "13:02",
+      "serviceEnd": "13:10"
+    },
+    {
+      "from": "D10",
+      "to": "D11",
+      "meters": 861.0593937741078,
+      "travelMinutes": 3,
+      "arrival": "13:13",
+      "serviceStart": "13:13",
+      "serviceEnd": "13:28"
+    },
+    {
+      "from": "D11",
+      "to": "D12",
+      "meters": 1657.1840200405022,
+      "travelMinutes": 6,
+      "arrival": "13:34",
+      "serviceStart": "13:34",
+      "serviceEnd": "13:44"
+    },
+    {
+      "from": "D12",
+      "to": "DEPOT",
+      "meters": 1647.9209523166264,
+      "travelMinutes": 6,
+      "arrival": "13:50"
+    }
+  ],
+  "totals": {
+    "meters": 23752.248855456404,
+    "travelMinutes": 86,
+    "serviceMinutes": 138,
+    "waitingMinutes": 36,
+    "breakMinutes": 30,
+    "returnTime": "13:50",
+    "packages": 28,
+    "weightKg": 40
+  }
+}

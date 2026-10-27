@@ -1,0 +1,13 @@
+id,recipient,street,house_number,postcode,city,country,window_start,window_end,service_minutes,packages,weight_kg,notes
+D06,Fictional customer D06,Handelskai,300,1020,Wien,AT,11:00,15:00,20,5,8.0,Eastern stop; route across the chunk boundary
+D02,Fictional customer D02,Lindengasse,15,1070,Wien,AT,09:00,11:30,8,1,1.2,Standard
+D11,Fictional customer D11,Währinger Straße,12,1090,Wien,AT,13:00,16:30,15,3,4.5,Match the full street and house number
+D04,Fictional customer D04,Wiedner Hauptstraße,8-10,1040,Wien,AT,09:00,12:30,15,4,6.0,One address range; do not silently change to number 8
+D09,Fictional customer D09,Taborstraße,18,1020,Wien,AT,12:00,16:00,10,2,1.8,Standard
+D01,Fictional customer D01,Neubaugasse,42,1070,Wien,AT,09:00,11:30,12,3,5.5,Standard
+D12,Fictional customer D12,Josefstädter Straße,26,1080,Wien,AT,13:00,16:30,10,2,2.1,Return all undelivered packages to the depot
+D07,Fictional customer D07,Lassallestraße,7,1020,Wien,AT,11:00,15:00,8,1,1.5,Standard
+D03,Fictional customer D03,Mariahilfer Straße,2,1070,Wien,AT,09:00,12:00,10,2,3.0,Fragile; allow the full service time
+D10,Fictional customer D10,Schottenring,1,1010,Wien,AT,13:00,16:30,8,1,0.8,Standard
+D05,Fictional customer D05,Landstraßer Hauptstraße,1,1030,Wien,AT,10:00,14:00,10,2,3.2,Several POIs share this address; use the address anchor
+D08,Fictional customer D08,Praterstraße,20,1020,Wien,AT,12:00,16:00,12,2,2.4,Standard
