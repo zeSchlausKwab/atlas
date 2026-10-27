@@ -343,14 +343,23 @@ Schönbrunn, verified:
   benches inside it while keeping the camera at Schönbrunn.
 - After panning, a follow-up used the same cached park for a 100 m exterior band,
   with zero new source reads and no new workspace preparation.
+- The exact Prater request also resolved retained land geometry independently
+  of the camera: relation/1406382 (`landuse=recreation_ground`). It counted 315
+  mapped benches inside the polygon and disclosed partial coverage: the park
+  extends east to 16.4954°, beyond the rehearsal files’ 16.46° edge. The named
+  park search did not return this polygon; discovery required inspecting nearby
+  land features. This is an indexing/lookup improvement opportunity, not absence
+  of the retained boundary.
 - With a reference rectangle pinned and the camera moved, explicit “current
   view” used the new viewport bounds, not the pin. Partial source coverage was
   disclosed. There were no browser page errors in these runs.
 
 These are observed model runs, not a guarantee of every model response. Source
 lookup/ranking, filter-before-limit behavior and hole handling have deterministic
-regressions. The full green-Prater boundary was absent from the rehearsal search
-results; the tool must report missing geometry rather than fabricate a boundary.
+regressions. A failed search is not proof of absent source geometry. Parks may
+be tagged as recreation grounds rather than `leisure=park`; inspect candidates
+and their tags. If no boundary can be resolved, report that rather than fabricate
+one. A retained whole polygon does not establish full coverage of its contents.
 
 Large pair acceptance: `bun scripts/verify-large-pair.ts WEST_URL EAST_URL`
 checks z0–16/capabilities/shared graph identity, a buildings workspace across the

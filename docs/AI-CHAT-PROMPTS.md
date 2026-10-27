@@ -179,10 +179,13 @@ Keep the camera over Schönbrunn to test independence from the viewport.
 1. **Park furniture, elsewhere.** “Find all mapped benches inside Stadtpark in
    Vienna, excluding Stadtpark-Kinderpark. Resolve the mapped boundary, draw it
    and the benches, and keep my camera unchanged.”
-2. **Clarify instead of guessing.** “Find all park benches in Prater park.”
-   The rehearsal search lacks a full green-Prater polygon: expect a question or
-   an explicit coverage limitation, not substitution of subway entrances or the
-   amusement park. “Find cafés” alone should also trigger a location question.
+2. **Find the place, disclose coverage.** “Find all park benches in Prater park
+   in Vienna. Resolve its actual mapped boundary, draw the benches, and report
+   any gaps in coverage.” The rehearsal contains the Prater recreation-ground
+   polygon but only part of its contents: the observed run counted 315 mapped
+   benches and disclosed the missing eastern coverage. Do not substitute transit
+   stops or the amusement park. Separately, “Find cafés” alone should trigger a
+   location question.
 3. **A park halo.** Follow up after panning elsewhere: “Around the same park,
    draw 0–100 m, 100–250 m and 250–500 m exterior rings. Cut out the park itself
    and all mapped water. Color and label the rings, check exclusions, and make
