@@ -10,8 +10,12 @@ export async function writeSourceObjects(
   region?: Polygon,
   signal?: AbortSignal,
   progress: (s: string) => void = () => {},
+  additional: Iterable<SourceObject> = [],
 ) {
-  const objects = new ObjectWriter(writer);
+  const objects = new ObjectWriter(
+    writer,
+    db.filename + ".objects-index.sqlite",
+  );
   let scanned = 0,
     omitted = 0;
   const encountered: Record<string, number> = Object.create(null);
@@ -41,6 +45,10 @@ export async function writeSourceObjects(
         await new Promise((r) => setTimeout(r, 0));
       }
     }
+    for (const object of additional) {
+      signal?.throwIfAborted();
+      await objects.add(object);
+    }
     objects.report.encountered = encountered;
     objects.report.omitted.outsideSelection = omitted;
     const stats = JSON.parse(
@@ -59,7 +67,7 @@ export async function writeSourceObjects(
     progress(
       `Indexing ${scanned - omitted} source objects and their relationships`,
     );
-    return await objects.finish();
+    return await objects.finish(progress);
   } finally {
     objects.close();
   }

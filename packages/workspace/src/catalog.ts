@@ -46,7 +46,7 @@ export function describeData(
       available: supports(m, family),
       schema:
         family === "objects"
-          ? "source-objects-v1"
+          ? "source-objects-v1/v2"
           : family === "boundaries"
             ? "boundaries-v1"
             : family === "locations"

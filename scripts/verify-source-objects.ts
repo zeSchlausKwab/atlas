@@ -25,13 +25,44 @@ try {
     "-o",
     dir + "/source.osm.pbf",
   ]);
-  await compilePartitioned({
+  const options: Parameters<typeof compilePartitioned>[0] = {
+    ocean: {
+      data: {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [16.15, 48.15],
+                  [16.2, 48.15],
+                  [16.2, 48.2],
+                  [16.15, 48.2],
+                  [16.15, 48.15],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+      source: {
+        url: "https://example.test/ocean",
+        bytes: 100,
+        sha256: "e".repeat(64),
+      },
+      clipHash: "f".repeat(64),
+      clipBytes: 100,
+    },
     input: dir + "/source.osm.pbf",
     output: dir + "/sample.atlas",
     work: dir + "/work",
     reserveBytes: 0,
     workers: 1,
     selection: {
+      ocean: { sha256: "e".repeat(64) },
       snapshot: "fixture",
       name: "Analysis fixture",
       polygon: [
@@ -42,7 +73,7 @@ try {
       ],
       minZoom: 0,
       maxZoom: 16,
-      layers: [],
+      layers: ["water"],
       profiles: [],
       featureKinds: ["objects", "boundaries"],
       placeNames: false,
@@ -54,7 +85,13 @@ try {
       paddingCells: 0,
       maxBytes: 64 * 1024 ** 2,
     },
-  });
+  };
+  await compilePartitioned(options);
+  await compilePartitioned({ ...options, output: dir + "/reused.atlas" });
+  assert.deepEqual(
+    await Bun.file(dir + "/sample.atlas").bytes(),
+    await Bun.file(dir + "/reused.atlas").bytes(),
+  );
   const r = await new AtlasReader(
     new FileSource(Bun.file(dir + "/sample.atlas")),
   ).open();
@@ -109,6 +146,18 @@ try {
     new AbortController().signal,
   );
   assert.equal(direct.matches[0].id, "relation/201");
+  assert.ok(r.index.manifest.capabilities.includes("land-sea-surfaces"));
+  assert.ok(
+    r.index.manifest.source.inputs!.some((i) => i.sha256 === "e".repeat(64)),
+  );
+  const sea: any = await objectOperation(
+    [r],
+    "object_search",
+    { tag: { key: "water", value: "ocean" } },
+    new AbortController().signal,
+  );
+  assert.equal(sea.matches.length, 1);
+  assert.ok((await r.spatial("tile/water", 16, 0, 65535, 0, 65535)).length > 0);
   const catalog = await objectCatalog(r);
   const w = new AtlasWorkspace([r], "interactive");
   const prepared = await w.prepare({

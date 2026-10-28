@@ -1,3 +1,4 @@
+import { configuredOcean } from "../../packages/provisioning/src/ocean-source";
 import { verifiedSource, verifiedSources } from "./verified-sources";
 import {
   cachedBuildSpace,
@@ -32,6 +33,7 @@ export interface PreparationJob {
   name: string;
   createdAt: string;
   state:
+    | "queued"
     | "running"
     | "cancelling"
     | "cancelled"
@@ -39,6 +41,7 @@ export interface PreparationJob {
     | "ready"
     | "deleting";
   selection: PackageSelection;
+  resumeCheckpoint?: boolean;
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
   sourceAtlasId?: string;
@@ -56,6 +59,8 @@ export class Preparations {
   private activeSource?: string;
   private writes = Promise.resolve();
   private settling?: Promise<void>;
+  private dispatching?: Promise<void>;
+  private closing = false;
   private constructor(
     readonly directory: string,
     readonly sourcePath: string,
@@ -99,6 +104,8 @@ export class Preparations {
         await manager.persist(job);
       }
     }
+    // Dispatch after recovery and loading all persisted dependencies.
+    setTimeout(() => void manager.startQueue(), 0);
     return manager;
   }
   path(id: string) {
@@ -127,27 +134,51 @@ export class Preparations {
   get sourceDirectory() {
     return resolve(this.directory, "../sources");
   }
+  async startQueue() {
+    if (this.closing || this.active) return;
+    if (this.dispatching) return this.dispatching;
+    this.dispatching = (async () => {
+      for (const job of [...this.jobs.values()].sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      )) {
+        if (this.closing || this.active) break;
+        if (job.state !== "queued") continue;
+        if (
+          job.sourceAtlasId &&
+          this.jobs.get(job.sourceAtlasId)?.state !== "ready"
+        )
+          continue;
+        try {
+          await this.create(job.selection, job, true);
+        } catch (error) {
+          job.state = "failed";
+          job.error = String(error);
+          await this.persist(job);
+        }
+      }
+    })().finally(() => {
+      this.dispatching = undefined;
+    });
+    return this.dispatching;
+  }
   async resume(id: string) {
     const job = this.jobs.get(id);
-    if (!job?.cachedSource || !["failed", "cancelled"].includes(job.state))
-      throw new Error(
-        "Only stopped cached-source preparations can be resumed.",
-      );
-    return this.create(
-      { ...job.selection, cachedSourceId: job.cachedSource.id },
-      job,
-    );
+    if (!job || !["failed", "cancelled"].includes(job.state))
+      throw new Error("Only stopped preparations can be queued again.");
+    return this.create(job.selection, job);
   }
-  async create(value: unknown, previous?: PreparationJob) {
+  async create(value: unknown, previous?: PreparationJob, start = false) {
+    if (this.closing)
+      throw new Error("Server is stopping; try again after restart.");
     const extra = value as {
       sourcePlanId?: string;
       cachedSourceId?: string;
       maxSourceBytes?: number;
       sourceAtlasId?: string;
     } | null;
-    const plan = extra?.sourcePlanId
-      ? this.sources.get(extra.sourcePlanId)
-      : undefined;
+    const plan =
+      previous?.sourcePlan ??
+      (extra?.sourcePlanId ? this.sources.get(extra.sourcePlanId) : undefined);
     const cached = extra?.cachedSourceId
       ? await verifiedSource(this.sourceDirectory, extra.cachedSourceId)
       : undefined;
@@ -162,9 +193,33 @@ export class Preparations {
     const atlas = extra?.sourceAtlasId
       ? this.jobs.get(extra.sourceAtlasId)
       : undefined;
-    if (extra?.sourceAtlasId && (atlas?.state !== "ready" || !atlas.manifest))
+    if (
+      extra?.sourceAtlasId &&
+      (!atlas || ["deleting", "failed", "cancelled"].includes(atlas.state))
+    )
       throw new Error("The selected Atlas dataset is no longer available.");
+    if (
+      atlas?.manifest &&
+      (start || (value as PackageSelection)?.snapshot === `pending:${atlas.id}`)
+    )
+      value = {
+        ...(value as PackageSelection),
+        snapshot: atlas.manifest.snapshot,
+      };
     const inputPath = atlas ? this.path(atlas.id) : this.sourcePath;
+    const selectedOcean = (value as PackageSelection)?.ocean;
+    if (selectedOcean) {
+      const ocean = await configuredOcean();
+      if (
+        !cached ||
+        !ocean ||
+        ocean.sha256 !== selectedOcean.sha256 ||
+        !Bun.which("ogr2ogr")
+      )
+        throw new Error(
+          "Choose the configured ocean source with a cached PBF; GDAL must be installed",
+        );
+    }
     if (cached) {
       validateSelectionScope(value, WORLD_SOURCE);
       planCachedBuild(value);
@@ -180,7 +235,7 @@ export class Preparations {
         );
     } else if (plan) {
       validateSelectionScope(value, WORLD_SOURCE);
-      if (!planMatches(plan, value, extra!.maxSourceBytes!))
+      if (!previous && !planMatches(plan, value, extra!.maxSourceBytes!))
         throw new Error(
           "Area, routing padding or source budget changed. Check the PBF source again.",
         );
@@ -189,7 +244,41 @@ export class Preparations {
           "PBF preparation requires Osmium and Cargo on the server.",
         );
       validateImportSize(plan, value);
+    } else if (atlas && atlas.state !== "ready") {
+      validateSelectionScope(value, {
+        ...WORLD_SOURCE,
+        snapshot: (value as PackageSelection).snapshot,
+      });
+      if (start) throw new Error("Waiting for the parent dataset to finish.");
     } else validateSelection(value, atlas?.manifest ?? this.source);
+    if (!start) {
+      const job: PreparationJob = {
+        id: previous?.id ?? crypto.randomUUID(),
+        name: value.name.trim(),
+        createdAt: previous?.createdAt ?? new Date().toISOString(),
+        state: "queued",
+        selection: structuredClone(value),
+        sourcePlan: plan,
+        cachedSource: cached,
+        sourceAtlasId: atlas?.id,
+        resumeCheckpoint: !!previous?.cachedSource,
+        progress: {
+          phase: "planning",
+          message:
+            atlas && atlas.state !== "ready"
+              ? `Queued; waiting for ${atlas.name}`
+              : "Queued; starts when the compiler is available",
+          completed: 0,
+          total: 0,
+          readBytes: 0,
+          writtenBytes: previous?.progress.writtenBytes ?? 0,
+        },
+      };
+      this.jobs.set(job.id, job);
+      await this.persist(job);
+      void this.startQueue().catch(console.error);
+      return job;
+    }
     if (this.active)
       throw new Error(
         "Another preparation is running. Wait for it or cancel it first.",
@@ -201,13 +290,13 @@ export class Preparations {
       const disk = await readStorage(this.directory);
       const partitioned = !!cached && !!planCachedBuild(value).partitioned;
       const extractedBytes =
-        previous && cached
+        previous?.resumeCheckpoint && cached
           ? Bun.file(
               resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
             ).size
           : 0;
       const needed = cached
-        ? previous
+        ? previous?.resumeCheckpoint
           ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
           : cachedBuildSpace(value.maxBytes, partitioned)
         : preparationSpace(value.maxBytes, plan?.bytes);
@@ -217,7 +306,12 @@ export class Preparations {
             ? `Not enough server disk space to resume: ${(needed / 1073741824).toFixed(2)} GiB minimum restart allowance, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Free space and resume the saved build.`
             : `Not enough server disk space: ${(needed / 1073741824).toFixed(2)} GiB estimated, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Lower the output budget or select a smaller source.`,
         );
-      const job: PreparationJob = {
+      if (previous && previous.state !== "queued") {
+        this.active = undefined;
+        this.activeSource = undefined;
+        return previous;
+      }
+      const job: PreparationJob = Object.assign(previous ?? {}, {
         id,
         name: value.name.trim(),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
@@ -238,7 +332,7 @@ export class Preparations {
           readBytes: 0,
           writtenBytes: 0,
         },
-      };
+      } as PreparationJob);
       this.jobs.set(id, job);
       await this.persist(job);
       let worker: Bun.Subprocess<"ignore", "ignore", "pipe">;
@@ -278,6 +372,7 @@ export class Preparations {
             this.activeSource = undefined;
             this.worker = undefined;
             worker.kill();
+            void this.startQueue().catch(console.error);
           });
       };
       worker = this.worker = Bun.spawn(
@@ -334,6 +429,12 @@ export class Preparations {
   async cancel(id: string) {
     const job = this.jobs.get(id);
     if (!job) throw new Error("Unknown preparation");
+    if (job.state === "queued") {
+      job.state = "cancelled";
+      job.progress.message = "Removed from queue; preparation has not started.";
+      await this.persist(job);
+      return job;
+    }
     if (job.state !== "running") return job;
     job.state = "cancelling";
     job.progress.message = job.cachedSource
@@ -354,9 +455,14 @@ export class Preparations {
       throw new Error(
         "This dataset is the server's base map and cannot be deleted here.",
       );
-    if (this.activeSource === id)
+    if (
+      this.activeSource === id ||
+      [...this.jobs.values()].some(
+        (j) => j.sourceAtlasId === id && j.state === "queued",
+      )
+    )
       throw new Error(
-        "This dataset is being used by an active preparation. Stop that build first.",
+        "This dataset is used by an active or queued preparation. Stop or remove those builds first.",
       );
     job.state = "deleting";
     await this.persist(job);
@@ -403,6 +509,11 @@ export class Preparations {
           ...WORLD_SOURCE,
           ready: !!Bun.which("osmium") && !!Bun.which("cargo"),
         },
+        oceanSource: await configuredOcean()
+          .then((v) =>
+            v && Bun.which("ogr2ogr") ? { url: v.url, sha256: v.sha256 } : null,
+          )
+          .catch(() => null),
         cachedSources: await verifiedSources(this.sourceDirectory),
         jobs: [...this.jobs.values()].sort((a, b) =>
           b.createdAt.localeCompare(a.createdAt),
@@ -439,6 +550,8 @@ export class Preparations {
     }
   }
   async close() {
+    this.closing = true;
+    await this.dispatching;
     if (this.active) await this.cancel(this.active);
     await this.worker?.exited;
     if (this.settling) await this.settling;

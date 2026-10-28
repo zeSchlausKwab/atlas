@@ -247,7 +247,11 @@ async function noActivePreparations() {
   if (!r.ok)
     throw new Error("Cannot check active preparations; refusing restart");
   const state = (await r.json()) as { jobs: Array<{ state: string }> };
-  if (state.jobs.some((j) => ["running", "cancelling"].includes(j.state)))
+  if (
+    state.jobs.some((j) =>
+      ["queued", "running", "cancelling"].includes(j.state),
+    )
+  )
     throw new Error(
       "A map preparation is active. Wait for it or cancel it in the host console, then deploy again.",
     );

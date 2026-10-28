@@ -19,7 +19,7 @@ import { STREET_ZOOM } from "../../geocoding/src/paging";
 import { locations, streets } from "../../geocoding/src/index";
 import booleanIntersects from "@turf/boolean-intersects";
 import type { Polygon as GeoPolygon } from "geojson";
-import { DiskWriter } from "../../cli/src/disk-writer";
+import { StreamWriter } from "../../cli/src/stream-writer";
 import {
   project,
   type Manifest,
@@ -97,7 +97,7 @@ export async function preparePackage(
     m = reader.index.manifest;
   p.total = plan.blocks.length;
   p.phase = "packing";
-  const writer = await new DiskWriter(output, s.maxBytes).open(),
+  const writer = await new StreamWriter(output, s.maxBytes).open(),
     encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
   const featureWriter = new PagedFeatureWriter(writer);
   const region: GeoPolygon = {
@@ -168,7 +168,7 @@ export async function preparePackage(
   };
   try {
     if (s.featureKinds.includes("objects")) {
-      const ow = new ObjectWriter(writer);
+      const ow = new ObjectWriter(writer, output + ".objects-index.sqlite");
       ow.report.profile = "selected-objects";
       try {
         for await (const row of objectRecords(
@@ -192,7 +192,7 @@ export async function preparePackage(
             ...(await objectTopology(reader, row, signal)),
           });
         }
-        await ow.finish();
+        await ow.finish(emit);
       } finally {
         ow.close();
       }
@@ -338,32 +338,27 @@ export async function preparePackage(
         signal,
         emit,
       );
-    const keys = new Set(writer.blocks.map((b) => b.key)),
-      caps: string[] = [],
-      layers = s.layers.filter((l) =>
-        writer.blocks.some((b) => b.key.startsWith(`tile/${l}/`)),
-      ),
+    const caps: string[] = [],
+      layers = s.layers.filter((l) => writer.hasPrefix(`tile/${l}/`)),
       featureKinds = s.featureKinds.filter((k) =>
-        writer.blocks.some((b) =>
-          k === "objects"
-            ? b.key === "objects/index"
-            : k === "boundaries"
-              ? b.key === BOUNDARY_ROOT
-              : b.key.startsWith(`features/${k}/`),
-        ),
+        k === "objects"
+          ? writer.has("objects/index")
+          : k === "boundaries"
+            ? writer.has(BOUNDARY_ROOT)
+            : writer.hasPrefix(`features/${k}/`),
       );
     if (layers.length) caps.push("vector-rendering");
     if (layers.includes("buildings") && m.buildingHeights)
       caps.push("building-heights");
-    if ([...keys].some((k) => k.startsWith("labels/"))) caps.push("map-labels");
-    if (keys.has("search/locations")) {
+    if (writer.hasPrefix("labels/")) caps.push("map-labels");
+    if (writer.has("search/locations")) {
       caps.push("location-search");
       if (m.semantics) caps.push("semantic-locations");
       if (m.semantics?.addresses === "osm-explicit")
         caps.push("address-search");
     }
-    if (keys.has("search/streets")) caps.push("reverse-street");
-    if (keys.has("query/peaks")) caps.push("peak-query");
+    if (writer.has("search/streets")) caps.push("reverse-street");
+    if (writer.has("query/peaks")) caps.push("peak-query");
     if (featureKinds.length) caps.push("feature-extraction");
     if (featureKinds.includes("objects")) {
       caps.push("source-objects");
@@ -381,9 +376,7 @@ export async function preparePackage(
       bounds: bounds(s.polygon),
       minZoom: s.minZoom,
       maxZoom: s.maxZoom,
-      features: writer.blocks
-        .filter((b) => b.key.startsWith("tile/"))
-        .reduce((n, b) => n + b.features, 0),
+      features: writer.featureCount("tile/"),
       featureCountKind: "tile-records",
       peaks: peakCount,
       places: s.placeNames
@@ -421,7 +414,7 @@ export async function preparePackage(
       ],
     };
     delete (manifest as Partial<Manifest>).snapshot;
-    if (!writer.blocks.length)
+    if (!writer.blockCount)
       throw new Error("No objects remain inside this selection.");
     p.phase = "indexing";
     emit("Writing the package directory and publishing the file…");

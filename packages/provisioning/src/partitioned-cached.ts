@@ -1,3 +1,4 @@
+import { prepareOcean } from "./ocean-source";
 import { BUILD_DISK_FLOOR, DISK_RESERVE, BUILD_STOP_MARGIN } from "./capacity";
 import { mkdir, rename, rm, statfs } from "node:fs/promises";
 import { join } from "node:path";
@@ -67,6 +68,12 @@ export async function importPartitionedCached(
   };
   const timer = setInterval(() => void check().catch(() => {}), 2000);
   try {
+    const ocean = await prepareOcean(
+      s,
+      join(work, "ocean"),
+      AbortSignal.any([signal, abort.signal]),
+      progress,
+    );
     progress("Verifying the saved extraction before reuse…", "verifying");
     const hashProgress = (done: number, total: number) =>
       report({
@@ -130,6 +137,7 @@ export async function importPartitionedCached(
       (line) => progress(line),
     );
     return await compilePartitioned({
+      ocean,
       input: area,
       output: join(work, "source.atlas"),
       work: join(work, "compiler"),

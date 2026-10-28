@@ -38,13 +38,13 @@ includes the generic store.
 
 ## Tools and local execution
 
-| Tool | Purpose |
-| --- | --- |
-| `source_catalog` | Retained counts, tag keys, geometry status, omissions and provenance without loading shapes |
-| `object_search` | Find tags, names or facets across selected maps; bounds are optional and never implicitly the viewport |
-| `object_get` | Fetch one exact object's geometry; chat receives a local result reference for drawing/analysis |
-| `object_members` | Page through ordered members with retained/reference-only/missing-source availability |
-| `workspace_prepare` with `families:["objects"]` | Prepare complete bounded analysis; apply `where` tag predicates before geometry loading |
+| Tool                                            | Purpose                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `source_catalog`                                | Retained counts, tag keys, geometry status, omissions and provenance without loading shapes            |
+| `object_search`                                 | Find tags, names or facets across selected maps; bounds are optional and never implicitly the viewport |
+| `object_get`                                    | Fetch one exact object's geometry; chat receives a local result reference for drawing/analysis         |
+| `object_members`                                | Page through ordered members with retained/reference-only/missing-source availability                  |
+| `workspace_prepare` with `families:["objects"]` | Prepare complete bounded analysis; apply `where` tag predicates before geometry loading                |
 
 The same implementations are registered for device, server and ContextVM.
 Metadata pages carry bounding boxes and tag-key summaries. Exact tag values are
@@ -58,8 +58,8 @@ capability was not retained; a client update cannot recover omitted source data.
 ## Coast, sea and global geometry
 
 PBF coastlines are retained as physical directed lines. An incomplete regional
-coastline does not prove a closed sea polygon. The existing `add-ocean.ts` step
-now stores assembled **sea polygons** as queryable external objects as well as
+coastline does not prove a closed sea polygon. The normal partitioned compiler, when a pinned ocean source is selected,
+stores assembled **sea polygons** as queryable external objects as well as
 display tiles. They preserve holes and source hashes; provider/clipping edges
 are labelled artificial and must not be mistaken for physical coasts.
 
@@ -92,18 +92,16 @@ Monaco and Vienna PBFs. Measurements below are local-file runs on the developmen
 Mac; they are not predictions for HTTP or continent-size builds. Archives here
 contain objects and administrative boundaries, not display/routing/search.
 
-| Input | Retained objects | Analysis archive | Build time | Attribute query |
-| --- | ---: | ---: | ---: | --- |
-| Monaco, 0.66 MiB PBF | 10,842 | 3.55 MiB | 5.5 s | 24 coastline ways, 418 KiB additional reads, 26 ms |
-| Vienna rehearsal, 23.9 MiB PBF | 574,830 | 155.0 MiB | 253 s | 16,235 benches, 19.7 MiB additional reads, 1.25 s |
+| Input                          | Retained objects | Analysis archive | Build time | Attribute query                                    |
+| ------------------------------ | ---------------: | ---------------: | ---------: | -------------------------------------------------- |
+| Monaco, 0.66 MiB PBF           |           10,842 |         3.55 MiB |      5.5 s | 24 coastline ways, 418 KiB additional reads, 26 ms |
+| Vienna rehearsal, 23.9 MiB PBF |          574,830 |        155.0 MiB |      253 s | 16,235 benches, 19.7 MiB additional reads, 1.25 s  |
 
 The catalog is already read before the measured query. No shape payloads are
 read for those attribute searches. A following, smaller Vienna geometry query
 returned 1,518 bench points with 11.1 MiB additional reads in 681 ms (partly warm
-metadata). This exposes real remaining overhead: per-object directory entries
-and broad tag-key scans. Pack small payloads and add selective tag-value indexes
-before promising efficient continent-wide queries; do not hide this by silently
-truncating results.
+metadata). These are the original v1 measurements. The v2 packing and exact-value index
+below address that overhead; they do not silently truncate results.
 
 `bun scripts/verify-source-objects.ts` exercises an OSM XML→PBF→native importer→
 archive→local workspace pipeline. Unit regressions cover selective reads, holes,
@@ -127,14 +125,15 @@ ports, depth/draft, restrictions and appropriate time-dependent data.
 
 ## Local rehearsal
 
-The prepared development files are `data/pair-rehearsal/west-analysis.atlas`
-(207,285,853 bytes) and `east-analysis.atlas` (141,305,283 bytes). They preserve
-the old routing, search, display and administrative blocks and add generic
-objects. These generated files are intentionally not committed.
+The current development files are `data/pair-rehearsal/west-packed.atlas`
+(180,257,567 bytes) and `east-packed.atlas` (115,338,158 bytes), with 371,010 and
+252,825 source objects respectively. The old `*-analysis.atlas` files are retained.
+Routing, address search, display and administrative data survive unchanged.
+Generated archives are not committed.
 
 ```sh
 bun run build:client
-bun scripts/serve-analysis-demo.ts
+bun scripts/serve-analysis-demo.ts data/pair-rehearsal/west-packed.atlas data/pair-rehearsal/east-packed.atlas
 # In another terminal, if the client is not already running:
 bun run client
 ```
@@ -160,3 +159,39 @@ client when the AI uses its default tools.
 - “On the Monaco sample, draw physical coastline in orange. If queryable sea
   polygons are present, fill them blue without treating their rectangular split
   edges as coastline. Report which source each layer came from.”
+
+## Packed source objects and exact-value lookup (2026-10-28)
+
+New builds write `source-objects-v2`. Small geometry and topology payloads share
+64 KiB blocks with validated byte offsets; large payloads retain 1 MiB chunks.
+Attributes remain separate. A sorted exact tag key/value index leads to bounded
+posting pages, then the existing spatial/attribute checks. Short posting lists
+store only record-page keys, avoiding a large repeated envelope for every unique
+name/address. v1 files remain readable; v2 readers do not need a runtime server.
+
+Measured on identical local inputs, with identical query IDs and object counts:
+
+| Measurement                                                   |          Original |   Packed/indexed |
+| ------------------------------------------------------------- | ----------------: | ---------------: |
+| Vienna analysis archive (574,830 objects)                     |         162.54 MB |        114.51 MB |
+| Vienna exact `amenity=bench` reads (16,235 IDs)               |          20.62 MB |         0.619 MB |
+| Same query, local elapsed time                                |          1,379 ms |            77 ms |
+| Subsequent smaller geometry query (1,518 points; partly warm) | 11.59 MB / 714 ms | 0.127 MB / 30 ms |
+| Monaco analysis archive (10,842 objects)                      |           3.72 MB |          2.26 MB |
+
+These are local file measurements, not continent-wide or LAN latency promises.
+The compiler stages attributes, tag postings and payloads in disposable SQLite
+inside the build workspace. Directory assembly is disk-backed; some page summaries
+and excerpt planning still consume memory proportional to the selected index.
+
+```sh
+bun scripts/repack-source-objects.ts OLD.atlas NEW.atlas
+bun scripts/benchmark-packed-objects.ts vienna OLD.atlas NEW.atlas
+bun scripts/verify-chat-pair.ts data/pair-rehearsal/west-packed.atlas data/pair-rehearsal/east-packed.atlas
+```
+
+Repacking does not invent absent tags/relations. An archive without generic source
+objects needs rebuilding from the existing cached PBF (or upgrading from a matching
+analysis archive). **No source PBF redownload is needed.** Consumers reopen the new
+snapshot; online clients fetch needed ranges, while offline users replace their
+saved archives. Old snapshot caches are not mixed with new ones.

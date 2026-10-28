@@ -7,6 +7,7 @@ import {
   objectGeometry,
   objectTopology,
   hasObjects,
+  objectCatalog,
 } from "./index";
 import { LEGACY_FEATURE_KINDS } from "../../features/src/index";
 import booleanIntersects from "@turf/boolean-intersects";
@@ -72,17 +73,36 @@ export async function upgradeObjects(
         last = performance.now();
       }
     }
-    const objects = new ObjectWriter(writer);
+    const objects = new ObjectWriter(writer, output + ".objects-index.sqlite");
     try {
-      objects.report.profile = "selected-objects";
+      if (reader === source) {
+        const old = (await objectCatalog(source)).report;
+        objects.report.profile = old.profile;
+        objects.report.encountered = structuredClone(old.encountered);
+        objects.report.omitted = structuredClone(old.omitted);
+        objects.report.scope = old.scope;
+        objects.report.limitations = [...old.limitations];
+      } else objects.report.profile = "selected-objects";
+      const originalEncountered = structuredClone(objects.report.encountered);
       for await (const row of objectRecords(
         source,
-        { bounds: m.bounds, includeDependencies: true, includeUnlocated: true },
+        reader === source
+          ? { includeDependencies: true }
+          : {
+              bounds: m.bounds,
+              includeDependencies: true,
+              includeUnlocated: true,
+            },
         signal,
         progress,
       )) {
         const geometry = await objectGeometry(source, row, signal);
-        if (geometry && !booleanIntersects(geometry, region)) continue;
+        if (
+          reader !== source &&
+          geometry &&
+          !booleanIntersects(geometry, region)
+        )
+          continue;
         await objects.add({
           id: row.id,
           tags: row.tags,
@@ -92,7 +112,8 @@ export async function upgradeObjects(
           ...(await objectTopology(source, row, signal)),
         });
       }
-      await objects.finish();
+      if (reader === source) objects.report.encountered = originalEncountered;
+      await objects.finish(progress);
     } finally {
       objects.close();
     }

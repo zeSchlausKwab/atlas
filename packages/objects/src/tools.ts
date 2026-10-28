@@ -248,7 +248,7 @@ export function objectTools(readers: readonly AtlasReader[]): Plugin[] {
               {
                 capability: "source-objects",
                 family: "objects",
-                schema: "source-objects-v1",
+                schema: "source-objects-v1/v2",
               },
             ],
       purposes: ["features"],

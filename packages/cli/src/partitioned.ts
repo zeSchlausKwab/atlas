@@ -1,3 +1,6 @@
+import type { PreparedOcean } from "../../provisioning/src/ocean-source";
+import { oceanObjects } from "../../objects/src/ocean";
+import { appendOcean } from "./ocean-spool";
 import { writeSourceObjects } from "../../objects/src/source-build";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import { reconcilePartitionedState } from "./partitioned-state";
@@ -37,6 +40,7 @@ import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 export interface PartitionedOptions {
+  ocean?: PreparedOcean;
   input: string;
   output: string;
   work: string;
@@ -73,10 +77,22 @@ export async function compilePartitioned(o: PartitionedOptions) {
       ),
     signal,
   );
+  if (s.ocean && (!o.ocean || o.ocean.source.sha256 !== s.ocean.sha256))
+    throw new Error("Pinned ocean input is required for this build");
+  if (o.ocean && !s.ocean)
+    throw new Error("Ocean input must be pinned in the recipe");
   const statePath = join(o.work, "partitioned.json"),
     old = Bun.file(statePath);
   const previous = (await old.exists()) ? await old.json() : undefined;
-  const { state, migrated } = reconcilePartitionedState(previous, inputHash, s);
+  const { state, migrated } = reconcilePartitionedState(
+    previous,
+    o.ocean
+      ? new Bun.CryptoHasher("sha256")
+          .update(inputHash + o.ocean.clipHash)
+          .digest("hex")
+      : inputHash,
+    s,
+  );
   const identity = state.identity;
   if (migrated) {
     // Keep the old receipt for diagnostics; publish the migration atomically.
@@ -133,6 +149,23 @@ export async function compilePartitioned(o: PartitionedOptions) {
       routingPaddingCells: s.paddingCells,
     },
   };
+  if (o.ocean) {
+    base.source = {
+      ...base.source,
+      inputs: [
+        ...(base.source.inputs ?? []),
+        o.ocean.source,
+        {
+          url: `atlas:clipped-ocean:${o.ocean.clipHash}`,
+          sha256: o.ocean.clipHash,
+          bytes: o.ocean.clipBytes,
+        },
+      ],
+    };
+    base.limitations.push(
+      "Sea polygons use a separately dated, fingerprinted coastline source. Provider splits and clipping edges are not physical coastlines; physical coastline ways retain the PBF snapshot. No shipping graph is implied.",
+    );
+  }
   async function stage(name: string, build: (path: string) => Promise<void>) {
     signal.throwIfAborted();
     await space();
@@ -510,6 +543,9 @@ export async function compilePartitioned(o: PartitionedOptions) {
                     region,
                     signal,
                     progress,
+                    o.ocean
+                      ? oceanObjects(o.ocean.data, o.ocean.source.sha256)
+                      : [],
                   );
                 const groupsProgress = measuredProgress(
                   progress,
@@ -616,6 +652,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   progress,
                   workers,
                 );
+                if (o.ocean && s.layers.includes("water"))
+                  await appendOcean(spool, o.ocean, base, signal, progress);
                 const packing = measuredProgress(
                   progress,
                   "display-packing",
@@ -759,6 +797,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
         if (m.capabilities.includes("peak-query")) manifest.peaks = m.peaks;
         r.dispose();
       }
+      if (
+        o.ocean?.data.features.length &&
+        (s.layers.includes("water") || s.featureKinds.includes("objects"))
+      )
+        caps.add("land-sea-surfaces");
       manifest.capabilities = [...caps];
       manifest.features = writer.featureCount("tile/");
       manifest.featureCountKind = "tile-records";

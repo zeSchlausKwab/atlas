@@ -16,41 +16,9 @@ export async function oceanTiles(
   signal: AbortSignal,
   emit: (tile: InputBlock) => Promise<void>,
 ) {
-  if (data.type !== "FeatureCollection" || !data.features?.length)
-    throw Error("Expected a nonempty ocean polygon FeatureCollection");
+  validateOcean(data, manifest.bounds);
   const [west, south, east, north] = manifest.bounds;
-  let points = 0;
-  for (const feature of data.features) {
-    const g = feature.geometry;
-    if (!g || !["Polygon", "MultiPolygon"].includes(g.type))
-      throw Error("Ocean input must contain polygons only");
-    const polygons = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
-    for (const polygon of polygons)
-      for (const ring of polygon) {
-        if (
-          ring.length < 4 ||
-          ring[0]![0] !== ring.at(-1)![0] ||
-          ring[0]![1] !== ring.at(-1)![1]
-        )
-          throw Error("Ocean polygon rings must be closed");
-        for (const [lon, lat] of ring) {
-          if (
-            !Number.isFinite(lon) ||
-            !Number.isFinite(lat) ||
-            lon! < west - 1e-8 ||
-            lon! > east + 1e-8 ||
-            lat! < south - 1e-8 ||
-            lat! > north + 1e-8
-          )
-            throw Error(
-              "Clip ocean polygons to the archive bounds before tiling",
-            );
-          if (++points > 10000000)
-            throw Error("Ocean input exceeds regional point budget");
-        }
-      }
-    feature.properties = { class: 1 };
-  }
+  for (const f of data.features) f.properties = { class: 1 };
   signal.throwIfAborted();
   const index = geojsonvt(data, {
     maxZoom: manifest.maxZoom,
@@ -112,4 +80,46 @@ export async function oceanTiles(
   }
   await walk(0, 0, 0);
   return count;
+}
+
+export function validateOcean(
+  data: FeatureCollection<Polygon | MultiPolygon>,
+  bounds: Manifest["bounds"],
+) {
+  if (data.type !== "FeatureCollection" || !data.features?.length)
+    throw Error("Expected a nonempty ocean polygon FeatureCollection");
+  const [west, south, east, north] = bounds;
+  let points = 0;
+  for (const feature of data.features) {
+    const g = feature.geometry;
+    if (!g || !["Polygon", "MultiPolygon"].includes(g.type))
+      throw Error("Ocean input must contain polygons only");
+    const polygons = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+    for (const polygon of polygons)
+      for (const ring of polygon) {
+        if (
+          ring.length < 4 ||
+          ring[0]![0] !== ring.at(-1)![0] ||
+          ring[0]![1] !== ring.at(-1)![1]
+        )
+          throw Error("Ocean polygon rings must be closed");
+        for (const [lon, lat] of ring) {
+          if (
+            !Number.isFinite(lon) ||
+            !Number.isFinite(lat) ||
+            lon! < west - 1e-8 ||
+            lon! > east + 1e-8 ||
+            lat! < south - 1e-8 ||
+            lat! > north + 1e-8
+          )
+            throw Error(
+              "Clip ocean polygons to the archive bounds before tiling",
+            );
+          if (++points > 25000000)
+            throw Error(
+              "Ocean input exceeds 25 million points; partition the coastline input",
+            );
+        }
+      }
+  }
 }

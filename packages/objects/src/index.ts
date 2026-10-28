@@ -3,6 +3,9 @@ import booleanIntersects from "@turf/boolean-intersects";
 import type { AtlasReader } from "../../format/src/reader";
 import {
   boxValid,
+  tagTerm,
+  PACK_BYTES,
+  CHUNK_BYTES,
   objectId,
   overlap,
   splitBounds,
@@ -19,7 +22,9 @@ function checkedPage(p: Page) {
   if (
     !p ||
     !validKey(p.key) ||
-    !/^objects\/(records|spatial|lookup|ids)\//.test(p.key) ||
+    !/^objects\/(records|spatial|lookup|ids|tag-values|tag-index|tag-pages)\//.test(
+      p.key,
+    ) ||
     typeof p.unlocated !== "boolean" ||
     !Array.isArray(p.bounds) ||
     !p.bounds.every(boxValid) ||
@@ -42,7 +47,7 @@ export async function objectCatalog(r: AtlasReader): Promise<ObjectCatalog> {
     new TextDecoder().decode(await r.block("objects/index")),
   );
   if (
-    c?.schema !== "source-objects-v1" ||
+    !["source-objects-v1", "source-objects-v2"].includes(c?.schema) ||
     !Number.isSafeInteger(c.count) ||
     c.count < 0 ||
     c.report?.schema !== "retention-v1"
@@ -50,6 +55,7 @@ export async function objectCatalog(r: AtlasReader): Promise<ObjectCatalog> {
     throw new Error("Invalid object catalog");
   checkedPage(c.spatial);
   checkedPage(c.lookup);
+  if (c.schema === "source-objects-v2") checkedPage(c.tags);
   if (c.spatial.count !== c.count || c.lookup.count !== c.count)
     throw new Error("Object catalog count mismatch");
   return c;
@@ -74,7 +80,12 @@ function validateRecord(v: ObjectRecord): ObjectRecord {
   const blob = (b: any, kind: string) =>
     !b ||
     (Array.isArray(b.blocks) &&
-      b.blocks.length === Math.ceil(b.bytes / 1024 ** 2) &&
+      (b.offset === undefined
+        ? b.blocks.length === Math.ceil(b.bytes / CHUNK_BYTES)
+        : b.blocks.length === 1 &&
+          Number.isSafeInteger(b.offset) &&
+          b.offset >= 0 &&
+          b.offset + b.bytes <= PACK_BYTES) &&
       b.blocks.every(
         (k: any) => validKey(k) && k.startsWith(`objects/${kind}/`),
       ) &&
@@ -141,7 +152,7 @@ export async function* objectRecords(
     await onPage(p.key);
     const v = await page(r, p, signal);
     progress(`Reading source objects · ${++pages} index/attribute pages`);
-    if (v.schema === "objects-spatial-v1") {
+    if (["objects-spatial-v1", "objects-tag-pages-v1"].includes(v.schema)) {
       for (const child of v.rows) yield* visit(child);
       return;
     }
@@ -186,7 +197,60 @@ export async function* objectRecords(
       yield row;
     }
   };
-  yield* visit(root.spatial);
+  let selected: Page | undefined = root.spatial;
+  const compact: Page[] = [];
+  if (q.tag?.value !== undefined && root.schema === "source-objects-v2") {
+    const term = tagTerm(q.tag.key, q.tag.value),
+      visited = new Set<string>();
+    const lookup = async (p: Page): Promise<Page | undefined> => {
+      signal?.throwIfAborted();
+      checkedPage(p);
+      if (p.min !== undefined && (term < p.min || term > p.max!)) return;
+      if (visited.has(p.key)) throw new Error("Cyclic tag-value index");
+      visited.add(p.key);
+      await onPage(p.key);
+      const v = await page(r, p, signal);
+      progress(`Finding tag value · ${++pages} index pages`);
+      if (v.schema === "objects-tag-index-v1") {
+        for (const child of v.rows) {
+          const hit = await lookup(child);
+          if (hit) return hit;
+        }
+        return;
+      }
+      if (v.schema !== "objects-tag-values-v1")
+        throw new Error("Unexpected tag-value index page");
+      const found = v.rows.find((row: any) => row.term === term);
+      if (!found) return;
+      if (found.root) return checkedPage(found.root);
+      if (
+        !Array.isArray(found.pages) ||
+        found.pages.length > 8 ||
+        !found.pages.every(
+          (key: unknown) =>
+            validKey(key) && String(key).startsWith("objects/records/"),
+        )
+      )
+        throw new Error("Invalid tag-value postings");
+      // Short lists avoid repeating attribute-page summaries for every unique name/address.
+      for (const key of found.pages) {
+        // Records still apply exact attribute and geographic filters; the synthetic
+        // envelope only lets this compact posting reach the normal record visitor.
+        compact.push({
+          key,
+          bounds: [[-180, -90, 180, 90]],
+          unlocated: true,
+          keys: [q.tag!.key],
+          facets: q.facet ? [q.facet] : [],
+          count: 0,
+        });
+      }
+      return;
+    };
+    selected = await lookup(root.tags!);
+  }
+  if (selected) yield* visit(selected);
+  for (const p of compact) yield* visit(p);
 }
 export async function findObject(
   r: AtlasReader,
@@ -230,6 +294,18 @@ async function blob(
   ref: NonNullable<ObjectRecord["geometry"]>,
   signal?: AbortSignal,
 ) {
+  if (ref.offset !== undefined) {
+    signal?.throwIfAborted();
+    const packed = await r.block(ref.blocks[0]!);
+    signal?.throwIfAborted();
+    if (packed.length > PACK_BYTES || ref.offset + ref.bytes > packed.length)
+      throw new Error("Invalid packed object slice");
+    return JSON.parse(
+      new TextDecoder().decode(
+        packed.subarray(ref.offset, ref.offset + ref.bytes),
+      ),
+    );
+  }
   const output = new Uint8Array(ref.bytes);
   let at = 0;
   for (const key of ref.blocks) {

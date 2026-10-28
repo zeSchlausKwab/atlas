@@ -78,6 +78,7 @@ const sourceCache = new SourceCache(
   access,
   process.env.ATLAS_SOURCE_SYSTEMD === "1",
 );
+sourceCache.startQueue();
 const library = new HostedLibrary(preparations, (reader) => {
   const child = new AtlasEngine(reader, async () =>
     init({
@@ -105,13 +106,11 @@ const discovery = await MapDiscovery.open(
         manifest: engine.reader.index.manifest,
       },
     },
-    ...preparations
-      .catalog()
-      .map((m) => ({
-        id: m.id,
-        path: preparations.path(m.id),
-        offer: m as MapOffer,
-      })),
+    ...preparations.catalog().map((m) => ({
+      id: m.id,
+      path: preparations.path(m.id),
+      offer: m as MapOffer,
+    })),
   ],
 );
 

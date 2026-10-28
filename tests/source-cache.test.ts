@@ -373,3 +373,111 @@ test("a vanished worker is reported as failed, while an intentional pause stays 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("waiting downloads survive status checks and can be removed without touching partial bytes", async () => {
+  const directory = await mkdtemp("/tmp/atlas-source-queue-"),
+    manager = new SourceCache(directory);
+  try {
+    const job = {
+      ...source,
+      state: "waiting",
+      completed: 7,
+      updatedAt: new Date(Date.now() - 60000).toISOString(),
+      message: "Queued",
+    };
+    await Bun.write(directory + "/" + source.id + ".json", JSON.stringify(job));
+    await Bun.write(
+      directory + "/" + source.id + ".osm.pbf.part",
+      body.slice(0, 7),
+    );
+    expect((await manager.list())[0]!.state).toBe("waiting");
+    const result = await manager.handle(
+      new Request("http://localhost/admin/sources/pause", {
+        method: "POST",
+        headers: {
+          Origin: "http://localhost",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id: source.id }),
+      }),
+      "127.0.0.1",
+    );
+    expect(result.status).toBe(200);
+    expect((await manager.list())[0]!.state).toBe("paused");
+    expect(
+      await Bun.file(directory + "/" + source.id + ".osm.pbf.part").bytes(),
+    ).toEqual(body.slice(0, 7));
+  } finally {
+    await manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("source queue runs real workers sequentially and starts a persisted download after restart", async () => {
+  const directory = await mkdtemp("/tmp/atlas-download-dispatch-");
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const requested = new Promise<void>((r) => {
+    entered = r;
+  });
+  const seen: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      seen.push(path);
+      if (path === "/first") {
+        entered();
+        await gate;
+      }
+      return response();
+    },
+  });
+  let manager = new SourceCache(directory);
+  const until = async (predicate: () => Promise<boolean>) => {
+    const deadline = Date.now() + 10000;
+    while (!(await predicate())) {
+      if (Date.now() > deadline) throw new Error("Queue did not progress");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+  try {
+    const first = { ...source, url: `http://127.0.0.1:${server.port}/first` };
+    const second = {
+      ...source,
+      id: "b".repeat(32),
+      url: `http://127.0.0.1:${server.port}/second`,
+    };
+    // Direct fixture injection avoids remote inspection; all worker requests stay on loopback.
+    await (manager as any).launch(first);
+    await requested;
+    expect((await (manager as any).launch(second)).state).toBe("waiting");
+    expect(seen).toEqual(["/first"]);
+    release();
+    await until(
+      async () =>
+        (await manager.list()).find((j) => j.id === first.id)?.state ===
+        "ready",
+    );
+    await manager.close();
+    manager = new SourceCache(directory);
+    manager.startQueue();
+    await until(
+      async () =>
+        (await manager.list()).find((j) => j.id === second.id)?.state ===
+        "ready",
+    );
+    expect(seen).toEqual(["/first", "/second"]);
+    expect(
+      await Bun.file(directory + "/" + second.id + ".osm.pbf").bytes(),
+    ).toEqual(body);
+  } finally {
+    release();
+    await manager.close();
+    server.stop(true);
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 20000);

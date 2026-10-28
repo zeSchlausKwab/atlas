@@ -177,7 +177,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -465,7 +465,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
               ? p.z !== 8
               : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
                 ? p.z !== manifest.labelZoom
-                : /^objects\/(geometry|topology|records|spatial|ids|lookup)$/.test(
+                : /^objects\/(geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)$/.test(
                       p.prefix!,
                     )
                   ? p.z !== 26

@@ -55,7 +55,11 @@ export async function startSources() {
       if (job.state !== "ready") {
         const button = document.createElement("button"),
           paused = ["paused", "failed"].includes(job.state);
-        button.textContent = paused ? "Resume download" : "Pause download";
+        button.textContent = paused
+          ? "Resume download"
+          : job.state === "waiting"
+            ? "Remove from queue"
+            : "Pause download";
         button.disabled = action;
         button.onclick = async () => {
           action = true;

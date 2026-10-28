@@ -26,6 +26,7 @@ export interface CachedSource {
 }
 export interface SourceJob extends CachedSource {
   state:
+    | "waiting"
     | "queued"
     | "downloading"
     | "retrying"

@@ -64,6 +64,7 @@ const relation: SourceObject = {
 async function fixture(
   objects: SourceObject[] = [campus, tree, relation],
   onRead?: (e: any) => void,
+  transform?: (blocks: InputBlock[]) => void,
 ) {
   const blocks: InputBlock[] = [];
   const w = new ObjectWriter({
@@ -73,6 +74,7 @@ async function fixture(
   });
   for (const obj of objects) await w.add(obj);
   await w.finish();
+  transform?.(blocks);
   const bytes = await encodePackage(
     {
       format: "atlas",
@@ -320,7 +322,7 @@ test("ocean patch retains source objects and queryable sea holes without inventi
 });
 
 test("small excerpt plans skip remote geometry and preserve unlocated relationship records", async () => {
-  const far = Array.from({ length: 300 }, (_, i) => ({
+  const far = Array.from({ length: 2000 }, (_, i) => ({
     ...tree,
     id: `node/${2000 + i}`,
     geometry: { type: "Point" as const, coordinates: [16.15, 48.15] },
@@ -347,7 +349,7 @@ test("small excerpt plans skip remote geometry and preserve unlocated relationsh
     paddingCells: 0,
     maxBytes: 8 * 1024 ** 2,
   });
-  const farRow = (await findObject(r, "node/2000"))!;
+  const farRow = (await findObject(r, "node/3999"))!;
   expect(plan.blocks.some((b) => farRow.geometry!.blocks.includes(b.key))).toBe(
     false,
   );
@@ -410,5 +412,142 @@ test("composed objects reject conflicting relationship memberships", async () =>
   } finally {
     a.dispose();
     b.dispose();
+  }
+});
+
+test("packed slices preserve shared points, UTF-8 roles and oversized multi-block payloads", async () => {
+  const large = {
+    ...campus,
+    id: "way/999",
+    geometry: {
+      type: "LineString" as const,
+      coordinates: Array.from({ length: 70000 }, (_, i) => [
+        16 + i / 1e7,
+        48 + i / 1e7,
+      ]),
+    },
+  };
+  const r = await fixture([
+    tree,
+    { ...tree, id: "node/11" },
+    { ...relation, members: [{ id: "way/1", role: "entrée 🌍" }] },
+    large,
+  ]);
+  try {
+    expect((await objectCatalog(r)).schema).toBe("source-objects-v2");
+    const a = (await findObject(r, "node/10"))!,
+      b = (await findObject(r, "node/11"))!;
+    expect(a.geometry!.blocks).toEqual(b.geometry!.blocks);
+    expect(a.geometry!.offset).not.toBe(b.geometry!.offset);
+    expect(await objectGeometry(r, b)).toEqual(tree.geometry!);
+    expect(
+      (await objectTopology(r, (await findObject(r, "relation/20"))!))
+        .members?.[0]?.role,
+    ).toBe("entrée 🌍");
+    const big = (await findObject(r, "way/999"))!;
+    expect(big.geometry!.offset).toBeUndefined();
+    expect(big.geometry!.blocks.length).toBeGreaterThan(1);
+    expect(await objectGeometry(r, big)).toEqual(large.geometry);
+    await expect(
+      objectGeometry(r, { ...a, geometry: { ...a.geometry!, offset: 65535 } }),
+    ).rejects.toThrow("Invalid object metadata");
+    await expect(
+      objectGeometry(r, { ...a, geometry: { ...a.geometry!, offset: 60000 } }),
+    ).rejects.toThrow("Invalid packed object slice");
+  } finally {
+    r.dispose();
+  }
+});
+
+test("exact tag index prunes unrelated pages and handles empty, Unicode and delimiter values", async () => {
+  const rows = Array.from({ length: 4000 }, (_, i) => ({
+    ...tree,
+    id: `node/${10000 + i}`,
+    tags: { amenity: "cafe", name: `Cafe ${i}` },
+  }));
+  rows.push({ ...tree, id: "node/9999", tags: { amenity: "bench", name: "" } });
+  const special = [
+    { id: "node/1", tags: { a: "b=c" } },
+    { id: "node/2", tags: { "a=b": "c" } },
+    { id: "node/3", tags: { name: "𐀀 東京" } },
+    { id: "node/4", tags: { name: "\uE000" } },
+    { id: "node/5", tags: JSON.parse('{"__proto__":"value"}') },
+  ].map((v) => ({ ...tree, ...v }));
+  const reads: string[] = [];
+  const r = await fixture([...rows, ...special], (e) => reads.push(e.key));
+  try {
+    const hits = [];
+    for await (const row of objectRecords(r, {
+      tag: { key: "amenity", value: "bench" },
+    }))
+      hits.push(row.id);
+    expect(hits).toEqual(["node/9999"]);
+    expect(reads.filter((k) => k.startsWith("objects/records/")).length).toBe(
+      1,
+    );
+    expect(reads.some((k) => k.startsWith("objects/geometry/"))).toBe(false);
+    for (const v of special) {
+      const [key, value] = Object.entries(v.tags as Record<string, string>)[0]!;
+      const matches = [];
+      for await (const row of objectRecords(r, { tag: { key, value } }))
+        matches.push(row.id);
+      expect(matches).toEqual([v.id]);
+    }
+    const empty = [];
+    for await (const row of objectRecords(r, {
+      tag: { key: "name", value: "" },
+    }))
+      empty.push(row.id);
+    expect(empty).toEqual(["node/9999"]);
+    reads.length = 0;
+    for await (const _ of objectRecords(r, {
+      tag: { key: "amenity", value: "missing" },
+    }))
+      throw Error("unexpected hit");
+    expect(reads.filter((k) => k.startsWith("objects/records/")).length).toBe(
+      0,
+    );
+    const cafes = [];
+    for await (const row of objectRecords(r, {
+      tag: { key: "amenity", value: "cafe" },
+    }))
+      cafes.push(row.id);
+    expect(cafes.length).toBe(4000);
+  } finally {
+    r.dispose();
+  }
+});
+
+test("v1 catalogs and unshared geometry remain readable with exact-tag fallback", async () => {
+  const r = await fixture([tree], undefined, (blocks) => {
+    const catalog = blocks.find((b) => b.key === "objects/index")!;
+    const c = JSON.parse(new TextDecoder().decode(catalog.bytes));
+    c.schema = "source-objects-v1";
+    delete c.tags;
+    catalog.bytes = new TextEncoder().encode(JSON.stringify(c));
+    for (const b of blocks.filter((b) =>
+      b.key.startsWith("objects/records/"),
+    )) {
+      const v = JSON.parse(new TextDecoder().decode(b.bytes));
+      for (const row of v.rows)
+        for (const kind of ["geometry", "topology"]) {
+          if (row[kind]) delete row[kind].offset;
+        }
+      b.bytes = new TextEncoder().encode(JSON.stringify(v));
+    }
+    for (let i = blocks.length - 1; i >= 0; i--)
+      if (blocks[i]!.key.startsWith("objects/tag-")) blocks.splice(i, 1);
+  });
+  try {
+    expect((await objectCatalog(r)).schema).toBe("source-objects-v1");
+    const matches = [];
+    for await (const row of objectRecords(r, {
+      tag: { key: "natural", value: "tree" },
+    }))
+      matches.push(row);
+    expect(matches.length).toBe(1);
+    expect(await objectGeometry(r, matches[0]!)).toEqual(tree.geometry!);
+  } finally {
+    r.dispose();
   }
 });

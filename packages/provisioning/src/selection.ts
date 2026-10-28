@@ -26,6 +26,8 @@ import {
   type Polygon,
 } from "../../offline/src/geometry";
 export interface PackageSelection {
+  /** Optional, pinned server-configured assembled ocean source. */
+  ocean?: { sha256: string };
   snapshot: string;
   name: string;
   polygon: Polygon;
@@ -116,6 +118,11 @@ export function validateSelectionScope(
   if (!value || typeof value !== "object")
     throw new Error("Invalid package selection");
   const s = value as PackageSelection;
+  if (
+    s.ocean !== undefined &&
+    (!s.ocean || !/^[a-f0-9]{64}$/.test(s.ocean.sha256))
+  )
+    throw new Error("Invalid ocean source fingerprint");
   if (s.snapshot !== m.snapshot)
     throw new Error("Source snapshot changed. Reload the host console.");
   if (typeof s.name !== "string" || !s.name.trim() || s.name.length > 80)

@@ -19,11 +19,48 @@ export class SourceCache {
   private plans = new Map<string, CachedSource>();
   private children = new Map<string, Bun.Subprocess>();
   private busy = false;
+  private queueTimer?: ReturnType<typeof setInterval>;
+  private closing = false;
   constructor(
     readonly directory: string,
     private access: AdminAccess = adminAccess(),
     private systemd = false,
   ) {}
+  startQueue() {
+    if (this.queueTimer) return;
+    this.queueTimer = setInterval(
+      () => void this.drainQueue().catch(console.error),
+      3000,
+    );
+    this.queueTimer.unref();
+    void this.drainQueue().catch(console.error);
+  }
+  private async drainQueue() {
+    if (this.busy || this.closing) return;
+    const jobs = await this.list();
+    for (const job of jobs) if (await this.running(job.id)) return;
+    const next = jobs
+      .filter((j) => j.state === "waiting")
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
+    if (!next || this.busy || this.closing) return;
+    try {
+      await this.launch(next);
+    } catch (e) {
+      await this.save({
+        ...next,
+        state: "failed",
+        error: String(e),
+        message: String(e),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+  private async save(job: SourceJob) {
+    const record = join(this.directory, job.id + ".json");
+    await mkdir(this.directory, { recursive: true });
+    await Bun.write(record + ".tmp", JSON.stringify(job));
+    await rename(record + ".tmp", record);
+  }
   async list(): Promise<SourceJob[]> {
     await mkdir(this.directory, { recursive: true });
     return Promise.all(
@@ -110,6 +147,11 @@ export class SourceCache {
       const jobs = await this.list();
       const existing = jobs.find((j) => j.id === source.id);
       if (
+        (source as SourceJob).state === "waiting" &&
+        existing?.state !== "waiting"
+      )
+        return existing;
+      if (
         existing?.state === "ready" &&
         (await Bun.file(join(this.directory, source.id + ".osm.pbf")).exists())
       )
@@ -117,9 +159,21 @@ export class SourceCache {
       for (const j of jobs)
         if (await this.running(j.id)) {
           if (j.id === source.id) return j;
-          throw new Error(
-            "Pause the active source download before starting another",
-          );
+          const queued: SourceJob = {
+            ...source,
+            state: "waiting",
+            completed: await partialSize(
+              join(this.directory, source.id + ".osm.pbf.part"),
+            ),
+            updatedAt:
+              existing?.state === "waiting"
+                ? existing.updatedAt
+                : new Date().toISOString(),
+            message: "Queued; starts after the active source download",
+          };
+          await this.save(queued);
+          this.startQueue();
+          return queued;
         }
       const offset = await partialSize(
         join(this.directory, source.id + ".osm.pbf.part"),
@@ -340,18 +394,36 @@ export class SourceCache {
       if (url.pathname === "/admin/sources/resume")
         return json(await this.launch(job), 202);
       if (url.pathname === "/admin/sources/pause") {
-        if (this.systemd) {
-          const p = Bun.spawn(
-            ["systemctl", "--user", "stop", `atlas-source-${job.id}.service`],
-            { stdout: "ignore", stderr: "ignore" },
+        if (this.busy)
+          throw new Error(
+            "A source action is in progress; retry pause shortly",
           );
-          if (await p.exited) throw new Error("Could not pause the download");
-        } else {
-          const p = this.children.get(job.id);
-          p?.kill("SIGTERM");
-          await p?.exited;
+        this.busy = true;
+        try {
+          if (job.state === "waiting") {
+            await this.save({
+              ...job,
+              state: "paused",
+              message: "Removed from download queue",
+              updatedAt: new Date().toISOString(),
+            });
+            return json({ ok: true });
+          }
+          if (this.systemd) {
+            const p = Bun.spawn(
+              ["systemctl", "--user", "stop", `atlas-source-${job.id}.service`],
+              { stdout: "ignore", stderr: "ignore" },
+            );
+            if (await p.exited) throw new Error("Could not pause the download");
+          } else {
+            const p = this.children.get(job.id);
+            p?.kill("SIGTERM");
+            await p?.exited;
+          }
+          return json({ ok: true });
+        } finally {
+          this.busy = false;
         }
-        return json({ ok: true });
       }
       return json({ error: "Not found" }, 404);
     } catch (e) {
@@ -359,6 +431,8 @@ export class SourceCache {
     }
   }
   async close() {
+    this.closing = true;
+    clearInterval(this.queueTimer);
     // systemd workers deliberately survive map-server deployment/restart.
     for (const p of this.children.values()) p.kill("SIGTERM");
     await Promise.all([...this.children.values()].map((p) => p.exited));

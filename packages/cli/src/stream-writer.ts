@@ -40,6 +40,14 @@ export class StreamWriter implements BlockWriter {
   get bytesWritten() {
     return this.length;
   }
+  hasPrefix(prefix: string) {
+    return !!this.db
+      .query("SELECT 1 FROM blocks WHERE substr(key,1,?)=? LIMIT 1")
+      .get(prefix.length, prefix);
+  }
+  has(key: string) {
+    return !!this.db.query("SELECT 1 FROM blocks WHERE key=?").get(key);
+  }
   featureCount(prefix: string) {
     return this.db
       .query<

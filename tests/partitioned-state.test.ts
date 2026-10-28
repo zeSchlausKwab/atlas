@@ -73,3 +73,19 @@ test("migration refuses changed input, selection or unsupported compiler version
     reconcilePartitionedState(undefined, hash, selection).state.completed,
   ).toEqual({});
 });
+test("v7 migration keeps source geometry and graphs but replaces semantic indexes", () => {
+  const old = {
+    identity: partitionedIdentity(hash, selection, 7),
+    completed: {
+      "source-v4.sqlite": receipt,
+      "semantics.atlas": receipt,
+      "transport.atlas": receipt,
+      "display.atlas": receipt,
+    },
+  };
+  const next = reconcilePartitionedState(old, hash, selection);
+  expect(next.state.completed["source-v4.sqlite"]).toEqual(receipt);
+  expect(next.state.completed["transport.atlas"]).toEqual(receipt);
+  expect(next.state.completed["semantics.atlas"]).toBeUndefined();
+  expect(old.completed["semantics.atlas"]).toEqual(receipt);
+});

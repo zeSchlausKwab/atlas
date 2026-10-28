@@ -14,6 +14,18 @@ export interface SourceObject {
   unavailableMembers?: string[];
   dependencyOnly?: boolean;
 }
+/** offset is present only for a slice of one packed block (v2). */
+export interface PayloadRef {
+  blocks: string[];
+  bytes: number;
+  offset?: number;
+}
+export const PACK_BYTES = 64 * 1024;
+export const CHUNK_BYTES = 1024 ** 2;
+export const tagTerm = (key: string, value: string) =>
+  Array.from(new TextEncoder().encode(JSON.stringify([key, value])), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
 export interface ObjectRecord {
   id: string;
   name: string;
@@ -21,8 +33,8 @@ export interface ObjectRecord {
   facets: string[];
   bounds: Box[];
   geometryStatus: SourceObject["geometryStatus"];
-  geometry?: { blocks: string[]; bytes: number };
-  topology?: { blocks: string[]; bytes: number };
+  geometry?: PayloadRef;
+  topology?: PayloadRef;
   dependencyOnly: boolean;
 }
 export interface Page {
@@ -36,7 +48,8 @@ export interface Page {
   max?: string;
 }
 export interface ObjectCatalog {
-  schema: "source-objects-v1";
+  schema: "source-objects-v1" | "source-objects-v2";
+  tags?: Page;
   count: number;
   spatial: Page;
   lookup: Page;

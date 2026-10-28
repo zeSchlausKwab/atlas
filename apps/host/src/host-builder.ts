@@ -58,6 +58,7 @@ type AtlasChoice = {
   manifest: Manifest;
   available: SelectionScope["available"];
 };
+let oceanSource: { url: string; sha256: string } | undefined;
 let cachedSources: CachedChoice[] = [],
   atlasSources: AtlasChoice[] = [];
 let activeBuild = false,
@@ -244,7 +245,6 @@ function update() {
   el<HTMLButtonElement>("submit").disabled =
     !closed ||
     submitting ||
-    activeBuild ||
     !sourceReady() ||
     !valid ||
     (remotePbf() && !sourcePlan) ||
@@ -252,7 +252,7 @@ function update() {
   el("submit").textContent = submitting
     ? "Starting…"
     : activeBuild
-      ? "Another build is running"
+      ? "Add to build queue ↗"
       : cached()
         ? "Build & host map ↗"
         : remotePbf()
@@ -397,6 +397,9 @@ async function switchPreview() {
 }
 function selection(): PackageSelection {
   return {
+    ...(sourceValue().startsWith("cached:") && oceanSource && checked("ocean")
+      ? { ocean: { sha256: oceanSource.sha256 } }
+      : {}),
     snapshot: scope().snapshot,
     name: el<HTMLInputElement>("name").value,
     polygon: points,
@@ -572,10 +575,10 @@ function jobs(values: PreparationJob[]) {
       card.append(links, details, select, actions);
       library.append(card);
     } else {
-      if (job.cachedSource && ["failed", "cancelled"].includes(job.state)) {
+      if (["failed", "cancelled"].includes(job.state)) {
         const resume = text(
           "button",
-          "Resume saved build",
+          job.cachedSource ? "Resume saved build" : "Queue again",
         ) as HTMLButtonElement;
         resume.onclick = async () => {
           resume.disabled = true;
@@ -667,6 +670,20 @@ function jobs(values: PreparationJob[]) {
         };
         card.append(cancel);
       }
+      if (job.state === "queued") {
+        const cancel = text("button", "Remove from queue") as HTMLButtonElement;
+        cancel.onclick = async () => {
+          cancel.disabled = true;
+          try {
+            await request(`/admin/preparations/${job.id}/cancel`, {});
+            await refresh();
+          } catch (e) {
+            el("message").textContent = String(e);
+            cancel.disabled = false;
+          }
+        };
+        card.append(cancel);
+      }
       if (["cancelled", "failed", "deleting"].includes(job.state))
         card.append(deleteButton(job));
       list.append(card);
@@ -676,7 +693,7 @@ function jobs(values: PreparationJob[]) {
     list.append(
       text(
         "p",
-        "No preparations running. Jobs continue when you leave this page.",
+        "No queued or running preparations. Add several areas; builds run one at a time and continue when you leave this page.",
         "quiet",
       ),
     );
@@ -724,6 +741,7 @@ async function refresh() {
     }
     jobs(data.jobs);
     const identity = JSON.stringify([cachedSources, atlasSources]);
+    oceanSource = data.oceanSource ?? undefined;
     cachedSources = data.cachedSources ?? [];
     atlasSources = data.atlasSources ?? [];
     compilerReady = data.globalSource.ready;
@@ -793,6 +811,13 @@ function configureSource() {
       a.layers.includes(k as MapLayer),
       true,
     );
+  checkbox(
+    "layers",
+    "ocean",
+    "Sea polygons · separate coastline snapshot",
+    !!oceanSource && sourceValue().startsWith("cached:"),
+    true,
+  );
   for (const [k, label] of [
     ["places", "Cities & villages"],
     ["streets", "Street names"],
@@ -1035,12 +1060,13 @@ export async function startBuilder() {
               "reverse",
               "query-peaks",
             ].includes(k)) ||
-          (preset === "geometry" && k.startsWith("layer-")) ||
+          (preset === "geometry" &&
+            (k.startsWith("layer-") || k === "ocean")) ||
           (preset === "view" &&
             (k.startsWith("layer-") ||
-              ["places", "streets", "pois"].includes(k))) ||
+              ["places", "streets", "pois", "ocean"].includes(k))) ||
           (preset === "water-buildings" &&
-            ["layer-water", "layer-buildings"].includes(k)));
+            ["layer-water", "layer-buildings", "ocean"].includes(k)));
     update();
   };
   el<HTMLFormElement>("form").onsubmit = async (event) => {
@@ -1067,7 +1093,7 @@ export async function startBuilder() {
           : {}),
       });
       el("message").textContent =
-        "Preparation started. You can leave this page and return to follow progress.";
+        "Preparation queued. Builds run one at a time and continue when you leave this page. Add another area now.";
       await refresh();
     } catch (e) {
       el("message").textContent = String(e);

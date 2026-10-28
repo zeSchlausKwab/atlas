@@ -65,7 +65,11 @@ export function planCachedBuild(selection: PackageSelection): CachedBuildPlan {
     x1 = Math.min(n - 1, Math.floor(se[0] * n));
   const y0 = Math.floor(nw[1] * n),
     y1 = Math.min(n - 1, Math.floor(se[1] * n));
-  if ((x1 - x0 + 1) * (y1 - y0 + 1) > 16 || candidateTiles > 100000)
+  if (
+    selection.ocean ||
+    (x1 - x0 + 1) * (y1 - y0 + 1) > 16 ||
+    candidateTiles > 100000
+  )
     return { bounds: b, partitions: [], candidateTiles, partitioned: true };
   if (selection.layers.length && selection.maxZoom >= DETAIL_MIN_ZOOM)
     for (let x = x0; x <= x1; x++)
@@ -191,7 +195,7 @@ export async function importCachedPbf(
     throw new Error(
       "Verified PBF changed on disk. Select a verified source again.",
     );
-  if (plan.partitioned)
+  if (plan.partitioned || selection.ocean)
     return importPartitionedCached(
       source,
       selection,

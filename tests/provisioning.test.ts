@@ -221,20 +221,21 @@ test("background jobs publish atomically, restore after restart, reject CSRF, an
     );
     expect(bad.status).toBe(403);
     const job = await manager.create(selection(f.reader));
-    await expect(manager.create(selection(f.reader))).rejects.toThrow(
-      "Another",
-    );
-    await until(() => !["running", "cancelling"].includes(job.state));
+    const queued = await manager.create({
+      ...selection(f.reader),
+      name: "Second queued map",
+    });
+    await until(() => job.state === "ready" && queued.state === "ready");
     expect(job.error).toBeUndefined();
     expect(job.state).toBe("ready");
-    expect(manager.catalog()).toHaveLength(1);
+    expect(manager.catalog()).toHaveLength(2);
     await manager.close();
     manager = await Preparations.open(
       dir + "/hosted",
       dir + "/source.atlas",
       f.reader.index.manifest,
     );
-    expect(manager.catalog()[0]?.id).toBe(job.id);
+    expect(manager.catalog().map((j) => j.id)).toContain(job.id);
     const cancelled = await manager.create(selection(f.reader));
     await manager.cancel(cancelled.id);
     await until(() => cancelled.state === "cancelled");
@@ -403,10 +404,11 @@ test("library datasets can be reused and deleted without deleting their sources 
   );
   try {
     const parent = await manager.create(selection(f.reader));
+    await until(() => parent.state !== "queued");
     await expect(manager.delete(parent.id)).rejects.toThrow("Stop");
     await until(() => parent.state === "ready" || parent.state === "failed");
     expect(parent.state).toBe("ready");
-    await manager.close();
+    await until(() => !(manager as any).active);
     const info = await (
       await manager.handle(
         new Request("http://localhost/admin/preparations"),
@@ -439,7 +441,7 @@ test("library datasets can be reused and deleted without deleting their sources 
       sourceAtlasId: parent.id,
     });
     await expect(manager.delete(parent.id)).rejects.toThrow(
-      "active preparation",
+      "active or queued preparation",
     );
     await until(() => child.state === "ready" || child.state === "failed");
     expect(child.error).toBeUndefined();
@@ -556,6 +558,65 @@ test("interrupted dataset deletion completes after restart and the base map is p
     expect(await readdir(dir + "/hosted")).toEqual([]);
     expect(await Bun.file(dir + "/source.atlas").exists()).toBe(true);
     await expect(manager.delete("../source")).rejects.toThrow("Invalid");
+  } finally {
+    await manager.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 15000);
+
+test("queued dependent excerpts wait for parent publication, persist across restart and cancel before starting", async () => {
+  const f = await pluginFixture(),
+    dir = await mkdtemp("/tmp/atlas-queue-restart-");
+  await Bun.write(dir + "/source.atlas", f.bytes);
+  let manager = await Preparations.open(
+    dir + "/hosted",
+    dir + "/source.atlas",
+    f.reader.index.manifest,
+  );
+  try {
+    const parent = await manager.create(selection(f.reader));
+    const child = await manager.create({
+      ...selection(f.reader),
+      name: "Dependent",
+      sourceAtlasId: parent.id,
+      snapshot: `pending:${parent.id}`,
+    });
+    expect(["queued", "running"]).toContain(child.state);
+    await expect(manager.delete(parent.id)).rejects.toThrow();
+    await until(() => parent.state === "ready" && child.state === "ready");
+    expect(child.manifest!.selection!.parentSnapshot).toBe(
+      parent.manifest!.snapshot,
+    );
+    await manager.close();
+    const queued = {
+      ...child,
+      id: crypto.randomUUID(),
+      state: "queued",
+      name: "Persisted queue",
+      selection: { ...selection(f.reader), sourceAtlasId: parent.id },
+      createdAt: new Date().toISOString(),
+    };
+    delete queued.manifest;
+    await Bun.write(
+      dir + "/hosted/" + queued.id + ".json",
+      JSON.stringify(queued),
+    );
+    manager = await Preparations.open(
+      dir + "/hosted",
+      dir + "/source.atlas",
+      f.reader.index.manifest,
+    );
+    await until(() => manager.jobs.get(queued.id)?.state === "ready");
+    const cancelled = await manager.create({
+      ...selection(f.reader),
+      sourceAtlasId: queued.id,
+      snapshot: manager.jobs.get(queued.id)!.manifest!.snapshot,
+      name: "Cancel queued",
+    });
+    await manager.cancel(cancelled.id);
+    await until(() => cancelled.state === "cancelled");
+    expect(await Bun.file(manager.path(cancelled.id)).exists()).toBe(false);
+    expect(await Bun.file(dir + "/source.atlas").exists()).toBe(true);
   } finally {
     await manager.close();
     await rm(dir, { recursive: true, force: true });
