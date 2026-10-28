@@ -40,6 +40,8 @@ export class WaterPatchWriter {
   private scratch = "";
   private length = 0;
   private addedFeatures = 0;
+  private objectRoots: Block[] = [];
+  private replacesObjects = false;
   constructor(
     readonly reader: AtlasReader,
     readonly output: string,
@@ -127,6 +129,45 @@ export class WaterPatchWriter {
     }
     this.length = dataEnd;
     return this;
+  }
+  async addObjectBlock(input: InputBlock) {
+    this.signal.throwIfAborted();
+    if (!input.key.startsWith("objects/") || input.codec)
+      throw Error("Expected an uncompressed source-object block");
+    const zipped = Bun.gzipSync(input.bytes as Uint8Array<ArrayBuffer>);
+    const stored: InputBlock =
+      zipped.length < input.bytes.length
+        ? {
+            ...input,
+            bytes: zipped,
+            codec: "gzip",
+            rawLength: input.bytes.length,
+          }
+        : input;
+    const b = await describeBlock(stored, this.length);
+    if (RESERVE + this.length + stored.bytes.length > this.maxBytes)
+      throw Error("Ocean semantic data exceeds output budget");
+    const a = spatialAddress(b.key);
+    if (a)
+      this.db
+        .query("INSERT INTO changed VALUES(?,?,?)")
+        .run(
+          b.key,
+          pageKey(
+            a.prefix,
+            a.z,
+            Math.floor(a.x / INDEX_PAGE_SIZE),
+            Math.floor(a.y / INDEX_PAGE_SIZE),
+          ),
+          JSON.stringify(b),
+        );
+    else {
+      if (b.key !== "objects/index") throw Error("Unexpected object root");
+      this.objectRoots.push(b);
+      this.replacesObjects = true;
+    }
+    await write(this.file, stored.bytes, RESERVE + this.length);
+    this.length += stored.bytes.length;
   }
   async add(input: InputBlock) {
     this.signal.throwIfAborted();
@@ -247,6 +288,7 @@ export class WaterPatchWriter {
     };
     let copiedPages = 0;
     for (const p of this.reader.index.pages) {
+      if (this.replacesObjects && p.prefix?.startsWith("objects/")) continue;
       if (++copiedPages % 1000 === 0)
         this.progress(
           `Packing directory: ${copiedPages}/${this.reader.index.pages.length} existing pages`,
@@ -275,7 +317,12 @@ export class WaterPatchWriter {
         );
     const prefix = await encodePrefix(
       { ...manifest, features: manifest.features + this.addedFeatures },
-      this.reader.index.blocks,
+      [
+        ...this.reader.index.blocks.filter(
+          (b) => !this.replacesObjects || !b.key.startsWith("objects/"),
+        ),
+        ...this.objectRoots,
+      ],
       this.length,
       pages,
     );

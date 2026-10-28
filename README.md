@@ -317,3 +317,13 @@ release uses `bun run deploy --map data/vienna-plus.atlas --with-library`; subse
 See [deployment, rollback and NixOS setup](docs/DEPLOYMENT.md) and the
 [server demo roadmap](docs/DEMO-ROADMAP.md). `ATLAS_DATA_DIR` keeps runtime state
 outside code releases; `/health` reports the deployed release identifier.
+
+## Analysis source retention
+
+The host's **Analysis** preset or **Analysis source** capability retains tagged
+points, way geometry, arbitrary tags and ordered relations independently of the
+map style. AI tools can inspect retention, find objects and fetch shapes or
+relationships; `workspace_prepare` can query the `objects` family. New files
+contain these indexes in the same `.atlas`. Existing archives remain readable
+and must be upgraded to recover formerly omitted data. See
+[the source contract, measurements and test prompts](docs/ANALYSIS-SOURCE.md).

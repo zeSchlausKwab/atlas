@@ -12,6 +12,7 @@ export function supports(m: Manifest, family: Family) {
     : m.capabilities.includes("feature-extraction") &&
         m.featureZoom !== undefined &&
         (m.featureKinds ?? [...LEGACY_FEATURE_KINDS]).includes(family) &&
+        (family !== "objects" || m.capabilities.includes("source-objects")) &&
         (family !== "boundaries" ||
           m.capabilities.includes("administrative-boundaries"));
 }
@@ -44,21 +45,25 @@ export function describeData(
       family,
       available: supports(m, family),
       schema:
-        family === "boundaries"
-          ? "boundaries-v1"
-          : family === "locations"
-            ? "locations-v1"
-            : m.featureSchema === 2
-              ? "features-paged-v2"
-              : "features-v1",
+        family === "objects"
+          ? "source-objects-v1"
+          : family === "boundaries"
+            ? "boundaries-v1"
+            : family === "locations"
+              ? "locations-v1"
+              : m.featureSchema === 2
+                ? "features-paged-v2"
+                : "features-v1",
       access:
-        family === "boundaries"
-          ? "bounded metadata pages; one whole polygon per source ID; geometry loaded only when needed"
-          : family === "locations"
-            ? "spatial cells (legacy packages: whole location block)"
-            : m.featureSchema === 2
-              ? "bounded attribute and geometry pages; exact boundary geometry fetched only when needed"
-              : "legacy spatial cells",
+        family === "objects"
+          ? "unique source objects; spatial/tag-key index; separate attribute, chunked geometry and relationship reads"
+          : family === "boundaries"
+            ? "bounded metadata pages; one whole polygon per source ID; geometry loaded only when needed"
+            : family === "locations"
+              ? "spatial cells (legacy packages: whole location block)"
+              : m.featureSchema === 2
+                ? "bounded attribute and geometry pages; exact boundary geometry fetched only when needed"
+                : "legacy spatial cells",
     })),
     fields: {
       id: "stable OSM identity; lookup is scoped to the prepared workspace",

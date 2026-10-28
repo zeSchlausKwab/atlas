@@ -1,3 +1,4 @@
+import { objectRecords } from "../../objects/src/index";
 import {
   boundaryCatalog,
   boundaryRecords,
@@ -80,7 +81,8 @@ export function availability(m: Manifest) {
       : [],
     profiles: TRANSPORT_MODES.filter((p) => !!m.transport?.profiles[p]),
     featureKinds: m.capabilities.includes("feature-extraction")
-      ? (m.featureKinds ?? FEATURE_KINDS.filter((k) => k !== "boundaries"))
+      ? (m.featureKinds ??
+        FEATURE_KINDS.filter((k) => k !== "boundaries" && k !== "objects"))
       : [],
     labels: m.capabilities.includes("map-labels"),
     search: m.capabilities.includes("location-search"),
@@ -234,6 +236,27 @@ export async function planPreparation(
   }
   for (const kind of s.featureKinds) {
     report(`Finding ${kind} source objects…`);
+    if (kind === "objects") {
+      const keep = async (key: string) => {
+        const block = await featureBlock(reader, key);
+        if (!block) throw new Error(`Missing source object block ${key}`);
+        add([block]);
+      };
+      for await (const row of objectRecords(
+        reader,
+        { bounds: box, includeDependencies: true, includeUnlocated: true },
+        signal,
+        report,
+        keep,
+      )) {
+        for (const key of [
+          ...(row.geometry?.blocks ?? []),
+          ...(row.topology?.blocks ?? []),
+        ])
+          await keep(key);
+      }
+      continue;
+    }
     if (kind === "boundaries") {
       const catalog = await boundaryCatalog(reader);
       for (const key of [BOUNDARY_ROOT, ...catalog.pages.map((p) => p.key)]) {

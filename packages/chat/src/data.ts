@@ -1,3 +1,4 @@
+import { objectSpecs, objectOperation } from "../../objects/src/tools";
 import { boundarySpecs, boundaryOperation } from "../../boundaries/src/tools";
 import Ajv from "ajv";
 import { analysisSpecs } from "./analysis-specs";
@@ -45,10 +46,12 @@ export class ChatDataRuntime {
   >();
   readonly recipes = new AnalysisRecipes();
   private validators = new Map(
-    [...analysisSpecs, ...boundarySpecs].map(([name, , schema]) => [
-      name,
-      new Ajv({ strict: false, ownProperties: true }).compile(schema),
-    ]),
+    [...analysisSpecs, ...boundarySpecs, ...objectSpecs].map(
+      ([name, , schema]) => [
+        name,
+        new Ajv({ strict: false, ownProperties: true }).compile(schema),
+      ],
+    ),
   );
   readonly workspace: AtlasWorkspace;
   readonly results = new GeometryResults();
@@ -414,6 +417,24 @@ export class ChatDataRuntime {
         region,
       });
       if (regionMeta) value = { ...value, region: regionMeta };
+    } else if (objectSpecs.some(([id]) => id === name)) {
+      const result = await objectOperation(
+        this.readers,
+        name,
+        input,
+        signal,
+        progress,
+      );
+      if (name === "object_get" && "features" in result) {
+        const { features, ...meta } = result;
+        value = {
+          ...this.results.save(
+            { type: "FeatureCollection", features: features as Feature[] },
+            { operation: name, ...meta },
+          ),
+          ...meta,
+        };
+      } else value = result;
     } else if (name === "boundary_search" || name === "boundary_lookup") {
       const result = await boundaryOperation(
         this.readers,

@@ -1,3 +1,4 @@
+import { writeSourceObjects } from "../../objects/src/source-build";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import { reconcilePartitionedState } from "./partitioned-state";
 import { compilerWorkers } from "../../compiler/src/settings";
@@ -87,7 +88,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       fs.rename(statePath + ".part", statePath),
     );
     progress(
-      "Upgraded checkpoints: retaining routing and display; rebuilding source geometry and semantic pages for boundaries",
+      "Upgraded checkpoints: retaining routing and display; rebuilding source geometry and semantic pages for source semantics",
     );
   }
   let failure: Error | undefined;
@@ -280,13 +281,20 @@ export async function compilePartitioned(o: PartitionedOptions) {
       (s.layers.length && !state.completed["display.atlas"]);
     let source: Database | undefined;
     if (needsSource) {
-      const path = await stage("source-v3.sqlite", async (path) => {
+      const path = await stage("source-v4.sqlite", async (path) => {
         await runCompiler(
           [join(ROOT, "target/release/source-store"), o.input, path],
           ROOT,
           signal,
           progress,
-          { ...process.env, TMPDIR: o.work, ATLAS_SOURCE_HASH: inputHash },
+          {
+            ...process.env,
+            TMPDIR: o.work,
+            ATLAS_SOURCE_HASH: inputHash,
+            ATLAS_SOURCE_OBJECTS: s.featureKinds.includes("objects")
+              ? "1"
+              : "0",
+          },
         );
       });
       source = new Database(path, { readonly: true });
@@ -495,6 +503,14 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 featureProgress(count);
                 if (s.featureKinds.includes("boundaries"))
                   await boundaries.finish();
+                if (s.featureKinds.includes("objects"))
+                  await writeSourceObjects(
+                    source!,
+                    writer,
+                    region,
+                    signal,
+                    progress,
+                  );
                 const groupsProgress = measuredProgress(
                   progress,
                   "semantic-streets",
@@ -567,6 +583,9 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : []),
                     ...(s.peaks ? ["peak-query"] : []),
                     ...(s.featureKinds.length ? ["feature-extraction"] : []),
+                    ...(s.featureKinds.includes("objects")
+                      ? ["source-objects"]
+                      : []),
                     ...(s.featureKinds.includes("boundaries")
                       ? ["administrative-boundaries"]
                       : []),
@@ -680,7 +699,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       source?.close();
     }
     // Derived stage archives now contain everything needed; release source/fragment spools before assembly.
-    for (const name of ["source-v3.sqlite", "display-fragments.sqlite"]) {
+    for (const name of ["source-v4.sqlite", "display-fragments.sqlite"]) {
       await rm(join(o.work, name), { force: true });
       delete state.completed[name];
     }

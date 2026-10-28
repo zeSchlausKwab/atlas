@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import { Database } from "bun:sqlite";
+import { rm } from "node:fs/promises";
+import { writeSourceObjects } from "../../objects/src/source-build";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import { FEATURE_KINDS } from "../../features/src/index";
 import { compilerWorkers } from "../../compiler/src/settings";
@@ -539,6 +542,53 @@ async function main() {
           await boundaries.add(feature);
         await boundaries.finish();
       }
+      if (!selected || selected.featureKinds.includes("objects")) {
+        const build = Bun.spawn(
+          [
+            "cargo",
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "atlas-osm-import",
+            "--bin",
+            "source-store",
+          ],
+          { cwd: ROOT, stdout: "inherit", stderr: "inherit" },
+        );
+        if ((await build.exited) !== 0)
+          throw new Error("Source object compiler build failed");
+        const path = output + ".source-objects.sqlite";
+        const proc = Bun.spawn(
+          [resolve(ROOT, "target/release/source-store"), input, path],
+          {
+            cwd: ROOT,
+            stdout: "inherit",
+            stderr: "inherit",
+            env: { ...process.env, ATLAS_SOURCE_OBJECTS: "1" },
+          },
+        );
+        if ((await proc.exited) !== 0)
+          throw new Error("Source object importer failed");
+        const db = new Database(path, { readonly: true });
+        try {
+          await writeSourceObjects(
+            db,
+            writer,
+            selected
+              ? {
+                  type: "Polygon",
+                  coordinates: [[...selected.polygon, selected.polygon[0]!]],
+                }
+              : undefined,
+            undefined,
+            console.log,
+          );
+        } finally {
+          db.close();
+          await rm(path, { force: true });
+        }
+      }
       const cells = buildFeatures(imported.geojson);
       const featureWriter = new PagedFeatureWriter(writer);
       for (const [key, features] of cells) {
@@ -599,6 +649,10 @@ async function main() {
         skippedRelations: imported.skippedRelations,
       },
       capabilities: [
+        ...(flags.features &&
+        (!selected || selected.featureKinds.includes("objects"))
+          ? ["source-objects"]
+          : []),
         ...(flags.features &&
         (!selected || selected.featureKinds.includes("boundaries"))
           ? ["administrative-boundaries"]

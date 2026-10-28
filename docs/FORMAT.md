@@ -273,3 +273,15 @@ not geographic tile coordinates. Metadata carries spatial bounding boxes.
 Unlike display tiles, a boundary's complete geometry is stored once per archive.
 The standard archive directory, content hashes, range reader and persistent cache
 apply. See [administrative area contract and upgrade guide](ADMINISTRATIVE-BOUNDARIES.md).
+
+## General source objects (optional)
+
+`source-objects` / `featureKinds: ["objects"]` advertises a `source-objects-v1`
+root at `objects/index`. It contains a spatial/tag-key page tree, an ID lookup
+tree and a `retention-v1` report. `objects/{records,spatial,ids,lookup}/26/x/y`
+pages separate attributes from `objects/{geometry,topology}/26/x/y` payloads.
+These z26 addresses are storage ordinals, not geographic tiles. Geometry and
+topology JSON are split into bounded 1 MiB byte blocks; shape coordinates and
+member order are preserved. Index pages are bounded to 4 MiB. Existing archive
+checksums, compression, range reads, immutable snapshot identity and Hashtree
+transport apply unchanged. See [Analysis source](ANALYSIS-SOURCE.md).

@@ -1,3 +1,4 @@
+import { writeOceanObjects } from "../packages/objects/src/ocean";
 /** Add independently assembled OSM ocean polygons without rebuilding a PBF.
  * Usage: bun scripts/add-ocean.ts INPUT.atlas CLIPPED.geojson OUTPUT.atlas SOURCE.json
  * SOURCE.json: {url, sha256, bytes}, from the verified coastline download.
@@ -70,8 +71,28 @@ try {
       );
   });
   if (!count) throw Error("No ocean tiles intersect this map");
+  await writeOceanObjects(
+    reader,
+    { add: (b) => writer.addObjectBlock(b) },
+    data,
+    source.sha256,
+    controller.signal,
+    log,
+  );
   const size = await writer.finish({
     ...manifest,
+    featureZoom: manifest.featureZoom ?? 12,
+    featureKinds: [
+      ...new Set([...(manifest.featureKinds ?? []), "objects" as const]),
+    ],
+    capabilities: [
+      ...new Set([
+        ...manifest.capabilities,
+        "source-objects",
+        "feature-extraction",
+        "land-sea-surfaces",
+      ]),
+    ],
     source: {
       ...manifest.source,
       inputs: [
@@ -92,7 +113,7 @@ try {
     },
     limitations: [
       ...manifest.limitations,
-      `Ocean display polygons added from a separately dated OSM coastline snapshot (${source.sha256.slice(0, 16)}). Inland/source feature extraction and routing retain the original PBF snapshot.`,
+      `Ocean display polygons added from a separately dated OSM coastline snapshot (${source.sha256.slice(0, 16)}). Queryable sea surfaces carry their own source fingerprint; physical coastline ways and routing retain the original PBF snapshot.`,
     ],
   });
   log(

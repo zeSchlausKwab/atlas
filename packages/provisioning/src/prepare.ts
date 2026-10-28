@@ -1,3 +1,9 @@
+import { ObjectWriter } from "../../objects/src/build";
+import {
+  objectRecords,
+  objectGeometry,
+  objectTopology,
+} from "../../objects/src/index";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import {
   boundaryRecords,
@@ -161,6 +167,36 @@ export async function preparePackage(
     }
   };
   try {
+    if (s.featureKinds.includes("objects")) {
+      const ow = new ObjectWriter(writer);
+      ow.report.profile = "selected-objects";
+      try {
+        for await (const row of objectRecords(
+          reader,
+          {
+            bounds: bounds(s.polygon),
+            includeDependencies: true,
+            includeUnlocated: true,
+          },
+          signal,
+          emit,
+        )) {
+          const geometry = await objectGeometry(reader, row, signal);
+          if (geometry && !booleanIntersects(geometry, region)) continue;
+          await ow.add({
+            id: row.id,
+            tags: row.tags,
+            geometry: geometry ?? null,
+            geometryStatus: row.geometryStatus,
+            dependencyOnly: row.dependencyOnly,
+            ...(await objectTopology(reader, row, signal)),
+          });
+        }
+        await ow.finish();
+      } finally {
+        ow.close();
+      }
+    }
     if (s.featureKinds.includes("boundaries")) {
       const boundaries = new BoundaryWriter(writer);
       for await (const row of boundaryRecords(
@@ -179,7 +215,7 @@ export async function preparePackage(
       await boundaries.finish();
     }
     for (const b of plan.blocks) {
-      if (b.key.startsWith("boundaries/")) {
+      if (b.key.startsWith("boundaries/") || b.key.startsWith("objects/")) {
         p.completed++;
         continue;
       }
@@ -309,9 +345,11 @@ export async function preparePackage(
       ),
       featureKinds = s.featureKinds.filter((k) =>
         writer.blocks.some((b) =>
-          k === "boundaries"
-            ? b.key === BOUNDARY_ROOT
-            : b.key.startsWith(`features/${k}/`),
+          k === "objects"
+            ? b.key === "objects/index"
+            : k === "boundaries"
+              ? b.key === BOUNDARY_ROOT
+              : b.key.startsWith(`features/${k}/`),
         ),
       );
     if (layers.length) caps.push("vector-rendering");
@@ -327,6 +365,11 @@ export async function preparePackage(
     if (keys.has("search/streets")) caps.push("reverse-street");
     if (keys.has("query/peaks")) caps.push("peak-query");
     if (featureKinds.length) caps.push("feature-extraction");
+    if (featureKinds.includes("objects")) {
+      caps.push("source-objects");
+      if (m.capabilities.includes("land-sea-surfaces"))
+        caps.push("land-sea-surfaces");
+    }
     if (featureKinds.includes("boundaries"))
       caps.push("administrative-boundaries");
     for (const mode of s.profiles)

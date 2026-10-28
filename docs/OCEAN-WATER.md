@@ -56,9 +56,12 @@ for newly built coastal regions; inland-only excerpts need no additional source.
 - The archive gets a new snapshot, but its transport graph identity is preserved.
   The manifest records both the coastline source hash and clipped-input hash.
   Separately dated coastlines are explicitly distinguished from the PBF snapshot.
-- Ocean additions currently affect display geometry only. Extractable source
-  features still describe the original PBF; this does not introduce an ocean
-  GeoJSON query or make water routable.
+- New ocean additions also retain queryable sea polygons in `objects/*`, with
+  `water=ocean` and a separate source fingerprint. Island holes survive. These
+  polygon edges include provider splits and clipping, so they are explicitly
+  **not physical coastline**. Physical coastline is retained from PBF
+  `natural=coastline` ways when Analysis source is enabled. No shipping graph is
+  implied. Older ocean-patched archives need repackaging for this capability.
 
 Validate the new archive before publishing it. For Britain:
 

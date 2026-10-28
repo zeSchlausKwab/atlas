@@ -129,6 +129,7 @@ export interface Manifest {
     | "roads"
     | "land"
     | "boundaries"
+    | "objects"
   )[];
   tileLayers?: MapLayer[];
   buildingHeights?: {
@@ -176,7 +177,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -355,6 +356,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
             "roads",
             "land",
             "boundaries",
+            "objects",
           ].includes(k),
       ))
   )
@@ -434,6 +436,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   for (const [capability, key] of [
     ["location-search", "search/locations"],
     ["administrative-boundaries", "boundaries/index"],
+    ["source-objects", "objects/index"],
     ["reverse-street", "search/streets"],
   ]) {
     if (
@@ -462,13 +465,17 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
               ? p.z !== 8
               : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
                 ? p.z !== manifest.labelZoom
-                : /^boundaries\/(records|geometry)$/.test(p.prefix!)
-                  ? p.z !== 16
-                  : pagedZoom(p.prefix!) !== undefined
-                    ? p.z !== pagedZoom(p.prefix!)
-                    : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                        p.prefix!,
-                      ) || p.z !== manifest.featureZoom) ||
+                : /^objects\/(geometry|topology|records|spatial|ids|lookup)$/.test(
+                      p.prefix!,
+                    )
+                  ? p.z !== 26
+                  : /^boundaries\/(records|geometry)$/.test(p.prefix!)
+                    ? p.z !== 16
+                    : pagedZoom(p.prefix!) !== undefined
+                      ? p.z !== pagedZoom(p.prefix!)
+                      : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                          p.prefix!,
+                        ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -604,6 +611,17 @@ export function validateBlocks(
           (block.rawLength ?? block.length) > 1024 ** 2)
       )
         throw new Error("Invalid boundary block address or size");
+    }
+    if (block.key.startsWith("objects/") && block.key !== "objects/index") {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== 26 ||
+        a.x >= 2 ** 26 ||
+        a.y >= 2 ** 26 ||
+        (block.rawLength ?? block.length) > 4 * 1024 ** 2
+      )
+        throw new Error("Invalid source-object block address or size");
     }
     if (block.key.startsWith("features/") && block.key !== "features/geojson") {
       const a = spatialAddress(block.key);

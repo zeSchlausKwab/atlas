@@ -19,6 +19,7 @@ const eligible = (key: string) =>
   key.startsWith("search/") ||
   key.startsWith("features/") ||
   key.startsWith("boundaries/") ||
+  key.startsWith("objects/") ||
   key.startsWith("query/") ||
   key.startsWith("index/") ||
   isRoutingCell(key);

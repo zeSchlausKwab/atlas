@@ -1,3 +1,4 @@
+import { objectTools } from "../../objects/src/tools";
 import { boundaryTools } from "../../boundaries/src/tools";
 import { AtlasWorkspace } from "../../workspace/src/index";
 import { workspaceTools } from "../../workspace/src/tools";
@@ -48,6 +49,7 @@ export class AtlasEngine {
       ...builtins(this),
       ...workspaceTools(this.workspace),
       ...boundaryTools(workspaceSources),
+      ...objectTools(workspaceSources),
     ])
       this.registry.register(plugin, "atlas-core-1");
   }

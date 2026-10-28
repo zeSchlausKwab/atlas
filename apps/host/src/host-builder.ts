@@ -1,3 +1,5 @@
+import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
+import { objectCatalog } from "../../../packages/objects/src/index";
 import { publishMap } from "./host-discovery";
 import {
   currentObservation,
@@ -273,6 +275,8 @@ function update() {
       {
         view: "Geometry and labels for display. Routing, search and feature extraction stay off.",
         geometry: "Display geometry only, without labels or query indexes.",
+        analysis:
+          "Tagged source objects, relationships, administrative areas and search. Independent of display categories; rendered map layers are optional.",
         "water-buildings":
           "Just water and building geometry, including available building heights.",
         all: "Every capability available in this source, including all travel modes, search and selectable features.",
@@ -417,6 +421,7 @@ function selection(): PackageSelection {
       "roads",
       "land",
       "boundaries",
+      "objects",
     ].filter((k) => checked(`feature-${k}`)) as FeatureKind[],
     paddingCells: Number(el<HTMLSelectElement>("padding").value),
     maxBytes: Number(el<HTMLInputElement>("budget").value) * 1024 * 1024,
@@ -508,6 +513,37 @@ function jobs(values: PreparationJob[]) {
           a.rel = "noopener";
         }
         links.append(a);
+      }
+      if (m.capabilities.includes("source-objects")) {
+        const report = document.createElement("details");
+        report.append(text("summary", "Source retention report"));
+        let loaded = false;
+        report.ontoggle = () => {
+          if (!report.open || loaded) return;
+          loaded = true;
+          const body = text("p", "Reading report…", "quiet");
+          report.append(body);
+          void (async () => {
+            const reader = new AtlasReader(
+              new HttpSource(`/maps/${job.id}.atlas`),
+            );
+            try {
+              await reader.open();
+              const c = await objectCatalog(reader);
+              body.textContent = `${c.count.toLocaleString()} retained objects · ${Object.entries(
+                c.report.counts,
+              )
+                .map(([k, n]) => `${n.toLocaleString()} ${k}`)
+                .join(" · ")}. Source completeness: unknown.`;
+              report.append(text("pre", JSON.stringify(c.report, null, 2)));
+            } catch (e) {
+              body.textContent = String(e);
+            } finally {
+              reader.dispose();
+            }
+          })();
+        };
+        card.append(report);
       }
       const publish = document.createElement("button");
       publish.textContent = "Publish with Hashtree";
@@ -791,6 +827,10 @@ function configureSource() {
     ["roads", "Roads & paths"],
     ["land", "Landscape"],
     [
+      "objects",
+      "Analysis source · tagged objects, site outlines, coasts & relationships",
+    ],
+    [
       "boundaries",
       "Administrative areas · countries, municipalities & districts",
     ],
@@ -987,6 +1027,14 @@ export async function startBuilder() {
       input.checked =
         !input.disabled &&
         (preset === "all" ||
+          (preset === "analysis" &&
+            [
+              "feature-objects",
+              "feature-boundaries",
+              "search",
+              "reverse",
+              "query-peaks",
+            ].includes(k)) ||
           (preset === "geometry" && k.startsWith("layer-")) ||
           (preset === "view" &&
             (k.startsWith("layer-") ||

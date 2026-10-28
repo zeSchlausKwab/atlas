@@ -1,3 +1,4 @@
+import { objectSpecs } from "../../../../packages/objects/src/tools";
 import { boundarySpecs } from "../../../../packages/boundaries/src/tools";
 import { ChatRecipes } from "./recipes";
 import Ajv, { type ValidateFunction } from "ajv";
@@ -39,6 +40,7 @@ const profile = { enum: ["walking", "cycling", "driving"] };
 const text = { type: "string", minLength: 1, maxLength: 120 };
 const specs: Array<[string, string, Record<string, unknown>]> = [
   ...analysisSpecs,
+  ...objectSpecs,
   ...boundarySpecs,
   ...chartSpecs,
   [

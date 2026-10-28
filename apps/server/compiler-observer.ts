@@ -46,10 +46,13 @@ export class CompilerObserver {
       { size: number; sha256: string }
     >;
     const sourceKey =
-      completed["source-v3.sqlite"] ||
-      (await Bun.file(join(compiler, "source-v3.sqlite")).exists())
-        ? "source-v3.sqlite"
-        : "source.sqlite";
+      completed["source-v4.sqlite"] ||
+      (await Bun.file(join(compiler, "source-v4.sqlite")).exists())
+        ? "source-v4.sqlite"
+        : completed["source-v3.sqlite"] ||
+            (await Bun.file(join(compiler, "source-v3.sqlite")).exists())
+          ? "source-v3.sqlite"
+          : "source.sqlite";
     const hasSem =
       job.selection.featureKinds.length ||
       job.selection.search ||

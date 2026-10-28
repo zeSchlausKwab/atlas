@@ -37,7 +37,7 @@ test("a short pass reports its real start and completion even inside the throttl
   expect(compilerProgress(values[0]!)?.etaSeconds).toBeUndefined();
 });
 
-test.each(["source.sqlite", "source-v3.sqlite"])(
+test.each(["source.sqlite", "source-v3.sqlite", "source-v4.sqlite"])(
   "observation of %s counts sparse source rows and only augments a fresh running job",
   async (sourceKey) => {
     const directory = await mkdtemp("/tmp/atlas-progress-");

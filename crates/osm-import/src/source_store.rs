@@ -3,6 +3,7 @@ use crate::{
     areas, display,
     graph_checkpoint::{next_block, seek},
     node_store::{NodeStore, NodeWriter},
+    objects,
     source_checkpoint::{discard_legacy, Progress, State},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -63,6 +64,49 @@ fn put_feature(db: &Connection, feature: &Value) -> Result<(), Error> {
         ])?;
     Ok(())
 }
+fn object_bounds(v: &Value) -> Option<[f64; 4]> {
+    fn visit(v: &Value, b: &mut [f64; 4]) {
+        if let Some(a) = v.as_array() {
+            if a.len() >= 2 && a[0].is_number() {
+                let x = a[0].as_f64().unwrap();
+                let y = a[1].as_f64().unwrap();
+                b[0] = b[0].min(x);
+                b[1] = b[1].min(y);
+                b[2] = b[2].max(x);
+                b[3] = b[3].max(y);
+            } else {
+                for x in a {
+                    visit(x, b);
+                }
+            }
+        }
+    }
+    let mut b = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    visit(&v["geometry"]["coordinates"], &mut b);
+    b.iter().all(|x| x.is_finite()).then_some(b)
+}
+fn put_object(db: &Connection, v: &Value) -> Result<(), Error> {
+    let bbox = object_bounds(v);
+    let cell = bbox
+        .map(|b| {
+            (((b[0] + b[2]) / 2. + 180.) * 8.).floor() as i64 * 1441
+                + (((b[1] + b[3]) / 2. + 90.) * 8.).floor() as i64
+        })
+        .unwrap_or(-1);
+    db.prepare_cached("INSERT OR REPLACE INTO source_objects VALUES(?,?,?,?)")?
+        .execute(params![
+            v["id"].as_str(),
+            pack(v)?,
+            cell,
+            serde_json::to_string(&bbox)?
+        ])?;
+    Ok(())
+}
 fn load_relations(
     db: &Connection,
     id: RelationId,
@@ -118,7 +162,8 @@ fn create_store(output: &str) -> Result<Connection, Error> {
     if initialized {
         return Ok(db);
     }
-    db.execute_batch("CREATE TABLE IF NOT EXISTS features(id TEXT PRIMARY KEY,class INTEGER,data BLOB,cell INTEGER);
+    db.execute_batch("CREATE TABLE IF NOT EXISTS source_objects(id TEXT PRIMARY KEY,data BLOB,cell INTEGER,bbox TEXT);
+      CREATE TABLE IF NOT EXISTS features(id TEXT PRIMARY KEY,class INTEGER,data BLOB,cell INTEGER);
       CREATE TABLE IF NOT EXISTS locations(id INTEGER PRIMARY KEY,x REAL,y REAL,category TEXT,kind TEXT,json TEXT);
       CREATE VIRTUAL TABLE IF NOT EXISTS places USING rtree(id,x0,x1,y0,y1);
       CREATE TABLE IF NOT EXISTS peaks(id INTEGER PRIMARY KEY,json TEXT);
@@ -159,6 +204,11 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                 }
                 let object_id = obj.id();
                 let result = (|| -> Result<(), Error> {
+                    if objects::enabled() {
+                        if let OsmObj::Relation(ref r) = obj {
+                            put_object(&db, &objects::relation(r))?;
+                        }
+                    }
                     match obj {
                         OsmObj::Node(node) => {
                             let p = [node.lon(), node.lat()];
@@ -167,6 +217,11 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                                 [node.decimicro_lon, node.decimicro_lat],
                                 [false; 3],
                             )?;
+                            if objects::enabled() {
+                                if let Some(v) = objects::node(&node) {
+                                    put_object(&db, &v)?;
+                                }
+                            }
                             if let Some(location) = display::node_location(&node) {
                                 db.prepare_cached("INSERT INTO locations VALUES(?,?,?,?,?,?)")?
                                     .execute(params![
@@ -213,8 +268,10 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                                     .execute([id.0])?;
                                 }
                             }
+                            let class =
+                                areas::class(&r.tags).or_else(|| objects::enabled().then_some(8));
                             db.prepare_cached("INSERT INTO relations VALUES(?,?,?)")?
-                                .execute(params![r.id.0, areas::class(&r.tags), pack(&r)?])?;
+                                .execute(params![r.id.0, class, pack(&r)?])?;
                         }
                         _ => {}
                     }
@@ -272,6 +329,9 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                             db.prepare_cached("UPDATE members SET data=? WHERE id=?")?
                                 .execute(params![pack(&way.nodes)?, way.id.0])?;
                         }
+                        if objects::enabled() {
+                            put_object(&db, &objects::way(&way, &nodes))?;
+                        }
                         match display::way_feature(&way, &nodes) {
                             Ok(Some(f)) => put_feature(&db, &f)?,
                             Ok(None) => {}
@@ -327,11 +387,17 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                 let mut relations = HashMap::new();
                 load_relations(&db, RelationId(id), 0, &mut relations, &mut 0)?;
                 let root = relations.get(&RelationId(id)).ok_or("Missing area root")?;
-                let class = areas::class(&root.tags).unwrap();
+                let class = areas::class(&root.tags).unwrap_or(8);
+                let object = objects::relation(root);
                 let boundary_refs = areas::place_members(root);
                 let relation = match areas::flatten(root, &relations) {
                     Ok(r) => r,
                     Err(_) => {
+                        if objects::enabled() {
+                            let mut v = object.clone();
+                            v["geometryStatus"] = json!("incomplete-area");
+                            put_object(&db, &v)?;
+                        }
                         state.skipped += 1;
                         return Ok(());
                     }
@@ -357,6 +423,13 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                 }
                 match areas::assemble(&relation, &members, &|id| nodes.get(id).map(|n| n.0)) {
                     Ok(coordinates) => {
+                        if objects::enabled() {
+                            let mut v = object.clone();
+                            v["geometry"] =
+                                json!({"type":"MultiPolygon","coordinates":coordinates});
+                            v["geometryStatus"] = json!("complete");
+                            put_object(&db, &v)?;
+                        }
                         for r in &relation.refs {
                             if r.role == "outer" || r.role.is_empty() {
                                 if let OsmId::Way(id) = r.member {
@@ -376,7 +449,14 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                         )?;
                         state.assembled += 1;
                     }
-                    Err(_) => state.skipped += 1,
+                    Err(_) => {
+                        if objects::enabled() {
+                            let mut v = object.clone();
+                            v["geometryStatus"] = json!("incomplete-area");
+                            put_object(&db, &v)?;
+                        }
+                        state.skipped += 1;
+                    }
                 }
                 Ok(())
             })();
@@ -393,6 +473,52 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                     total,
                     "objects",
                 );
+            }
+        }
+        if objects::enabled() {
+            loop {
+                let next:Option<(i64,Vec<u8>)>=db.query_row("SELECT rowid,data FROM source_objects WHERE rowid>? AND id LIKE 'relation/%' ORDER BY rowid LIMIT 1",[state.last_object_relation],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+                let Some((ordinal, data)) = next else { break };
+                let mut v: Value = unpack(&data)?;
+                let mut members = v["members"].as_array().cloned().unwrap_or_default();
+                let mut unavailable = Vec::new();
+                for m in &mut members {
+                    let id = m["id"].as_str().unwrap().to_owned();
+                    if let Some(n) = id.strip_prefix("node/") {
+                        if let Some(node) = nodes.get(&NodeId(n.parse()?)) {
+                            m["coordinates"] = json!(node.0);
+                        } else {
+                            unavailable.push(id.to_owned());
+                        }
+                    } else {
+                        let exists: bool = db.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM source_objects WHERE id=?)",
+                            [&id],
+                            |r| r.get(0),
+                        )?;
+                        if !exists {
+                            unavailable.push(id.to_owned());
+                        }
+                    }
+                }
+                v["members"] = json!(members);
+                v["unavailableMembers"] = json!(unavailable);
+                // UPDATE preserves rowid for the durable progress cursor.
+                db.execute(
+                    "UPDATE source_objects SET data=? WHERE rowid=?",
+                    params![pack(&v)?, ordinal],
+                )?;
+                state.last_object_relation = ordinal;
+                if progress.due() {
+                    state.commit(&db)?;
+                    progress.report(
+                        "source-relationships",
+                        "Checking retained relation members",
+                        ordinal as u64,
+                        0,
+                        "objects",
+                    );
+                }
             }
         }
         state.stage = 3;
@@ -440,7 +566,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
         ),
         (
             "Indexing source geometry cells",
-            "CREATE INDEX feature_cells ON features(cell)",
+            "CREATE INDEX feature_cells ON features(cell); CREATE INDEX source_object_cells ON source_objects(cell)",
         ),
     ];
     while state.stage < 6 {
@@ -469,7 +595,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
         if check != "ok" {
             return Err(format!("Source database integrity check failed: {check}").into());
         }
-        let stats = json!({"schema":"source-store-v1","skippedWays":state.skipped_ways,"assembledRelations":state.assembled,"skippedRelations":state.skipped});
+        let stats = json!({"schema":"source-store-v1","coordinates":state.coordinates,"skippedWays":state.skipped_ways,"assembledRelations":state.assembled,"skippedRelations":state.skipped});
         db.execute(
             "INSERT INTO metadata VALUES('stats',?)",
             [stats.to_string()],
