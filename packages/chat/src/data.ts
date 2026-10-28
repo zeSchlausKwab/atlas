@@ -1,3 +1,4 @@
+import { boundarySpecs, boundaryOperation } from "../../boundaries/src/tools";
 import Ajv from "ajv";
 import { analysisSpecs } from "./analysis-specs";
 import { AnalysisRecipes, canonical } from "./recipes";
@@ -44,7 +45,7 @@ export class ChatDataRuntime {
   >();
   readonly recipes = new AnalysisRecipes();
   private validators = new Map(
-    analysisSpecs.map(([name, , schema]) => [
+    [...analysisSpecs, ...boundarySpecs].map(([name, , schema]) => [
       name,
       new Ajv({ strict: false, ownProperties: true }).compile(schema),
     ]),
@@ -413,9 +414,37 @@ export class ChatDataRuntime {
         region,
       });
       if (regionMeta) value = { ...value, region: regionMeta };
+    } else if (name === "boundary_search" || name === "boundary_lookup") {
+      const result = await boundaryOperation(
+        this.readers,
+        name,
+        input,
+        signal,
+        progress,
+      );
+      const collection: FeatureCollection =
+        "matches" in result
+          ? {
+              type: "FeatureCollection",
+              features: result.matches.map((r: any) => ({
+                type: "Feature",
+                id: r.id,
+                properties: { ...r, coordinates: undefined },
+                geometry: { type: "Point", coordinates: r.coordinates },
+              })),
+            }
+          : { type: "FeatureCollection", features: result.features };
+      const { features: _features, ...meta } = {
+        ...result,
+        features: undefined,
+      };
+      value = {
+        ...this.results.save(collection, { operation: name, ...meta }),
+        ...meta,
+      };
     } else if (name === "place_geometry") {
       const saved = this.results.get(input.result);
-      if (saved.meta.operation !== "search")
+      if (!["search", "boundary_search"].includes(String(saved.meta.operation)))
         throw new Error("Pass a search result reference to place_geometry");
       const chosen = saved.collection.features.find((f) => f.id === input.id);
       if (!chosen || chosen.geometry.type !== "Point")

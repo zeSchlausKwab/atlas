@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="atlas-synthetic-boundaries">
+<node id="1" version="1" lat="48" lon="16"/><node id="2" version="1" lat="48" lon="16.08"/><node id="3" version="1" lat="48.08" lon="16.08"/><node id="4" version="1" lat="48.08" lon="16"/>
+<node id="5" version="1" lat="48.03" lon="16.03"/><node id="6" version="1" lat="48.03" lon="16.05"/><node id="7" version="1" lat="48.05" lon="16.05"/><node id="8" version="1" lat="48.05" lon="16.03"/>
+<node id="9" version="1" lat="48.09" lon="16.09"/><node id="10" version="1" lat="48.09" lon="16.1"/><node id="11" version="1" lat="48.1" lon="16.1"/><node id="12" version="1" lat="48.1" lon="16.09"/>
+<node id="13" version="1" lat="48.01" lon="16.01"><tag k="place" v="suburb"/><tag k="name" v="Test district"/></node>
+<way id="10" version="1"><nd ref="1"/><nd ref="2"/><nd ref="3"/></way>
+<way id="11" version="1"><nd ref="1"/><nd ref="4"/><nd ref="3"/></way>
+<way id="12" version="1"><nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="8"/><nd ref="5"/></way>
+<way id="13" version="1"><nd ref="9"/><nd ref="10"/><nd ref="11"/><nd ref="12"/><nd ref="9"/></way>
+<way id="14" version="1"><nd ref="9"/><nd ref="10"/><nd ref="11"/><nd ref="12"/><nd ref="9"/><tag k="boundary" v="administrative"/><tag k="admin_level" v="10"/><tag k="name" v="Legacy island"/></way>
+<relation id="100" version="1"><member type="way" ref="10" role="outer"/><member type="way" ref="11" role="outer"/><member type="way" ref="12" role="inner"/><member type="way" ref="13" role="outer"/><member type="node" ref="13" role="label"/><member type="relation" ref="999999" role="subarea"/><tag k="type" v="boundary"/><tag k="boundary" v="administrative"/><tag k="admin_level" v="9"/><tag k="name" v="Test district"/></relation>
+<relation id="101" version="1"><member type="way" ref="10" role="outer"/><member type="way" ref="999998" role="outer"/><tag k="type" v="boundary"/><tag k="boundary" v="administrative"/><tag k="name" v="Incomplete district"/></relation>
+<relation id="102" version="1"><member type="way" ref="13" role="outer"/><tag k="type" v="multipolygon"/><tag k="boundary" v="administrative"/><tag k="admin_level" v="9"/><tag k="name" v="Legacy relation"/></relation>
+</osm>

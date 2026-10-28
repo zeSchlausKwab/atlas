@@ -410,9 +410,14 @@ function selection(): PackageSelection {
     search: checked("search"),
     reverse: checked("reverse"),
     peaks: checked("query-peaks"),
-    featureKinds: ["water", "buildings", "railways", "roads", "land"].filter(
-      (k) => checked(`feature-${k}`),
-    ) as FeatureKind[],
+    featureKinds: [
+      "water",
+      "buildings",
+      "railways",
+      "roads",
+      "land",
+      "boundaries",
+    ].filter((k) => checked(`feature-${k}`)) as FeatureKind[],
     paddingCells: Number(el<HTMLSelectElement>("padding").value),
     maxBytes: Number(el<HTMLInputElement>("budget").value) * 1024 * 1024,
   };
@@ -739,6 +744,10 @@ function configureSource() {
   }
   for (const [k, label] of [
     ["land", "Landscape"],
+    [
+      "boundaries",
+      "Administrative areas · countries, municipalities & districts",
+    ],
     ["water", "Water"],
     ["roads", "Roads & paths"],
     ["railways", "Railways"],
@@ -785,6 +794,10 @@ function configureSource() {
     ["railways", "Railways"],
     ["roads", "Roads & paths"],
     ["land", "Landscape"],
+    [
+      "boundaries",
+      "Administrative areas · countries, municipalities & districts",
+    ],
   ])
     checkbox(
       "features",

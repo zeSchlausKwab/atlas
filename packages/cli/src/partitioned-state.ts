@@ -1,5 +1,5 @@
 import type { PackageSelection } from "../../provisioning/src/selection";
-export const PARTITIONED_VERSION = 5;
+export const PARTITIONED_VERSION = 6;
 export interface PartitionedState {
   identity: string;
   completed: Record<string, { size: number; sha256: string }>;
@@ -13,7 +13,7 @@ export function partitionedIdentity(
     .update(JSON.stringify({ version, inputHash, selection }))
     .digest("hex");
 }
-/** v4→v5 changed selectable-feature packing only, not source geometry, transport or display. */
+/** v6 retains administrative areas; older source/semantic stages must be rebuilt. Transport and display remain reusable. */
 export function reconcilePartitionedState(
   old: PartitionedState | undefined,
   inputHash: string,
@@ -27,12 +27,17 @@ export function reconcilePartitionedState(
     };
   if (old.identity === identity) return { state: old, migrated: false };
   // Matching the *entire* old fingerprint is mandatory: no bypass for another source or recipe.
-  if (old.identity !== partitionedIdentity(inputHash, selection, 4))
+  if (
+    ![4, 5].some(
+      (version) =>
+        old.identity === partitionedIdentity(inputHash, selection, version),
+    )
+  )
     throw new Error(
       "Partitioned checkpoints belong to another source, recipe or compiler",
     );
   const completed: PartitionedState["completed"] = {};
-  for (const name of ["transport.atlas", "source.sqlite", "display.atlas"])
+  for (const name of ["transport.atlas", "display.atlas"])
     if (old.completed[name]) completed[name] = old.completed[name];
   // Each retained artifact still undergoes the normal size + SHA-256 check before reuse.
   return { state: { identity, completed }, migrated: true };

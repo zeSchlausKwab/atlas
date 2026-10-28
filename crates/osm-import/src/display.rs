@@ -31,7 +31,10 @@ pub fn import(
     for object in reader.iter() {
         let object = object?;
         if let OsmObj::Relation(relation) = &object {
-            if relation.tags.get("type").map(|v| v.as_str()) == Some("multipolygon") {
+            if matches!(
+                relation.tags.get("type").map(|v| v.as_str()),
+                Some("multipolygon" | "boundary")
+            ) {
                 for member in &relation.refs {
                     if let OsmId::Way(id) = member.member {
                         member_ids.insert(id);
@@ -107,6 +110,7 @@ pub fn import(
     area_relations.sort_by_key(|r| r.id);
     for relation in area_relations {
         let class = areas::class(&relation.tags).unwrap();
+        let boundary_refs = areas::place_members(relation);
         let relation = match areas::flatten(relation, &relations) {
             Ok(r) => r,
             Err(_) => {
@@ -128,7 +132,7 @@ pub fn import(
                     .iter()
                     .map(|(k, v)| (k.to_string(), json!(v.as_str())))
                     .collect();
-                features.push(json!({"type":"Feature","geometry":{"type":"MultiPolygon","coordinates":coordinates},"properties":{"id":format!("relation/{}",relation.id.0),"class":class,"name":relation.tags.get("name").map(|v|v.as_str()).unwrap_or(""),"tags":tags}}));
+                features.push(json!({"type":"Feature","geometry":{"type":"MultiPolygon","coordinates":coordinates},"properties":{"id":format!("relation/{}",relation.id.0),"class":class,"boundaryRefs":boundary_refs,"name":relation.tags.get("name").map(|v|v.as_str()).unwrap_or(""),"tags":tags}}));
                 assembled_relations += 1;
             }
             Err(_) => skipped_relations += 1,

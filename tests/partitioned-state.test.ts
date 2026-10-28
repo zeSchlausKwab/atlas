@@ -29,7 +29,7 @@ const selection: PackageSelection = {
 };
 const hash = "a".repeat(64),
   receipt = { size: 123, sha256: "b".repeat(64) };
-test("v4 resume retains compatible checkpoints and invalidates only semantic packing", () => {
+test("v4 resume retains transport and display but rebuilds source and semantic stages", () => {
   const old = {
     identity: partitionedIdentity(hash, selection, 4),
     completed: {
@@ -45,10 +45,9 @@ test("v4 resume retains compatible checkpoints and invalidates only semantic pac
   expect(result.state.identity).toBe(partitionedIdentity(hash, selection));
   expect(Object.keys(result.state.completed)).toEqual([
     "transport.atlas",
-    "source.sqlite",
     "display.atlas",
   ]);
-  expect(result.state.completed["source.sqlite"]).toEqual(receipt);
+  expect(result.state.completed["source.sqlite"]).toBeUndefined();
   expect(old.completed["semantics.atlas"]).toEqual(receipt);
   expect(
     reconcilePartitionedState(result.state, hash, selection).migrated,

@@ -1,3 +1,4 @@
+import { boundaryTools } from "../../boundaries/src/tools";
 import { AtlasWorkspace } from "../../workspace/src/index";
 import { workspaceTools } from "../../workspace/src/tools";
 import { OperationRegistry } from "./registry";
@@ -43,7 +44,11 @@ export class AtlasEngine {
     this.registry = new OperationRegistry(reader.index.manifest, {
       scanFeatures: (q, signal) => this.features.scan(q, signal),
     });
-    for (const plugin of [...builtins(this), ...workspaceTools(this.workspace)])
+    for (const plugin of [
+      ...builtins(this),
+      ...workspaceTools(this.workspace),
+      ...boundaryTools(workspaceSources),
+    ])
       this.registry.register(plugin, "atlas-core-1");
   }
   route(start: Position, end: Position, profile: TransportMode = "walking") {

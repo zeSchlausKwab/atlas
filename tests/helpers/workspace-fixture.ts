@@ -117,7 +117,13 @@ export async function workspaceFixture(
         key,
         bytes: encode({ schema: "features-v1", features }),
       })),
-      { key: "tile/buildings/0/0/0", bytes: new Uint8Array([0, 0, 0, 0]) },
+      {
+        key: "tile/buildings/0/0/0",
+        z: 0,
+        x: 0,
+        y: 0,
+        bytes: new Uint8Array([0, 0, 0, 0]),
+      },
     ],
     { paged: true },
   );

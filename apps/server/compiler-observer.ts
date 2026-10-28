@@ -45,6 +45,11 @@ export class CompilerObserver {
       string,
       { size: number; sha256: string }
     >;
+    const sourceKey =
+      completed["source-v3.sqlite"] ||
+      (await Bun.file(join(compiler, "source-v3.sqlite")).exists())
+        ? "source-v3.sqlite"
+        : "source.sqlite";
     const hasSem =
       job.selection.featureKinds.length ||
       job.selection.search ||
@@ -58,7 +63,7 @@ export class CompilerObserver {
         ? [{ key: "transport.atlas", label: "Routing graphs" }]
         : []),
       ...(hasSem || job.selection.layers.length
-        ? [{ key: "source.sqlite", label: "Source geometry" }]
+        ? [{ key: sourceKey, label: "Source geometry" }]
         : []),
       ...(hasSem
         ? [
@@ -81,7 +86,7 @@ export class CompilerObserver {
       { label: "PBF extraction", state: "done" },
       ...artifacts.map((a) => {
         const done =
-          !!completed[a.key] || (a.key === "source.sqlite" && derivedComplete);
+          !!completed[a.key] || (a.key === sourceKey && derivedComplete);
         const state = done ? "done" : activeSeen ? "pending" : "active";
         if (!done) activeSeen = true;
         return {
@@ -94,8 +99,8 @@ export class CompilerObserver {
     progress.writtenBytes =
       job.progress.writtenBytes +
       Object.values(completed).reduce((n, c) => n + c.size, 0);
-    const dbPath = join(compiler, "source.sqlite");
-    const identity = completed["source.sqlite"]?.sha256;
+    const dbPath = join(compiler, sourceKey);
+    const identity = completed[sourceKey]?.sha256;
     if (identity && identity !== this.sourceIdentity) {
       const total = this.query<{ n: number }>(
         dbPath,
@@ -162,7 +167,7 @@ export class CompilerObserver {
       } else {
         stage = derivedComplete
           ? "assembly"
-          : !completed["source.sqlite"]
+          : !completed[sourceKey]
             ? "source-geometry"
             : completed["semantics.atlas"]
               ? "display-packing"

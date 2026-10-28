@@ -1,3 +1,8 @@
+import {
+  boundaryCatalog,
+  boundaryRecords,
+  BOUNDARY_ROOT,
+} from "../../boundaries/src/index";
 import { featureCatalog, featureBlock } from "../../features/src/pages";
 import { validBudget } from "./capacity";
 import {
@@ -75,7 +80,7 @@ export function availability(m: Manifest) {
       : [],
     profiles: TRANSPORT_MODES.filter((p) => !!m.transport?.profiles[p]),
     featureKinds: m.capabilities.includes("feature-extraction")
-      ? (m.featureKinds ?? [...FEATURE_KINDS])
+      ? (m.featureKinds ?? FEATURE_KINDS.filter((k) => k !== "boundaries"))
       : [],
     labels: m.capabilities.includes("map-labels"),
     search: m.capabilities.includes("location-search"),
@@ -229,6 +234,26 @@ export async function planPreparation(
   }
   for (const kind of s.featureKinds) {
     report(`Finding ${kind} source objects…`);
+    if (kind === "boundaries") {
+      const catalog = await boundaryCatalog(reader);
+      for (const key of [BOUNDARY_ROOT, ...catalog.pages.map((p) => p.key)]) {
+        const block = await featureBlock(reader, key);
+        if (!block) throw new Error(`Missing boundary block ${key}`);
+        add([block]);
+      }
+      for await (const record of boundaryRecords(
+        reader,
+        bounds(s.polygon),
+        signal,
+        report,
+      )) {
+        const block = await featureBlock(reader, record.geometry);
+        if (!block)
+          throw new Error(`Missing boundary geometry ${record.geometry}`);
+        add([block]);
+      }
+      continue;
+    }
     const cells = await spatial(`features/${kind}`, m.featureZoom!);
     add(cells);
     if (m.featureSchema === 2)

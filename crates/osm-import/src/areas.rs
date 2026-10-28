@@ -4,7 +4,9 @@ type Ring = Vec<[f64; 2]>;
 /// Area semantics are shared by closed ways and multipolygon relations.
 pub fn class(tags: &Tags) -> Option<u8> {
     let tag = |key: &str| tags.get(key).map(|v| v.as_str()).unwrap_or("");
-    if ["building", "building:part"]
+    if tag("boundary") == "administrative" {
+        Some(9)
+    } else if ["building", "building:part"]
         .iter()
         .any(|key| !tag(key).is_empty() && tag(key) != "no")
     {
@@ -313,4 +315,17 @@ mod tests {
         ways.remove(&WayId(2));
         assert!(assemble(&relation, &ways, &|id| nodes.get(id).copied()).is_err());
     }
+}
+
+/// Explicit place links, never subarea members or inferred hierarchy.
+pub fn place_members(r: &Relation) -> Vec<String> {
+    r.refs
+        .iter()
+        .filter_map(|m| match m.member {
+            OsmId::Node(id) if ["label", "admin_centre"].contains(&m.role.as_str()) => {
+                Some(format!("node/{}", id.0))
+            }
+            _ => None,
+        })
+        .collect()
 }

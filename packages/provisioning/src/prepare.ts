@@ -1,3 +1,9 @@
+import { BoundaryWriter } from "../../boundaries/src/build";
+import {
+  boundaryRecords,
+  boundaryFeature,
+  BOUNDARY_ROOT,
+} from "../../boundaries/src/index";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
 import { selectedPeaks } from "../../format/src/peaks";
 import { selectedPlaces } from "../../labels/src/place-pages";
@@ -155,7 +161,28 @@ export async function preparePackage(
     }
   };
   try {
+    if (s.featureKinds.includes("boundaries")) {
+      const boundaries = new BoundaryWriter(writer);
+      for await (const row of boundaryRecords(
+        reader,
+        bounds(s.polygon),
+        signal,
+        emit,
+      )) {
+        const f = await boundaryFeature(reader, row);
+        if (booleanIntersects(f, region))
+          await boundaries.add({
+            ...f,
+            properties: { ...f.properties, boundaryRefs: row.relatedIds },
+          });
+      }
+      await boundaries.finish();
+    }
     for (const b of plan.blocks) {
+      if (b.key.startsWith("boundaries/")) {
+        p.completed++;
+        continue;
+      }
       signal.throwIfAborted();
       if (/^features\/(attributes|geometry)\//.test(b.key)) {
         p.completed++;
@@ -281,7 +308,11 @@ export async function preparePackage(
         writer.blocks.some((b) => b.key.startsWith(`tile/${l}/`)),
       ),
       featureKinds = s.featureKinds.filter((k) =>
-        writer.blocks.some((b) => b.key.startsWith(`features/${k}/`)),
+        writer.blocks.some((b) =>
+          k === "boundaries"
+            ? b.key === BOUNDARY_ROOT
+            : b.key.startsWith(`features/${k}/`),
+        ),
       );
     if (layers.length) caps.push("vector-rendering");
     if (layers.includes("buildings") && m.buildingHeights)
@@ -296,6 +327,8 @@ export async function preparePackage(
     if (keys.has("search/streets")) caps.push("reverse-street");
     if (keys.has("query/peaks")) caps.push("peak-query");
     if (featureKinds.length) caps.push("feature-extraction");
+    if (featureKinds.includes("boundaries"))
+      caps.push("administrative-boundaries");
     for (const mode of s.profiles)
       if (!profiles[mode]!.count) delete profiles[mode];
     if (Object.keys(profiles).length) caps.push("transport-routing");

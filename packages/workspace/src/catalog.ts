@@ -1,5 +1,9 @@
 import type { Manifest } from "../../format/src/index";
-import { FEATURE_KINDS, type FeatureKind } from "../../features/src/index";
+import {
+  FEATURE_KINDS,
+  LEGACY_FEATURE_KINDS,
+  type FeatureKind,
+} from "../../features/src/index";
 export const FAMILIES = ["locations", ...FEATURE_KINDS] as const;
 export type Family = "locations" | FeatureKind;
 export function supports(m: Manifest, family: Family) {
@@ -7,7 +11,9 @@ export function supports(m: Manifest, family: Family) {
     ? m.capabilities.includes("location-search")
     : m.capabilities.includes("feature-extraction") &&
         m.featureZoom !== undefined &&
-        (m.featureKinds ?? FEATURE_KINDS).includes(family);
+        (m.featureKinds ?? [...LEGACY_FEATURE_KINDS]).includes(family) &&
+        (family !== "boundaries" ||
+          m.capabilities.includes("administrative-boundaries"));
 }
 /** No payload reads. Metadata describes retained data, never real-world completeness. */
 export function describeData(
@@ -38,17 +44,21 @@ export function describeData(
       family,
       available: supports(m, family),
       schema:
-        family === "locations"
-          ? "locations-v1"
-          : m.featureSchema === 2
-            ? "features-paged-v2"
-            : "features-v1",
+        family === "boundaries"
+          ? "boundaries-v1"
+          : family === "locations"
+            ? "locations-v1"
+            : m.featureSchema === 2
+              ? "features-paged-v2"
+              : "features-v1",
       access:
-        family === "locations"
-          ? "spatial cells (legacy packages: whole location block)"
-          : m.featureSchema === 2
-            ? "bounded attribute and geometry pages; exact boundary geometry fetched only when needed"
-            : "legacy spatial cells",
+        family === "boundaries"
+          ? "bounded metadata pages; one whole polygon per source ID; geometry loaded only when needed"
+          : family === "locations"
+            ? "spatial cells (legacy packages: whole location block)"
+            : m.featureSchema === 2
+              ? "bounded attribute and geometry pages; exact boundary geometry fetched only when needed"
+              : "legacy spatial cells",
     })),
     fields: {
       id: "stable OSM identity; lookup is scoped to the prepared workspace",
@@ -77,7 +87,10 @@ export function describeData(
       maxMemoryBytes: policy === "interactive" ? null : 64 * 1024 ** 2,
       operations: ["prepare", "query", "result", "release"],
       unsupported: [
-        "administrative containment",
+        ...(m.capabilities.includes("administrative-boundaries")
+          ? []
+          : ["administrative containment"]),
+        "administrative parent/child hierarchy",
         "address interpolation",
         "cross-snapshot reconciliation",
         "arbitrary code execution",

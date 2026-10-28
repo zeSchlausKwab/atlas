@@ -92,6 +92,7 @@ fn load_relations(
     let children: Vec<_> = relation
         .refs
         .iter()
+        .filter(|r| ["outer", "inner", ""].contains(&r.role.as_str()))
         .filter_map(|r| {
             if let OsmId::Relation(id) = r.member {
                 Some(id)
@@ -199,7 +200,10 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                             }
                         }
                         OsmObj::Relation(r)
-                            if r.tags.get("type").map(|v| v.as_str()) == Some("multipolygon") =>
+                            if matches!(
+                                r.tags.get("type").map(|v| v.as_str()),
+                                Some("multipolygon" | "boundary")
+                            ) =>
                         {
                             for member in &r.refs {
                                 if let OsmId::Way(id) = member.member {
@@ -324,6 +328,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                 load_relations(&db, RelationId(id), 0, &mut relations, &mut 0)?;
                 let root = relations.get(&RelationId(id)).ok_or("Missing area root")?;
                 let class = areas::class(&root.tags).unwrap();
+                let boundary_refs = areas::place_members(root);
                 let relation = match areas::flatten(root, &relations) {
                     Ok(r) => r,
                     Err(_) => {
@@ -367,7 +372,7 @@ pub fn import(source: &str, output: &str) -> Result<(), Error> {
                             .collect();
                         put_feature(
                             &db,
-                            &json!({"type":"Feature","geometry":{"type":"MultiPolygon","coordinates":coordinates},"properties":{"id":format!("relation/{id}"),"class":class,"name":relation.tags.get("name").map(|v|v.as_str()).unwrap_or(""),"tags":tags}}),
+                            &json!({"type":"Feature","geometry":{"type":"MultiPolygon","coordinates":coordinates},"properties":{"id":format!("relation/{id}"),"class":class,"boundaryRefs":boundary_refs,"name":relation.tags.get("name").map(|v|v.as_str()).unwrap_or(""),"tags":tags}}),
                         )?;
                         state.assembled += 1;
                     }

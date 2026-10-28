@@ -260,3 +260,16 @@ never empty results. Old files remain readable by the new reader; old readers mu
 be upgraded before serving/consuming this schema. Repacking changes the package
 snapshot and Hashtree root while preserving source revision and graph identity.
 See [feature paging](FEATURE-PAGING.md) for migration, measurements and limitations.
+
+
+## Administrative boundaries
+
+The optional `administrative-boundaries` capability and `featureKinds:["boundaries"]`
+use `boundaries/index` (`boundaries-v1`), bounded metadata blocks
+`boundaries/records/16/x/y` (`boundary-records-v1`) and individual polygon blocks
+`boundaries/geometry/16/x/y` (`features-v1`). These addresses are packed ordinals,
+not geographic tile coordinates. Metadata carries spatial bounding boxes.
+
+Unlike display tiles, a boundary's complete geometry is stored once per archive.
+The standard archive directory, content hashes, range reader and persistent cache
+apply. See [administrative area contract and upgrade guide](ADMINISTRATIVE-BOUNDARIES.md).

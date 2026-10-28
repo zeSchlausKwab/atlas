@@ -122,7 +122,14 @@ export interface Manifest {
   featureZoom?: number;
   /** Version 2 separates bounded attributes and geometry pages within the archive. */
   featureSchema?: 2;
-  featureKinds?: ("buildings" | "water" | "railways" | "roads" | "land")[];
+  featureKinds?: (
+    | "buildings"
+    | "water"
+    | "railways"
+    | "roads"
+    | "land"
+    | "boundaries"
+  )[];
   tileLayers?: MapLayer[];
   buildingHeights?: {
     tagged: number;
@@ -169,7 +176,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -340,7 +347,15 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     (!Array.isArray(manifest.featureKinds) ||
       new Set(manifest.featureKinds).size !== manifest.featureKinds.length ||
       manifest.featureKinds.some(
-        (k) => !["buildings", "water", "railways", "roads", "land"].includes(k),
+        (k) =>
+          ![
+            "buildings",
+            "water",
+            "railways",
+            "roads",
+            "land",
+            "boundaries",
+          ].includes(k),
       ))
   )
     throw new Error("Invalid feature category metadata");
@@ -418,6 +433,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
     throw new Error("Missing routing metadata");
   for (const [capability, key] of [
     ["location-search", "search/locations"],
+    ["administrative-boundaries", "boundaries/index"],
     ["reverse-street", "search/streets"],
   ]) {
     if (
@@ -446,11 +462,13 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
               ? p.z !== 8
               : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
                 ? p.z !== manifest.labelZoom
-                : pagedZoom(p.prefix!) !== undefined
-                  ? p.z !== pagedZoom(p.prefix!)
-                  : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                      p.prefix!,
-                    ) || p.z !== manifest.featureZoom) ||
+                : /^boundaries\/(records|geometry)$/.test(p.prefix!)
+                  ? p.z !== 16
+                  : pagedZoom(p.prefix!) !== undefined
+                    ? p.z !== pagedZoom(p.prefix!)
+                    : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                        p.prefix!,
+                      ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -570,6 +588,22 @@ export function validateBlocks(
         (block.rawLength ?? block.length) > 4 * 1024 * 1024
       )
         throw new Error("Invalid geographic semantic page");
+    }
+    if (
+      block.key.startsWith("boundaries/") &&
+      block.key !== "boundaries/index"
+    ) {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== 16 ||
+        a.x >= 65536 ||
+        a.y >= 65536 ||
+        block.key !== `${a.prefix}/16/${a.x}/${a.y}` ||
+        (a.prefix === "boundaries/records" &&
+          (block.rawLength ?? block.length) > 1024 ** 2)
+      )
+        throw new Error("Invalid boundary block address or size");
     }
     if (block.key.startsWith("features/") && block.key !== "features/geojson") {
       const a = spatialAddress(block.key);

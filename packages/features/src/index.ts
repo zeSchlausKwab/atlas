@@ -1,15 +1,17 @@
+import { readBoundaries } from "../../boundaries/src/index";
 import { readFeatureCell } from "./pages";
 import type { Feature, FeatureCollection, Geometry, Position } from "geojson";
 import { AtlasReader } from "../../format/src/reader";
 import { project } from "../../format/src/index";
 export const FEATURE_ZOOM = 12;
-export const FEATURE_KINDS = [
+export const LEGACY_FEATURE_KINDS = [
   "buildings",
   "water",
   "railways",
   "roads",
   "land",
 ] as const;
+export const FEATURE_KINDS = [...LEGACY_FEATURE_KINDS, "boundaries"] as const;
 export type FeatureKind = (typeof FEATURE_KINDS)[number];
 export type Bounds = [number, number, number, number];
 export type MapFeature = Feature<
@@ -64,7 +66,7 @@ export function validateFeatureQuery(q: FeatureQuery) {
     b[3] > 85
   )
     throw new Error("Invalid feature query bounds or category");
-  if (b[2] - b[0] > 0.25 || b[3] - b[1] > 0.25)
+  if (q.kind !== "boundaries" && (b[2] - b[0] > 0.25 || b[3] - b[1] > 0.25))
     throw new Error("Zoom in to extract an area smaller than 0.25° across.");
   if (
     q.limit !== undefined &&
@@ -191,6 +193,18 @@ export class AtlasFeatures {
       throw new Error(
         `This package does not contain ${q.kind} source features.`,
       );
+    if (q.kind === "boundaries") {
+      for await (const f of readBoundaries(
+        this.reader,
+        q.bounds,
+        true,
+        signal,
+      )) {
+        const [key, value] = q.tag?.split("=") ?? [];
+        if (!key || f.properties.tags[key] === value) yield f as MapFeature;
+      }
+      return;
+    }
     const z = m.featureZoom!,
       n = 2 ** z,
       nw = project(q.bounds[0], q.bounds[3]),

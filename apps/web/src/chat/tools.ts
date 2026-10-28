@@ -1,3 +1,4 @@
+import { boundarySpecs } from "../../../../packages/boundaries/src/tools";
 import { ChatRecipes } from "./recipes";
 import Ajv, { type ValidateFunction } from "ajv";
 import type { AgentTools } from "../../../../packages/chat/src/agent";
@@ -38,6 +39,7 @@ const profile = { enum: ["walking", "cycling", "driving"] };
 const text = { type: "string", minLength: 1, maxLength: 120 };
 const specs: Array<[string, string, Record<string, unknown>]> = [
   ...analysisSpecs,
+  ...boundarySpecs,
   ...chartSpecs,
   [
     "run_code",
@@ -74,7 +76,7 @@ const specs: Array<[string, string, Record<string, unknown>]> = [
       {
         result: ref,
         id: text,
-        family: { enum: ["land", "water", "buildings"] },
+        family: { enum: ["land", "water", "buildings", "boundaries"] },
       },
       ["result", "id"],
     ),
@@ -325,7 +327,8 @@ export class ChatTools implements AgentTools {
       for (const f of i.families)
         requirePurpose(f === "locations" ? "search" : "features");
     if (name === "search" || name === "reverse") requirePurpose("search");
-    if (name === "place_geometry") requirePurpose("features");
+    if (name === "place_geometry" || name.startsWith("boundary_"))
+      requirePurpose("features");
     if (name === "route" || name === "isochrone") requirePurpose("routing");
     let result: any;
     if (name === "map_context") result = this.context();

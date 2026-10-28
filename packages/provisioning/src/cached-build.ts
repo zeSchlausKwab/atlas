@@ -293,7 +293,9 @@ export async function importCachedPbf(
           `--bbox=${bounds.join(",")}`,
           "--strategy=smart",
           "-S",
-          "types=multipolygon,restriction",
+          selection.featureKinds.includes("boundaries")
+            ? "types=multipolygon,restriction,boundary"
+            : "types=multipolygon,restriction",
           "--set-bounds",
           "--overwrite",
           "--progress",
@@ -341,7 +343,9 @@ export async function importCachedPbf(
         ],
         extraction: {
           bounds: plan.bounds,
-          strategy: "smart; types=multipolygon,restriction; cached-build-v1",
+          strategy: s.featureKinds.includes("boundaries")
+            ? "smart; types=multipolygon,restriction,boundary; cached-build-v1"
+            : "smart; types=multipolygon,restriction; cached-build-v1",
           sourceDate: cachedSourceDate(source),
         },
       }),

@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { BoundaryWriter } from "../../boundaries/src/build";
+import { FEATURE_KINDS } from "../../features/src/index";
 import { compilerWorkers } from "../../compiler/src/settings";
 import { compilePartitioned } from "./partitioned";
 import { WORLD_SOURCE } from "../../provisioning/src/global-source";
@@ -376,7 +378,7 @@ async function main() {
     // scales, a half-pixel tolerance avoids shipping invisible vertex detail.
     const displayFeatures = imported.geojson.features.filter(
       (f) =>
-        Number(f.properties?.class) !== 8 &&
+        Number(f.properties?.class) < 8 &&
         (!selected ||
           selected.layers.includes(
             layerForClass(Number(f.properties?.class ?? 3)),
@@ -531,6 +533,12 @@ async function main() {
     }
     if (flags.features) {
       console.log("Partitioning selectable source geometry…");
+      if (!selected || selected.featureKinds.includes("boundaries")) {
+        const boundaries = new BoundaryWriter(writer);
+        for (const feature of imported.geojson.features)
+          await boundaries.add(feature);
+        await boundaries.finish();
+      }
       const cells = buildFeatures(imported.geojson);
       const featureWriter = new PagedFeatureWriter(writer);
       for (const [key, features] of cells) {
@@ -583,7 +591,7 @@ async function main() {
         ? {
             featureZoom: FEATURE_ZOOM,
             featureSchema: 2,
-            ...(selected ? { featureKinds: selected.featureKinds } : {}),
+            featureKinds: selected?.featureKinds ?? [...FEATURE_KINDS],
           }
         : {}),
       areas: {
@@ -591,6 +599,10 @@ async function main() {
         skippedRelations: imported.skippedRelations,
       },
       capabilities: [
+        ...(flags.features &&
+        (!selected || selected.featureKinds.includes("boundaries"))
+          ? ["administrative-boundaries"]
+          : []),
         ...(!selected || selected.layers.length ? ["vector-rendering"] : []),
         ...(!selected || selected.layers.includes("buildings")
           ? ["building-heights"]

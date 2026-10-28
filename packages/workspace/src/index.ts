@@ -1,3 +1,4 @@
+import { readBoundaries } from "../../boundaries/src/index";
 import { cityCandidateCells } from "./selection";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
 import booleanIntersects from "@turf/boolean-intersects";
@@ -496,6 +497,48 @@ export class AtlasWorkspace {
         };
         for (const family of families) {
           if (!eligible(base, family)) continue;
+          if (family === "boundaries") {
+            phase = `Reading administrative areas in ${m.name}`;
+            const row = (f: any): Row => ({
+              id: f.id,
+              family,
+              name: f.properties.name,
+              kind: family,
+              category: family,
+              tags: f.properties.tags,
+              heightMeters: null,
+              heightSource: "unknown",
+              geometry: f.geometry,
+            });
+            for await (const f of readBoundaries(
+              reader,
+              p.bounds,
+              p.geometry !== false,
+              signal,
+              (f) =>
+                matches(
+                  row(f),
+                  (p.where ?? []).filter(
+                    (x) =>
+                      ![
+                        "geometry",
+                        "geometryType",
+                        "geometryAvailable",
+                      ].includes(x.field),
+                  ),
+                ),
+              progress,
+            )) {
+              scanned++;
+              add({
+                ...row(f),
+                geometryHash: f.geometry
+                  ? await geometryHash(f.geometry)
+                  : undefined,
+              });
+            }
+            continue;
+          }
           const n =
             2 ** (family === "locations" ? STREET_ZOOM : m.featureZoom!);
           const nw = project(p.bounds[0], p.bounds[3]),

@@ -61,10 +61,14 @@ export class StreamWriter implements BlockWriter {
     this.file = await open(this.output + ".payload.part", "w+");
     return this;
   }
-  async add(input: InputBlock) {
-    const zipped = input.codec
-      ? input.bytes
-      : Bun.gzipSync(input.bytes as Uint8Array<ArrayBuffer>);
+  async add(
+    input: InputBlock,
+    { compress = true }: { compress?: boolean } = {},
+  ) {
+    const zipped =
+      input.codec || !compress
+        ? input.bytes
+        : Bun.gzipSync(input.bytes as Uint8Array<ArrayBuffer>);
     const stored =
       zipped.length < input.bytes.length
         ? {

@@ -92,7 +92,9 @@ export async function importPartitionedCached(
           `--bbox=${bounds.join(",")}`,
           "--strategy=smart",
           "-S",
-          "types=multipolygon,restriction",
+          s.featureKinds.includes("boundaries")
+            ? "types=multipolygon,restriction,boundary"
+            : "types=multipolygon,restriction",
           "--set-bounds",
           "--overwrite",
           "--progress",
@@ -147,8 +149,9 @@ export async function importPartitionedCached(
         ],
         extraction: {
           bounds,
-          strategy:
-            "smart; types=multipolygon,restriction; partitioned-build-v1",
+          strategy: s.featureKinds.includes("boundaries")
+            ? "smart; types=multipolygon,restriction,boundary; partitioned-build-v1"
+            : "smart; types=multipolygon,restriction; partitioned-build-v1",
           sourceDate: cachedSourceDate(source),
         },
       },

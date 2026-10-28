@@ -1,3 +1,4 @@
+import { findBoundary, hasBoundaries } from "../../boundaries/src/index";
 import type { Feature, FeatureCollection } from "geojson";
 import type { AtlasReader } from "../../format/src/reader";
 import { project } from "../../format/src/index";
@@ -9,12 +10,12 @@ import { canonical } from "./recipes";
 export async function placeGeometry(
   readers: AtlasReader[],
   chosen: Feature,
-  family: "land" | "water" | "buildings",
+  family: "land" | "water" | "buildings" | "boundaries",
   signal: AbortSignal,
   progress: (text: string) => void = () => {},
 ) {
   if (
-    !["land", "water", "buildings"].includes(family) ||
+    !["land", "water", "buildings", "boundaries"].includes(family) ||
     chosen.geometry.type !== "Point"
   )
     throw new Error("Choose a point search candidate and a polygon family");
@@ -33,6 +34,25 @@ export async function placeGeometry(
     progress(
       `Finding ${chosen.properties?.name ?? chosen.id} footprint in ${m.name}`,
     );
+    if (family === "boundaries") {
+      if (!hasBoundaries(reader)) {
+        omittedSources.push(m.snapshot);
+        continue;
+      }
+      const found = await findBoundary(reader, String(chosen.id), signal);
+      if (found) {
+        if (
+          feature &&
+          canonical(feature.geometry) !== canonical(found.geometry)
+        )
+          throw new Error(
+            "Selected sources disagree on the administrative boundary",
+          );
+        feature = found;
+        snapshots.push(m.snapshot);
+      }
+      continue;
+    }
     const n = 2 ** m.featureZoom,
       nw = project(seed[0], seed[3]),
       se = project(seed[2], seed[1]);
@@ -88,6 +108,9 @@ export async function placeGeometry(
       snapshots: [...new Set(snapshots)],
       omittedSources,
       boundaryAvailable: !!feature,
+      nextAction: feature
+        ? "filter_against_polygon"
+        : "ask_user_for_boundary_or_permission_to_approximate",
       realWorldCompleteness: "unknown",
       note: feature
         ? "Full retained source footprint. Bounds are a preparation envelope; filter against the polygon for inside, including holes. Coverage must be checked for the requested data families."

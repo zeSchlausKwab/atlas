@@ -1,3 +1,4 @@
+import { BoundaryWriter } from "../../boundaries/src/build";
 import { reconcilePartitionedState } from "./partitioned-state";
 import { compilerWorkers } from "../../compiler/src/settings";
 import { Database } from "bun:sqlite";
@@ -78,7 +79,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
   const identity = state.identity;
   if (migrated) {
     // Keep the old receipt for diagnostics; publish the migration atomically.
-    const backup = statePath + ".v4";
+    const backup = statePath + ".pre-boundaries";
     if (!(await Bun.file(backup).exists()))
       await Bun.write(backup, JSON.stringify(previous));
     await Bun.write(statePath + ".part", JSON.stringify(state));
@@ -86,7 +87,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       fs.rename(statePath + ".part", statePath),
     );
     progress(
-      "Upgraded v4 checkpoints: retaining source, routing and display; rebuilding semantic pages",
+      "Upgraded checkpoints: retaining routing and display; rebuilding source geometry and semantic pages for boundaries",
     );
   }
   let failure: Error | undefined;
@@ -279,7 +280,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       (s.layers.length && !state.completed["display.atlas"]);
     let source: Database | undefined;
     if (needsSource) {
-      const path = await stage("source.sqlite", async (path) => {
+      const path = await stage("source-v3.sqlite", async (path) => {
         await runCompiler(
           [join(ROOT, "target/release/source-store"), o.input, path],
           ROOT,
@@ -323,6 +324,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 spoolPath,
               ])
                 await rm(file, { force: true });
+              const boundaries = new BoundaryWriter(writer);
               const search = new PagedSearchBuilder(searchPath),
                 spool = new BlockSpool(spoolPath, identity);
               const region: GeoPolygon = {
@@ -465,6 +467,12 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       type: "FeatureCollection" as const,
                       features: [feature],
                     };
+                  if (
+                    s.featureKinds.includes("boundaries") &&
+                    feature.properties?.class === 9 &&
+                    booleanIntersects(feature, region)
+                  )
+                    await boundaries.add(feature);
                   if (s.search || s.reverse || s.streetNames || s.pois)
                     semantic.addFeatures(fc);
                   if (
@@ -485,6 +493,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   }
                 }
                 featureProgress(count);
+                if (s.featureKinds.includes("boundaries"))
+                  await boundaries.finish();
                 const groupsProgress = measuredProgress(
                   progress,
                   "semantic-streets",
@@ -557,6 +567,9 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : []),
                     ...(s.peaks ? ["peak-query"] : []),
                     ...(s.featureKinds.length ? ["feature-extraction"] : []),
+                    ...(s.featureKinds.includes("boundaries")
+                      ? ["administrative-boundaries"]
+                      : []),
                   ],
                 };
               } finally {
@@ -667,7 +680,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       source?.close();
     }
     // Derived stage archives now contain everything needed; release source/fragment spools before assembly.
-    for (const name of ["source.sqlite", "display-fragments.sqlite"]) {
+    for (const name of ["source-v3.sqlite", "display-fragments.sqlite"]) {
       await rm(join(o.work, name), { force: true });
       delete state.completed[name];
     }

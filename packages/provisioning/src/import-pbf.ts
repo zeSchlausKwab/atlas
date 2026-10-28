@@ -76,7 +76,9 @@ export async function importPbf(
       `--bbox=${plan.bounds.join(",")}`,
       "--strategy=smart",
       "-S",
-      "types=multipolygon,restriction",
+      selection.featureKinds.includes("boundaries")
+        ? "types=multipolygon,restriction,boundary"
+        : "types=multipolygon,restriction",
       "--set-bounds",
       "--overwrite",
       "-o",
@@ -100,7 +102,9 @@ export async function importPbf(
       ],
       extraction: {
         bounds: plan.bounds,
-        strategy: "smart; types=multipolygon,restriction",
+        strategy: selection.featureKinds.includes("boundaries")
+          ? "smart; types=multipolygon,restriction,boundary"
+          : "smart; types=multipolygon,restriction",
         sourceDate: date
           ? `20${date[1]}-${date[2]}-${date[3]}`
           : new Date(plan.lastModified).toISOString().slice(0, 10),
