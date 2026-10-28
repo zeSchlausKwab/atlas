@@ -744,10 +744,6 @@ function configureSource() {
   }
   for (const [k, label] of [
     ["land", "Landscape"],
-    [
-      "boundaries",
-      "Administrative areas · countries, municipalities & districts",
-    ],
     ["water", "Water"],
     ["roads", "Roads & paths"],
     ["railways", "Railways"],

@@ -108,6 +108,28 @@ The larger Central Europe archives were compiled before this addition. They need
 a boundary-only source pass and an upgrade (or a new preparation); the Vienna
 boundary archive does not cover their extent and cannot be used for that upgrade.
 
+## Published Vienna demo
+
+The upgraded pair is available in the LAN host library as **Vienna west ·
+administrative areas** and **Vienna east · administrative areas**. Open the local
+client with the two new immutable IDs:
+
+[Open the boundary demo](http://127.0.0.1:5173/?server=http%3A%2F%2F192.168.0.179%3A3100%2F&maps=dd5f7e19-f01e-4a31-bf44-f8a7dfd59ca9,ab55a3ca-206e-47d1-acad-02c29fcdf00d#tab=chat).
+
+West retains 34 areas (+73,569 bytes); east retains 13 (+28,435 bytes), with
+identity deduplication across the overlap. These counts describe this regional
+PBF's retained complete polygons, not all administrative ancestors of Vienna.
+
+A browser check on 28 October searched for the level-9 district, fetched its
+geometry, styled and drew the exact polygon with a label: **11.8 KB** of chat
+source reads, **11.3 seconds** including six model rounds, no browser errors.
+This is one warm-LAN demonstration, not a performance guarantee. Server
+`boundary_lookup` also returned byte-equivalent geometry through HTTP.
+
+Try: “Draw the administrative district Innere Stadt in Vienna in purple, with a
+label. Use its actual retained boundary and identify the OSM relation.”
+Then: “Count mapped cafés inside that polygon and show them; report data coverage.”
+
 ## Important remaining data gaps
 
 1. **Administrative hierarchy and address context.** Point containment is now
