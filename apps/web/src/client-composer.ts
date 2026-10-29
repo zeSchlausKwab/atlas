@@ -221,17 +221,36 @@ export async function createComposer(
       ...new Set(
         entries
           .filter((e) => e.enabled)
-          .map(
-            (e) =>
-              e.reader?.index?.manifest.source.attribution ??
-              e.offer.manifest.source?.attribution ??
-              "OpenStreetMap contributors",
-          ),
+          .flatMap((e) => {
+            const m = e.reader?.index?.manifest ?? e.offer.manifest;
+            return [
+              ...(m.capabilities.includes("vector-rendering") ||
+              !m.rasters?.length
+                ? [m.source.attribution]
+                : []),
+              ...(m.rasters ?? []).map(
+                (r) => `${r.source.attribution} · ${r.source.license}`,
+              ),
+            ];
+          }),
       ),
     ];
-    document
-      .querySelector<HTMLElement>(".attribution")
-      ?.setAttribute("title", attributions.join(" · "));
+    const credit = document.querySelector<HTMLElement>(".map-attribution");
+    if (credit) {
+      credit.replaceChildren();
+      attributions.forEach((text, index) => {
+        if (index) credit.append(document.createTextNode(" · "));
+        if (text.includes("OpenStreetMap")) {
+          const link = document.createElement("a");
+          link.href = "https://www.openstreetmap.org/copyright";
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = text;
+          credit.append(link);
+        } else credit.append(document.createTextNode(text));
+      });
+      credit.title = attributions.join(" · ");
+    }
     entries.forEach(status);
   }
   async function subscribe(entry: Entry) {

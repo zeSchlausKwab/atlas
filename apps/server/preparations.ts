@@ -1,3 +1,9 @@
+import { limitedBody } from "./request-body";
+import {
+  IMAGE_MAX_BYTES,
+  planImage,
+  type ImageImport,
+} from "../../packages/raster/src/image-plan";
 import {
   capabilityChoices,
   installedCapabilities,
@@ -67,6 +73,7 @@ export interface PreparationJob {
   allowStorageRisk?: boolean;
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
+  imageImport?: ImageImport;
   sourceAtlasId?: string;
   amendment?: HostedAmendment;
   capabilityChange?: CapabilityChange;
@@ -116,12 +123,13 @@ export class Preparations {
       }
       if (job.state === "running" || job.state === "cancelling") {
         job.state = "failed";
-        job.error = job.cachedSource
-          ? "Server stopped. Resume to reuse completed compiler stages."
-          : "Server stopped during preparation. Create the excerpt again.";
+        job.error =
+          job.cachedSource || job.imageImport
+            ? "Server stopped. Resume to reuse completed compiler stages."
+            : "Server stopped during preparation. Create the excerpt again.";
         await manager.cleanup(
           job.id,
-          !!job.cachedSource || !!job.capabilityChange,
+          !!job.cachedSource || !!job.capabilityChange || !!job.imageImport,
         );
         await manager.persist(job);
       }
@@ -167,6 +175,10 @@ export class Preparations {
       ".amend.part",
       ".amend.part.payload.part",
       ".amend.part.directory.part",
+      ".lock",
+      ".raster.part",
+      ".raster.part.payload.part",
+      ".raster.part.directory.part",
       ".addition.atlas",
       ".addition.atlas.payload.part",
       ".addition.atlas.directory.part",
@@ -473,6 +485,72 @@ export class Preparations {
       amendment: value,
     });
   }
+  async createImage(
+    bytes: Uint8Array,
+    placement: unknown,
+    allowStorageRisk = false,
+  ) {
+    if (this.closing)
+      throw new Error("Server is stopping; try again after restart.");
+    const plan = await planImage(bytes, placement);
+    checkStorageEstimate(
+      DISK_RESERVE + plan.estimatedBytes,
+      (await readStorage(this.directory)).availableBytes,
+      allowStorageRisk,
+    );
+    const id = crypto.randomUUID(),
+      [w, s, e, n] = plan.layer.bounds;
+    const job: PreparationJob = {
+      id,
+      name: plan.layer.name,
+      createdAt: new Date().toISOString(),
+      state: "queued",
+      imageImport: plan,
+      allowStorageRisk,
+      selection: {
+        snapshot: plan.sha256,
+        name: plan.layer.name,
+        polygon: [
+          [w, s],
+          [e, s],
+          [e, n],
+          [w, n],
+        ],
+        minZoom: 0,
+        maxZoom: plan.layer.maxZoom,
+        layers: [],
+        placeNames: false,
+        streetNames: false,
+        pois: false,
+        profiles: [],
+        search: false,
+        reverse: false,
+        peaks: false,
+        featureKinds: [],
+        paddingCells: 0,
+        maxBytes: NO_SIZE_LIMIT,
+      },
+      progress: {
+        phase: "planning",
+        message: "Image uploaded · queued for tiling",
+        completed: 0,
+        total: plan.tiles,
+        unit: "blocks",
+        readBytes: 0,
+        writtenBytes: 0,
+      },
+    };
+    try {
+      await Bun.write(resolve(this.directory, `${id}.work/input.png`), bytes);
+      await this.persist(job);
+    } catch (e) {
+      await this.cleanup(id);
+      throw e;
+    }
+    this.jobs.set(id, job);
+    void this.startQueue().catch(console.error);
+    return job;
+  }
   async create(value: unknown, previous?: PreparationJob, start = false) {
     if (this.closing)
       throw new Error("Server is stopping; try again after restart.");
@@ -492,6 +570,7 @@ export class Preparations {
       throw new Error("Invalid storage override");
     const allowStorageRisk =
       extra?.allowStorageRisk ?? previous?.allowStorageRisk ?? false;
+    const imageImport = previous?.imageImport;
     const capabilityChange =
       previous?.capabilityChange ?? extra?.capabilityChange;
     const capabilityPlan = capabilityChange
@@ -565,7 +644,14 @@ export class Preparations {
           "Choose the configured ocean source with a cached PBF; GDAL must be installed",
         );
     }
-    if (capabilityPlan) {
+    if (imageImport) {
+      if (
+        !(await Bun.file(
+          resolve(this.directory, `${previous!.id}.work/input.png`),
+        ).exists())
+      )
+        throw new Error("Uploaded image is missing. Upload it again.");
+    } else if (capabilityPlan) {
       validateSelectionScope(value, {
         ...WORLD_SOURCE,
         snapshot: capabilityChange!.targetSnapshot,
@@ -601,8 +687,11 @@ export class Preparations {
       });
       if (start) throw new Error("Waiting for the parent dataset to finish.");
     } else validateSelection(value, atlas?.manifest ?? this.source);
+    const selection = imageImport
+      ? previous!.selection
+      : (value as PackageSelection);
     // Check the same estimate at submission and dispatch. Acceptance is scoped to the saved job.
-    const partitioned = !!cached && !!planCachedBuild(value).partitioned;
+    const partitioned = !!cached && !!planCachedBuild(selection).partitioned;
     const extractedBytes =
       previous?.resumeCheckpoint && cached
         ? Bun.file(
@@ -612,29 +701,32 @@ export class Preparations {
             ),
           ).size
         : 0;
-    const needed = capabilityPlan
-      ? capabilityPlan.estimatedWorkspaceBytes
-      : amendment
-        ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-        : hostPreparationSpace(value.maxBytes, {
-            cached: !!cached,
-            partitioned,
-            resume: !!previous?.resumeCheckpoint,
-            extractedBytes,
-            sourceBytes: plan?.bytes,
-            atlasBytes: Bun.file(inputPath).size,
-          });
+    const needed = imageImport
+      ? DISK_RESERVE + imageImport.estimatedBytes
+      : capabilityPlan
+        ? capabilityPlan.estimatedWorkspaceBytes
+        : amendment
+          ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+          : hostPreparationSpace(selection.maxBytes, {
+              cached: !!cached,
+              partitioned,
+              resume: !!previous?.resumeCheckpoint,
+              extractedBytes,
+              sourceBytes: plan?.bytes,
+              atlasBytes: Bun.file(inputPath).size,
+            });
     const disk = await readStorage(this.directory);
     checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
     if (!start) {
       const job: PreparationJob = {
         id: previous?.id ?? crypto.randomUUID(),
-        name: value.name.trim(),
+        name: selection.name.trim(),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
         state: "queued",
-        selection: structuredClone(value),
+        selection: structuredClone(selection),
         sourcePlan: plan,
         cachedSource: cached,
+        imageImport,
         sourceAtlasId: atlas?.id,
         amendment,
         capabilityChange: capabilityPlan?.change,
@@ -672,23 +764,26 @@ export class Preparations {
       }
       const job: PreparationJob = Object.assign(previous ?? {}, {
         id,
-        name: value.name.trim(),
+        name: selection.name.trim(),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
         state: "running",
         allowStorageRisk,
-        selection: structuredClone(value),
+        selection: structuredClone(selection),
         sourcePlan: plan,
         cachedSource: cached,
+        imageImport,
         sourceAtlasId: atlas?.id,
         amendment,
         capabilityChange: capabilityPlan?.change,
         progress: {
           phase: "planning",
-          message: cached
-            ? "Opening verified cached PBF and saved compiler stages…"
-            : plan
-              ? `Preparing ${plan.region.name} from OSM PBF…`
-              : "Opening the source snapshot…",
+          message: imageImport
+            ? "Opening uploaded image and saved tiles…"
+            : cached
+              ? "Opening verified cached PBF and saved compiler stages…"
+              : plan
+                ? `Preparing ${plan.region.name} from OSM PBF…`
+                : "Opening the source snapshot…",
           completed: 0,
           total: 0,
           readBytes: 0,
@@ -710,30 +805,39 @@ export class Preparations {
         this.settling = (async () => {
           const cancelled =
             job.state === "cancelling" || data.type === "cancelled";
-          job.state = cancelled
+          const finalState = cancelled
             ? "cancelled"
             : data.type === "ready"
               ? "ready"
               : "failed";
           job.error = cancelled ? "Preparation cancelled." : data.error;
-          if (job.state === "ready") {
+          if (finalState === "ready") {
             job.size = data.size;
             job.manifest = data.manifest;
             job.progress.message = "Ready to serve and download.";
             job.progress.writtenBytes = data.size!;
-            await this.persist(job);
-            if (job.capabilityChange) {
-              const parent = this.jobs.get(job.capabilityChange.targetId);
-              if (parent) {
-                parent.supersededBy = job.id;
-                await this.setServed(parent.id, false);
-              }
+            // Make the new revision durable before exposing it. Switch the in-memory
+            // catalog without an await, so "ready" never exposes both revisions.
+            await this.persist({ ...job, state: "ready" });
+            const parent = job.capabilityChange
+              ? this.jobs.get(job.capabilityChange.targetId)
+              : undefined;
+            if (parent) {
+              parent.supersededBy = job.id;
+              parent.served = false;
             }
-          } else
+            job.state = "ready";
+            if (parent) {
+              await this.persist(parent);
+              await this.beforeDelete?.(parent.id);
+            }
+          } else {
+            job.state = finalState;
             await this.cleanup(
               id,
-              !!job.cachedSource || !!job.capabilityChange,
+              !!job.cachedSource || !!job.capabilityChange || !!job.imageImport,
             );
+          }
           await this.persist(job);
         })()
           .catch((error) => {
@@ -784,6 +888,7 @@ export class Preparations {
         selection: job.selection,
         sourcePlan: plan,
         cachedSource: cached,
+        imageImport,
         capabilityChange: capabilityPlan
           ? {
               request: capabilityPlan.change,
@@ -828,9 +933,10 @@ export class Preparations {
     }
     if (job.state !== "running") return job;
     job.state = "cancelling";
-    job.progress.message = job.cachedSource
-      ? "Stopping; completed stages will be kept for resume…"
-      : "Cancelling and removing partial files…";
+    job.progress.message =
+      job.cachedSource || job.imageImport
+        ? "Stopping; completed stages will be kept for resume…"
+        : "Cancelling and removing partial files…";
     this.worker?.send({ type: "cancel" });
     await this.persist(job);
     return job;
@@ -920,6 +1026,44 @@ export class Preparations {
         ),
       });
     if (request.method !== "POST") return json({ error: "Use POST" }, 405);
+    if (url.pathname === "/admin/preparations/image") {
+      if (
+        request.headers.get("Origin") !== url.origin ||
+        !request.headers.get("Content-Type")?.startsWith("multipart/form-data;")
+      )
+        return json({ error: "Same-origin image upload required" }, 403);
+      try {
+        const bytes = await limitedBody(request, IMAGE_MAX_BYTES + 16384);
+        const form = await new Response(bytes, {
+          headers: { "Content-Type": request.headers.get("Content-Type")! },
+        }).formData();
+        const file = form.get("image"),
+          recipe = form.get("placement");
+        if (
+          !(file instanceof File) ||
+          typeof recipe !== "string" ||
+          recipe.length > 8192
+        )
+          throw new Error("Provide image and placement fields");
+        const placement = JSON.parse(recipe);
+        return json(
+          await this.createImage(
+            new Uint8Array(await file.arrayBuffer()),
+            placement,
+            placement.allowStorageRisk ?? false,
+          ),
+          202,
+        );
+      } catch (e) {
+        if (e instanceof StorageWarning)
+          return json(
+            { error: e.message, storageWarning: e.storageWarning },
+            409,
+          );
+        return json({ error: e instanceof Error ? e.message : String(e) }, 400);
+      }
+    }
+
     if (
       request.headers.get("Origin") !== url.origin ||
       request.headers.get("Content-Type") !== "application/json"

@@ -78,6 +78,7 @@
     "geojson-vt": "4.0.2",
     "maplibre-gl": "6.13.0",
     "nostr-tools": "2.25.2",
+    "pngjs": "7.0.0",
     "quickjs-emscripten": "0.32.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
@@ -87,6 +88,7 @@
     "@types/d3-contour": "3.0.6",
     "@types/geojson": "7946.0.16",
     "@types/geojson-vt": "3.2.5",
+    "@types/pngjs": "6.0.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "prettier": "3.6.2",

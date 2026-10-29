@@ -21,6 +21,25 @@ export function capabilityPanel(
   sources: { name: string; sha256?: string }[],
   refresh: () => Promise<void>,
 ) {
+  if (
+    job.manifest?.rasters?.length &&
+    !job.manifest.capabilities.includes("vector-rendering")
+  ) {
+    const panel = el("section"),
+      title = el("h4", "Raster layers in this file");
+    panel.className = "capability-composer";
+    panel.append(
+      title,
+      ...job.manifest.rasters.map((r) =>
+        el("p", `${r.name} · ${r.kind} · z${r.minZoom}–${r.maxZoom}`),
+      ),
+      el(
+        "p",
+        "Use Stop serving to unpublish this map. Compose it with vector datasets for routing, search and analysis; image pixels do not contain those features.",
+      ),
+    );
+    return panel;
+  }
   const m = job.manifest!,
     key = m.snapshot + ":" + (job.served !== false);
   const previous = panels.get(job.id);

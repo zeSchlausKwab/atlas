@@ -467,7 +467,7 @@ function jobs(values: PreparationJob[]) {
       card.append(
         text(
           "p",
-          `${bytes(job.size!)} · z${m.minZoom}–${m.maxZoom} · ${m.tileLayers?.join(", ") || "no display geometry"}`,
+          `${bytes(job.size!)} · z${m.minZoom}–${m.maxZoom} · ${[...(m.tileLayers ?? []), ...(m.rasters ?? []).map((r) => r.name)].join(", ") || "no display geometry"}`,
         ),
         text("p", m.capabilities.join(" · "), "quiet"),
       );
@@ -541,6 +541,7 @@ function jobs(values: PreparationJob[]) {
       select.append(check, text("span", `Compose ${job.name}`));
       const actions = text("div", "", "host-actions host-card-actions");
       const reuse = text("button", "Use as source") as HTMLButtonElement;
+      reuse.hidden = !!job.imageImport;
       reuse.onclick = () => void chooseSource("atlas", `atlas:${job.id}`);
       const serve = text(
         "button",
@@ -585,7 +586,9 @@ function jobs(values: PreparationJob[]) {
       if (["failed", "cancelled"].includes(job.state)) {
         const resume = text(
           "button",
-          job.cachedSource ? "Resume saved build" : "Queue again",
+          job.cachedSource || job.imageImport
+            ? "Resume saved build"
+            : "Queue again",
         ) as HTMLButtonElement;
         resume.onclick = async () => {
           resume.disabled = true;
@@ -660,7 +663,7 @@ function jobs(values: PreparationJob[]) {
           "button",
           job.state === "cancelling"
             ? "Stopping…"
-            : job.cachedSource
+            : job.cachedSource || job.imageImport
               ? "Stop & keep checkpoints"
               : "Cancel preparation",
         ) as HTMLButtonElement;
@@ -951,6 +954,7 @@ function setupDeletion() {
   };
 }
 export async function startBuilder() {
+  document.addEventListener("atlas-jobs-changed", () => void refresh());
   updateComposition();
   el("storage-refresh").onclick = async () => {
     const button = el<HTMLButtonElement>("storage-refresh");

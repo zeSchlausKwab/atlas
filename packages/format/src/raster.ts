@@ -12,6 +12,14 @@ export interface RasterLayer {
   maxZoom: number;
   bounds: [number, number, number, number];
   source: { url: string; attribution: string; license: string };
+  registration?: {
+    method: "north-up-mercator-bounds";
+    width: number;
+    height: number;
+    sha256: string;
+    accuracy: string;
+    resampling: "area-overviews-and-bilinear";
+  };
 }
 export function validateRasters(
   value: unknown,
@@ -53,6 +61,21 @@ export function validateRasters(
       )
     )
       throw new Error("Invalid raster layer descriptor");
+    if (r.registration) {
+      const g = r.registration;
+      if (
+        g.method !== "north-up-mercator-bounds" ||
+        !Number.isInteger(g.width) ||
+        g.width < 1 ||
+        !Number.isInteger(g.height) ||
+        g.height < 1 ||
+        !/^[a-f0-9]{64}$/.test(g.sha256) ||
+        typeof g.accuracy !== "string" ||
+        !g.accuracy ||
+        g.resampling !== "area-overviews-and-bilinear"
+      )
+        throw new Error("Invalid image registration");
+    }
     ids.add(r.id);
   }
 }

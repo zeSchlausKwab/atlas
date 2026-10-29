@@ -153,8 +153,22 @@ The client reads only visible raster tiles, blends relief beneath labels, and ex
 included in map-byte accounting and use the normal verified block cache. Natural
 Earth is coarse imagery; zooming beyond its z6 pyramid magnifies those pixels.
 This first renderer uses a bounded Canvas image plane and the existing orthographic
-camera. It does not yet provide GPU raster textures, numeric terrain, uploads,
+camera. It does not yet provide GPU raster textures, numeric terrain,
 arbitrary reprojection, raster region exports, or a raster amendment UI.
+
+To upload an image, open **Host console → Upload imagery** (`/host#imagery`). Choose
+PNG/JPEG, position it with a rectangle or numeric bounds, and provide attribution
+and licence. The image is stretched north-up in Web Mercator; preview it before
+uploading. A background job builds a self-contained raster Atlas for the normal
+library/composer. Upload and tiling progress are visible; stopping retains completed
+tiles for resume. Transparency is preserved. The prototype accepts 64 MiB / 32 MP
+images; GeoTIFF, rotation and control-point alignment are still planned.
+
+The authenticated `POST /admin/preparations/image` endpoint accepts multipart fields
+`image` (PNG) and `placement` (JSON: `name`, `bounds: [west,south,east,north]`,
+`attribution`, `license`). The host UI converts JPEG to PNG before upload. Registration
+records the normalized PNG hash; the finished archive contains the tiled pixels,
+not a copy of the original JPEG. See the [raster roadmap](docs/AMENDMENTS-AND-RASTER.md).
 
 For your own pre-tiled imagery, use `bun run raster:import --help`. The importer takes
 an XYZ PNG directory and a JSON layer descriptor like `data/raster-relief/layer.json`.

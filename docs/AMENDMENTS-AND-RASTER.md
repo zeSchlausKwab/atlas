@@ -114,7 +114,7 @@ require shared routing identity. Coverage is family-specific.
 
 ## Milestone 3 — visual raster delivery
 
-Status: first delivery/composition proof implemented locally; embedding and upload remain next.
+Status: delivery/composition and PNG/JPEG uploads implemented locally; embedded raster amendments remain planned.
 
 `demo:raster` retains 148 Natural Earth/OpenFreeMap PNG tiles around Europe at z0–6
 in an 18.6 MiB standalone Atlas. Raster families have validated versioned descriptors
@@ -132,7 +132,7 @@ without further requests. Existing vector archives and all 318 tests still pass.
 This proof uses the provider's already tiled imagery, so it needs no local GDAL.
 It is not numeric elevation or a full high-resolution terrain import. The original
 GeoTIFF pipeline, clipping/export of raster families, embedded raster amendments,
-GPU textured rendering and arbitrary image georeferencing remain below.
+GPU textured rendering and more advanced image registration remain below.
 
 Import the 24.01 MB Natural Earth shaded-relief source into a standalone
 `relief.atlas`; create tiled overviews and preserve attribution/provenance. Add
@@ -152,13 +152,45 @@ Sources checked 2026-10-29:
 
 ## Milestone 4 — georeferenced image uploads
 
-Status: planned.
+Status: north-up PNG/JPEG proof implemented locally.
 
-Accept GeoTIFF georeferencing or position PNG/JPEG with bounds, centre plus scale
-and rotation, or image corners. One anchor alone is insufficient. Preview placement,
-record accuracy and licence, warp where necessary and build a tile pyramid. Publish
-as a raster-only Atlas or amend an existing map. Preserve transparency. Later add
-control-point alignment for scans. Images do not imply retained semantic features.
+The host console's **Upload imagery** section accepts PNG/JPEG, a name, attribution,
+licence and a rectangle (drawn on the preview or entered as west/south/east/north).
+The image is stretched across that rectangle in Web Mercator. Placement can be
+previewed over OpenFreeMap or a plain offline background. This manual registration
+is not surveyed accuracy; one anchor alone is insufficient.
+
+The browser applies image orientation and normalizes the upload to PNG. The server
+validates dimensions, bounds and the normalized-image hash, then queues a persistent
+background job. It builds transparency-preserving overviews and XYZ tiles, deriving
+the maximum zoom from image resolution, and publishes one immutable standalone
+`.atlas`. All runtime pixels, overview tiles, registration, attribution and licence
+are inside that file. No source-image service is needed to display it afterward.
+The source-image hash identifies the normalized PNG, not the original JPEG bytes.
+
+Upload progress is followed by tile/packing progress in **Builds & checkpoints**.
+Stopping retains the uploaded PNG and completed tiles; resuming reuses those tiles.
+Temporary input and tiles are removed after successful publication. The library
+supports serving, download, deletion, explicit Hashtree publication and composition
+with vectors. Image maps do not acquire routing or semantic features from their pixels.
+Raster attribution is visible on the composed map, including the uploaded licence.
+
+The prototype accepts at most 64 MiB and 32 megapixels per image, with derived zooms
+up to z18. These are decoder/workspace bounds, not output-budget sliders. Disk estimates
+use the existing explicit **Start anyway** flow and runtime low-disk checks. Multipart
+uploads require the same administration/origin checks as other host mutations; ordinary
+JSON requests retain their smaller body limit.
+
+Verification: a transparent **1024 × 768** synthetic image produced **27 tiles at
+z0–13** in a **24,687-byte** archive. Browser checks covered JPEG normalization, PNG
+upload, background publication, composition, opacity, visible attribution, cached
+redrawing with network reads disabled and a 390-pixel host view. Import tests cover
+pixel geography/alpha, cancellation/resume, changed-input rejection, immutable output,
+request bounds and authenticated host publication/reopening/deletion.
+
+Next: GeoTIFF georeferencing, rotation/corner transforms, control-point alignment,
+embedded raster amendments and raster region exports. These require explicit resampling
+and accuracy contracts; they are not implied by the current rectangle registration.
 
 ## Milestone 5 — numeric terrain and portable operations
 

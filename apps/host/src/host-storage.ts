@@ -1,6 +1,6 @@
 import { storageSize } from "./host-budget";
 import type { StorageWarningInfo } from "../../../packages/provisioning/src/capacity";
-function confirmStorage(warning: StorageWarningInfo): Promise<boolean> {
+export function confirmStorage(warning: StorageWarningInfo): Promise<boolean> {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "amend-dialog";

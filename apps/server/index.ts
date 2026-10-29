@@ -1,3 +1,5 @@
+import { IMAGE_MAX_BYTES } from "../../packages/raster/src/image-plan";
+import { limitedBody } from "./request-body";
 import { MapDiscovery } from "./discovery";
 import type { MapOffer } from "../../packages/format/src/catalog";
 import { SourceCache } from "./source-cache";
@@ -133,12 +135,26 @@ const server = Bun.serve<{
 }>({
   hostname: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3100),
-  maxRequestBodySize: 16384,
+  maxRequestBodySize: IMAGE_MAX_BYTES + 16384,
   // Opening a large hosted package verifies its hash before responding.
   // Bun's 10-second default otherwise drops that first request mid-verification.
   idleTimeout: 120,
   websocket: discovery.websocket,
   async fetch(request, bunServer) {
+    const remoteAddress = bunServer.requestIP(request)?.address;
+    // The upload route authenticates before consuming its larger body. Other routes retain the old bound.
+    if (
+      request.body &&
+      new URL(request.url).pathname !== "/admin/preparations/image"
+    ) {
+      try {
+        request = new Request(request, {
+          body: await limitedBody(request, 16384),
+        });
+      } catch {
+        return Response.json({ error: "Request too large" }, { status: 413 });
+      }
+    }
     if (new URL(request.url).pathname === "/nostr") {
       if (bunServer.upgrade(request, { data: { subscriptions: new Map() } }))
         return;
@@ -158,21 +174,12 @@ const server = Bun.serve<{
             headers: { "Retry-After": "5", "Cache-Control": "no-store" },
           },
         );
-      const discovered = await discovery.handle(
-        request,
-        bunServer.requestIP(request)?.address,
-      );
+      const discovered = await discovery.handle(request, remoteAddress);
       if (discovered) return discovered;
       if (path.startsWith("/admin/sources"))
-        return sourceCache.handle(
-          request,
-          bunServer.requestIP(request)?.address,
-        );
+        return sourceCache.handle(request, remoteAddress);
       if (path.startsWith("/admin/preparations"))
-        return preparations.handle(
-          request,
-          bunServer.requestIP(request)?.address,
-        );
+        return preparations.handle(request, remoteAddress);
       if (path === "/catalog" && request.method === "GET")
         return Response.json(
           {
@@ -200,7 +207,7 @@ const server = Bun.serve<{
       const hosted = await library.handle(request);
       if (hosted) return hosted;
       if (path === "/admin/operations")
-        return policy(request, bunServer.requestIP(request)?.address);
+        return policy(request, remoteAddress);
       if (path.startsWith("/api/") || path.startsWith("/maps/demo/api/"))
         return api(request);
       if (path === "/maps/demo.atlas") {
@@ -235,7 +242,7 @@ const server = Bun.serve<{
           {
             clientUrl,
             administration: {
-              allowed: access(request, bunServer.requestIP(request)?.address),
+              allowed: access(request, remoteAddress),
               message: ADMIN_DENIED,
               mode: process.env.ATLAS_ADMIN_ORIGINS
                 ? "Local and trusted LAN administration"

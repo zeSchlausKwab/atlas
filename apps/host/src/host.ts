@@ -1,3 +1,4 @@
+import { startImagery } from "./host-imagery";
 import { startDiscovery } from "./host-discovery";
 import { startSources } from "./host-sources";
 import { openClient } from "./client-link";
@@ -96,6 +97,7 @@ async function start() {
     await Promise.all([
       load(),
       startBuilder(),
+      startImagery(),
       startSources(),
       startDiscovery(),
     ]);

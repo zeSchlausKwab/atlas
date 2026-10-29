@@ -28,8 +28,8 @@
       </div>
       <nav class="host-section-nav" aria-label="Host console sections">
         <a href="#prepare">Prepare a map</a><a href="#builds">Builds</a
-        ><a href="#library">Map library</a><a href="#sources">Source files</a
-        ><a href="#operations">Operations</a>
+        ><a href="#imagery">Upload imagery</a><a href="#library">Map library</a
+        ><a href="#sources">Source files</a><a href="#operations">Operations</a>
       </nav>
       <p id="host-access" class="host-source-note" role="status">
         Checking administration access…
@@ -261,6 +261,7 @@
                 Draw an area to find its source.
               </div>
             </div>
+
             <section class="host-storage" aria-label="Server storage">
               <div class="host-storage-heading">
                 <h3>Server storage</h3>
@@ -306,6 +307,140 @@
         </div>
         <div id="prepare-jobs" aria-live="polite"></div>
       </section>
+      <details id="imagery" class="host-imagery">
+        <summary>
+          <h2>Upload imagery</h2>
+          <span class="quiet"
+            >Position a PNG or JPEG · publish a standalone Atlas</span
+          >
+        </summary>
+        <p>
+          Your image becomes its own selectable raster layer. Compose it with
+          any vector map in the client. Attribution and placement are saved
+          inside the file.
+        </p>
+        <div class="host-builder-grid">
+          <div class="host-picker">
+            <div
+              id="imagery-map"
+              class="host-preview"
+              role="region"
+              aria-label="Image placement preview"
+            ></div>
+            <div class="host-draw-toolbar">
+              <button id="imagery-rect" type="button" aria-pressed="false">
+                Draw image rectangle
+              </button>
+              <button id="imagery-view" type="button">
+                Use visible bounds
+              </button>
+              <button id="imagery-fit" type="button">Fit image</button>
+            </div>
+            <p id="imagery-pick-status" role="status">
+              Click two opposite corners, or enter coordinates. The image is
+              stretched to this rectangle.
+            </p>
+            <label class="host-field"
+              >Image preview background<select id="imagery-provider">
+                <option value="openfreemap">OpenFreeMap</option>
+                <option value="blank">Plain background · offline</option>
+              </select></label
+            >
+            <p id="imagery-preview-status" class="quiet" role="status"></p>
+          </div>
+          <form id="imagery-form" class="host-prepare-form">
+            <label class="host-field"
+              >Image file<input
+                id="imagery-file"
+                type="file"
+                accept="image/png,image/jpeg"
+                required
+            /></label>
+            <p class="quiet">
+              Up to 32 megapixels and 64 MiB after conversion. JPEG orientation
+              is applied in your browser before upload.
+            </p>
+            <label class="host-field"
+              >Imagery name<input id="imagery-name" maxlength="80" required
+            /></label>
+            <div class="host-field-pair">
+              <label class="host-field"
+                >West longitude<input
+                  id="imagery-west"
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="any"
+                  required
+              /></label>
+              <label class="host-field"
+                >East longitude<input
+                  id="imagery-east"
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="any"
+                  required
+              /></label>
+              <label class="host-field"
+                >South latitude<input
+                  id="imagery-south"
+                  type="number"
+                  min="-85.05112878"
+                  max="85.05112878"
+                  step="any"
+                  required
+              /></label>
+              <label class="host-field"
+                >North latitude<input
+                  id="imagery-north"
+                  type="number"
+                  min="-85.05112878"
+                  max="85.05112878"
+                  step="any"
+                  required
+              /></label>
+            </div>
+            <p class="quiet">
+              North is the top of the image. Placement uses a Web Mercator
+              rectangle; this is manual alignment, not a surveyed georeference.
+              GeoTIFF and rotated images need a later importer.
+            </p>
+            <label class="host-field"
+              >Image attribution<input
+                id="imagery-attribution"
+                maxlength="1000"
+                placeholder="Creator or data provider"
+                required
+            /></label>
+            <label class="host-field"
+              >Image licence<input
+                id="imagery-license"
+                maxlength="1000"
+                placeholder="For example, CC BY 4.0 or private demo"
+                required
+            /></label>
+            <p id="imagery-plan" role="status">
+              Choose an image to calculate its zoom range and tile count.
+            </p>
+            <button id="imagery-submit" type="submit" disabled>
+              Upload & prepare imagery ↗
+            </button>
+            <progress
+              id="imagery-upload"
+              max="100"
+              value="0"
+              hidden
+              aria-label="Image upload progress"
+            ></progress>
+            <p id="imagery-message" role="status"></p>
+            <p class="quiet">
+              After upload, the server continues even if you close this page.
+              Follow tiling and packing in Builds & checkpoints.
+            </p>
+          </form>
+        </div>
+      </details>
       <section id="library">
         <div class="host-list-heading">
           <h2>Your map library</h2>

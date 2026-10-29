@@ -1,3 +1,5 @@
+import { importImage } from "../../packages/raster/src/image-import";
+import type { ImageImport } from "../../packages/raster/src/image-plan";
 import { buildCapabilities } from "../../packages/provisioning/src/build-capabilities";
 import {
   composeCapabilities,
@@ -40,6 +42,7 @@ process.on(
     selection: PackageSelection;
     sourcePlan?: PbfPlan;
     cachedSource?: VerifiedBuildSource;
+    imageImport?: ImageImport;
     amendment?: { request: RoutingAmendment; target: string };
     capabilityChange?: {
       request: CapabilityChange;
@@ -99,7 +102,9 @@ process.on(
     try {
       await checkDisk();
       abort.signal.throwIfAborted();
-      if (data.capabilityChange) {
+      if (data.imageImport) {
+        await importImage(data.imageImport, work, output, abort.signal, report);
+      } else if (data.capabilityChange) {
         const change = data.capabilityChange;
         targetFile = await PackageSource.open(change.target);
         const target = await new AtlasReader(targetFile).open();
@@ -313,7 +318,7 @@ process.on(
       await file?.close();
       await targetFile?.close();
       if (
-        (!data.cachedSource && !data.capabilityChange) ||
+        (!data.cachedSource && !data.capabilityChange && !data.imageImport) ||
         final!.type === "ready"
       )
         await rm(work, { recursive: true, force: true });

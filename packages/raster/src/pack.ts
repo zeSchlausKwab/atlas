@@ -14,6 +14,7 @@ export async function packRaster(
   output: string,
   maxBytes = 1024 ** 3,
   signal = new AbortController().signal,
+  progress: (tiles: number) => void = () => {},
 ) {
   validateRasters([layer]);
   if (await Bun.file(output).exists()) throw new Error("Output already exists");
@@ -43,6 +44,7 @@ export async function packRaster(
             hash = await sha256(bytes);
           identities.push(`${key}:${hash}`);
           await writer.add({ key, bytes, features: 0 }, { compress: false });
+          progress(identities.length);
         }
       }
     }
