@@ -1,3 +1,15 @@
+import {
+  CAPABILITY_CHOICES,
+  installedCapabilities,
+  familySelection,
+  pinnedPbfMatches,
+  coversCapabilities,
+} from "../../packages/provisioning/src/families";
+import type { CapabilityChange } from "../../packages/provisioning/src/compose-capabilities";
+import {
+  validBudget,
+  DISK_RESERVE,
+} from "../../packages/provisioning/src/capacity";
 import { AtlasReader } from "../../packages/format/src/reader";
 import { PackageSource } from "./package-source";
 import {
@@ -57,6 +69,9 @@ export interface PreparationJob {
   cachedSource?: VerifiedBuildSource;
   sourceAtlasId?: string;
   amendment?: HostedAmendment;
+  capabilityChange?: CapabilityChange;
+  served?: boolean;
+  supersededBy?: string;
   progress: PreparationProgress;
   error?: string;
   size?: number;
@@ -104,7 +119,10 @@ export class Preparations {
         job.error = job.cachedSource
           ? "Server stopped. Resume to reuse completed compiler stages."
           : "Server stopped during preparation. Create the excerpt again.";
-        await manager.cleanup(job.id, !!job.cachedSource);
+        await manager.cleanup(
+          job.id,
+          !!job.cachedSource || !!job.capabilityChange,
+        );
         await manager.persist(job);
       }
       if (
@@ -149,6 +167,9 @@ export class Preparations {
       ".amend.part",
       ".amend.part.payload.part",
       ".amend.part.directory.part",
+      ".addition.atlas",
+      ".addition.atlas.payload.part",
+      ".addition.atlas.directory.part",
     ])
       await rm(this.path(id) + suffix, { force: true });
   }
@@ -187,6 +208,226 @@ export class Preparations {
     if (!job || !["failed", "cancelled"].includes(job.state))
       throw new Error("Only stopped preparations can be queued again.");
     return this.create(job.selection, job);
+  }
+  private sourcePlanForMap(id: string): PbfPlan | undefined {
+    const seen = new Set<string>();
+    while (!seen.has(id)) {
+      seen.add(id);
+      const j = this.jobs.get(id);
+      if (!j) return;
+      if (j.sourcePlan) return j.sourcePlan;
+      id =
+        j.capabilityChange?.targetId ??
+        j.amendment?.targetId ??
+        j.sourceAtlasId ??
+        "";
+    }
+  }
+  async assertSourceUnused(id: string) {
+    const source = await verifiedSource(this.sourceDirectory, id).catch(
+      () => undefined,
+    );
+    if (
+      [...this.jobs.values()].some(
+        (j) =>
+          ["queued", "running", "cancelling"].includes(j.state) &&
+          (j.cachedSource?.id === id ||
+            (j.capabilityChange?.sourceKind === "pbf" &&
+              j.capabilityChange.sourceId === id) ||
+            (!!source && j.sourcePlan?.region.url === source.url)),
+      )
+    )
+      throw new Error(
+        "Source is used by an active or queued build. Stop or remove those builds first.",
+      );
+  }
+  async planCapabilities(value: CapabilityChange) {
+    const target = this.amendmentInput(value?.targetId),
+      m = target.manifest;
+    if (value.targetSnapshot !== m.snapshot)
+      throw new Error("Map revision changed. Reload the library.");
+    if (
+      typeof value.name !== "string" ||
+      !value.name.trim() ||
+      value.name.length > 80 ||
+      !validBudget(value.maxBytes)
+    )
+      throw new Error("Choose a revision name and valid output budget.");
+    if (
+      !Number.isInteger(value.paddingCells) ||
+      value.paddingCells < 0 ||
+      value.paddingCells > 4
+    )
+      throw new Error("Routing padding must be 0–4 cells");
+    if (
+      !Array.isArray(value.capabilities) ||
+      !value.capabilities.length ||
+      new Set(value.capabilities).size !== value.capabilities.length ||
+      value.capabilities.some(
+        (c) => !CAPABILITY_CHOICES.some((v) => v.id === c),
+      )
+    )
+      throw new Error("Choose supported, distinct capabilities");
+    if (
+      m.routing ||
+      (m.capabilities.includes("vector-rendering") && !m.tileLayers)
+    )
+      throw new Error("Migrate this legacy map before composing capabilities");
+    const installed = installedCapabilities(m),
+      additions = value.capabilities.filter((c) => !installed.includes(c)),
+      removals = installed.filter((c) => !value.capabilities.includes(c));
+    const rebuild = [...additions];
+    if (additions.some((c) => c.startsWith("routing:")))
+      for (const c of value.capabilities)
+        if (c.startsWith("routing:") && !rebuild.includes(c)) rebuild.push(c);
+    if (!additions.length && !removals.length)
+      throw new Error("No capability changes selected");
+    const change: CapabilityChange = {
+      targetId: value.targetId,
+      targetSnapshot: m.snapshot,
+      name: value.name.trim(),
+      capabilities: [...value.capabilities],
+      paddingCells: value.paddingCells,
+      maxBytes: value.maxBytes,
+    };
+    let source: VerifiedBuildSource | undefined,
+      donor: ReturnType<Preparations["amendmentInput"]> | undefined,
+      download: PbfPlan | undefined;
+    if (rebuild.length) {
+      const cached = await verifiedSources(this.sourceDirectory);
+      const choice = cached.find(
+        (s) =>
+          (!value.sourceId || s.id === value.sourceId) &&
+          pinnedPbfMatches(m, s.sha256),
+      );
+      if (choice && (!value.sourceKind || value.sourceKind === "pbf")) {
+        source = await verifiedSource(this.sourceDirectory, choice.id);
+        change.sourceKind = "pbf";
+        change.sourceId = source.id;
+        change.sourceSnapshot = source.sha256;
+      } else {
+        const candidates = [
+          { id: "demo", manifest: this.source },
+          ...[...this.jobs.values()]
+            .filter((j) => j.state === "ready" && j.manifest)
+            .map((j) => ({ id: j.id, manifest: j.manifest! })),
+        ];
+        const selected = candidates.find(
+          (d) =>
+            d.id !== value.targetId &&
+            (!value.sourceId || d.id === value.sourceId) &&
+            d.manifest.source.sha256 === m.source.sha256 &&
+            rebuild.every((c) =>
+              installedCapabilities(d.manifest).includes(c),
+            ) &&
+            m.bounds[0] >= d.manifest.bounds[0] &&
+            m.bounds[1] >= d.manifest.bounds[1] &&
+            m.bounds[2] <= d.manifest.bounds[2] &&
+            m.bounds[3] <= d.manifest.bounds[3] &&
+            coversCapabilities(d.manifest, m),
+        );
+        if (selected && (!value.sourceKind || value.sourceKind === "atlas")) {
+          donor = this.amendmentInput(selected.id);
+          change.sourceKind = "atlas";
+          change.sourceId = selected.id;
+          change.sourceSnapshot = donor.manifest.snapshot;
+        } else {
+          const plan = this.sourcePlanForMap(value.targetId),
+            input = m.source.inputs?.find((s) => s.url === plan?.region.url);
+          if (
+            plan &&
+            input &&
+            (!value.sourceKind || value.sourceKind === "download")
+          ) {
+            download = plan;
+            change.sourceKind = "download";
+            change.sourceId = plan.id;
+            change.sourceSnapshot = input.sha256;
+          } else
+            throw new Error(
+              "No pinned PBF or compatible Atlas source is available. Restore this map's original source in the source library.",
+            );
+        }
+      }
+      if (
+        value.sourceSnapshot &&
+        value.sourceSnapshot !== change.sourceSnapshot
+      )
+        throw new Error(
+          "Amendment source changed. Review the selection again.",
+        );
+      if (
+        change.sourceKind !== "atlas" &&
+        (!Bun.which("osmium") || !Bun.which("cargo"))
+      )
+        throw new Error(
+          "PBF amendments require Osmium and Cargo on this server",
+        );
+    }
+    const size = Bun.file(target.path).size;
+    return {
+      change,
+      additions,
+      removals,
+      rebuild,
+      source,
+      donor,
+      download,
+      reusableBytes: size,
+      estimatedWorkspaceBytes:
+        DISK_RESERVE +
+        size +
+        value.maxBytes * 2 +
+        512 * 1024 ** 2 +
+        (download?.bytes ?? 0),
+      sourceName:
+        source?.name ??
+        donor?.manifest.name ??
+        download?.region.name ??
+        "Existing file only",
+      warnings: [
+        "A new self-contained revision replaces the served map only after success. The old file is retained locally and can be served again.",
+        ...(rebuild.some((c) => installed.includes(c))
+          ? [
+              "Selected routing modes are rebuilt together to preserve one compiled graph identity.",
+            ]
+          : []),
+        "Map copies already downloaded by consumers cannot be recalled. New Hashtree publication is explicit.",
+      ],
+    };
+  }
+  async createCapabilities(value: CapabilityChange) {
+    if (
+      [...this.jobs.values()].some(
+        (j) =>
+          j.capabilityChange?.targetId === value.targetId &&
+          ["queued", "running", "cancelling"].includes(j.state),
+      )
+    )
+      throw new Error(
+        "A capability change for this map is already queued or running",
+      );
+    const p = await this.planCapabilities(value),
+      m = this.amendmentInput(value.targetId).manifest;
+    return this.create({
+      ...familySelection(
+        m,
+        p.change.capabilities,
+        p.change.name,
+        p.change.maxBytes,
+        p.change.paddingCells,
+      ),
+      capabilityChange: p.change,
+    });
+  }
+  async setServed(id: string, served: boolean) {
+    const job = this.jobs.get(id);
+    if (!job || job.state !== "ready" || typeof served !== "boolean")
+      throw new Error("Choose a ready map");
+    job.served = served;
+    await this.persist(job);
+    if (!served) await this.beforeDelete?.(id);
+    return job;
   }
   private amendmentInput(id: string) {
     if (id === "demo") return { path: this.sourcePath, manifest: this.source };
@@ -236,7 +477,13 @@ export class Preparations {
       maxSourceBytes?: number;
       sourceAtlasId?: string;
       amendment?: HostedAmendment;
+      capabilityChange?: CapabilityChange;
     } | null;
+    const capabilityChange =
+      previous?.capabilityChange ?? extra?.capabilityChange;
+    const capabilityPlan = capabilityChange
+      ? await this.planCapabilities(capabilityChange)
+      : undefined;
     const amendment = previous?.amendment ?? extra?.amendment;
     if (
       amendment &&
@@ -249,8 +496,9 @@ export class Preparations {
     const plan =
       previous?.sourcePlan ??
       (extra?.sourcePlanId ? this.sources.get(extra.sourcePlanId) : undefined);
-    const cached = extra?.cachedSourceId
-      ? await verifiedSource(this.sourceDirectory, extra.cachedSourceId)
+    const cachedId = extra?.cachedSourceId ?? previous?.cachedSource?.id;
+    const cached = cachedId
+      ? await verifiedSource(this.sourceDirectory, cachedId)
       : undefined;
     if (
       [extra?.cachedSourceId, extra?.sourcePlanId, extra?.sourceAtlasId].filter(
@@ -275,6 +523,14 @@ export class Preparations {
         ...(value as PackageSelection),
         snapshot: atlas.manifest.snapshot,
       };
+    if (capabilityPlan)
+      value = familySelection(
+        this.amendmentInput(capabilityPlan.change.targetId).manifest,
+        capabilityPlan.change.capabilities,
+        capabilityPlan.change.name,
+        capabilityPlan.change.maxBytes,
+        capabilityPlan.change.paddingCells,
+      );
     if (amendment) {
       const a = this.amendmentInput(amendment.targetId),
         b = this.amendmentInput(amendment.sourceId);
@@ -296,7 +552,12 @@ export class Preparations {
           "Choose the configured ocean source with a cached PBF; GDAL must be installed",
         );
     }
-    if (cached) {
+    if (capabilityPlan) {
+      validateSelectionScope(value, {
+        ...WORLD_SOURCE,
+        snapshot: capabilityChange!.targetSnapshot,
+      });
+    } else if (cached) {
       validateSelectionScope(value, WORLD_SOURCE);
       planCachedBuild(value);
       if (
@@ -338,6 +599,7 @@ export class Preparations {
         cachedSource: cached,
         sourceAtlasId: atlas?.id,
         amendment,
+        capabilityChange: capabilityPlan?.change,
         resumeCheckpoint: !!previous?.cachedSource,
         progress: {
           phase: "planning",
@@ -372,13 +634,15 @@ export class Preparations {
               resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
             ).size
           : 0;
-      const needed = amendment
-        ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-        : cached
-          ? previous?.resumeCheckpoint
-            ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
-            : cachedBuildSpace(value.maxBytes, partitioned)
-          : preparationSpace(value.maxBytes, plan?.bytes);
+      const needed = capabilityPlan
+        ? capabilityPlan.estimatedWorkspaceBytes
+        : amendment
+          ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+          : cached
+            ? previous?.resumeCheckpoint
+              ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
+              : cachedBuildSpace(value.maxBytes, partitioned)
+            : preparationSpace(value.maxBytes, plan?.bytes);
       if (disk.availableBytes < needed)
         throw new Error(
           previous
@@ -400,6 +664,7 @@ export class Preparations {
         cachedSource: cached,
         sourceAtlasId: atlas?.id,
         amendment,
+        capabilityChange: capabilityPlan?.change,
         progress: {
           phase: "planning",
           message: cached
@@ -439,7 +704,19 @@ export class Preparations {
             job.manifest = data.manifest;
             job.progress.message = "Ready to serve and download.";
             job.progress.writtenBytes = data.size!;
-          } else await this.cleanup(id, !!job.cachedSource);
+            await this.persist(job);
+            if (job.capabilityChange) {
+              const parent = this.jobs.get(job.capabilityChange.targetId);
+              if (parent) {
+                parent.supersededBy = job.id;
+                await this.setServed(parent.id, false);
+              }
+            }
+          } else
+            await this.cleanup(
+              id,
+              !!job.cachedSource || !!job.capabilityChange,
+            );
           await this.persist(job);
         })()
           .catch((error) => {
@@ -490,6 +767,17 @@ export class Preparations {
         selection: job.selection,
         sourcePlan: plan,
         cachedSource: cached,
+        capabilityChange: capabilityPlan
+          ? {
+              request: capabilityPlan.change,
+              target: this.amendmentInput(capabilityPlan.change.targetId).path,
+              source: capabilityPlan.source,
+              donor: capabilityPlan.donor?.path,
+              download: capabilityPlan.download,
+              cache: this.sourceDirectory,
+              rebuild: capabilityPlan.rebuild,
+            }
+          : undefined,
         amendment: amendment
           ? {
               request: amendment,
@@ -547,7 +835,10 @@ export class Preparations {
         (j) =>
           (j.sourceAtlasId === id ||
             j.amendment?.targetId === id ||
-            j.amendment?.sourceId === id) &&
+            j.amendment?.sourceId === id ||
+            j.capabilityChange?.targetId === id ||
+            (j.capabilityChange?.sourceKind === "atlas" &&
+              j.capabilityChange.sourceId === id)) &&
           ["queued", "running", "cancelling"].includes(j.state),
       )
     )
@@ -564,7 +855,7 @@ export class Preparations {
   }
   catalog() {
     return [...this.jobs.values()]
-      .filter((j) => j.state === "ready" && j.manifest)
+      .filter((j) => j.state === "ready" && j.served !== false && j.manifest)
       .map((j) => ({
         id: j.id,
         name: j.name,
@@ -631,6 +922,17 @@ export class Preparations {
               ? this.delete(match[1]!)
               : this.cancel(match[1]!)),
         );
+      if (url.pathname === "/admin/preparations/capabilities-plan") {
+        const { source, donor, download, ...plan } =
+          await this.planCapabilities(JSON.parse(raw));
+        return json(plan);
+      }
+      if (url.pathname === "/admin/preparations/capabilities")
+        return json(await this.createCapabilities(JSON.parse(raw)), 202);
+      if (url.pathname === "/admin/preparations/serve") {
+        const b = JSON.parse(raw);
+        return json(await this.setServed(b.id, b.served));
+      }
       if (url.pathname === "/admin/preparations/amend-plan")
         return json(await this.planAmendment(JSON.parse(raw)));
       if (url.pathname === "/admin/preparations/amend")

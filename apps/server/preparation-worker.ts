@@ -1,3 +1,11 @@
+import { buildCapabilities } from "../../packages/provisioning/src/build-capabilities";
+import {
+  composeCapabilities,
+  type CapabilityChange,
+} from "../../packages/provisioning/src/compose-capabilities";
+import { familySelection } from "../../packages/provisioning/src/families";
+import { downloadPbf } from "../../packages/provisioning/src/download";
+import { stat } from "node:fs/promises";
 import { readStorage } from "./storage";
 import { DISK_RESERVE } from "../../packages/provisioning/src/capacity";
 import {
@@ -33,6 +41,15 @@ process.on(
     sourcePlan?: PbfPlan;
     cachedSource?: VerifiedBuildSource;
     amendment?: { request: RoutingAmendment; target: string };
+    capabilityChange?: {
+      request: CapabilityChange;
+      target: string;
+      source?: VerifiedBuildSource;
+      donor?: string;
+      download?: PbfPlan;
+      cache: string;
+      rebuild: string[];
+    };
   }) => {
     if (data.type === "cancel") {
       abort.abort();
@@ -61,7 +78,122 @@ process.on(
       }
     };
     try {
-      if (data.amendment) {
+      if (data.capabilityChange) {
+        const change = data.capabilityChange;
+        targetFile = await PackageSource.open(change.target);
+        const target = await new AtlasReader(targetFile).open();
+        let addition: AtlasReader | undefined;
+        try {
+          let additionPath: string | undefined;
+          if (change.rebuild.length) {
+            let source = change.source;
+            if (change.download) {
+              const downloaded = await downloadPbf(
+                change.download,
+                join(change.cache, "regional"),
+                abort.signal,
+                (completed, cached) =>
+                  report({
+                    phase: "downloading",
+                    message: `${cached ? "Reusing" : "Downloading"} pinned ${change.download!.region.name} PBF`,
+                    completed,
+                    total: change.download!.bytes,
+                    unit: "bytes",
+                    readBytes: completed,
+                    writtenBytes: 0,
+                  }),
+              );
+              if (downloaded.receipt.sha256 !== change.request.sourceSnapshot)
+                throw new Error(
+                  "Downloaded PBF does not match the original source snapshot",
+                );
+              source = {
+                id: change.request.sourceId!,
+                kind: "regional",
+                name: change.download.region.name,
+                url: downloaded.receipt.url,
+                bytes: downloaded.receipt.bytes,
+                sha256: downloaded.receipt.sha256,
+                path: downloaded.path,
+                mtimeMs: (await stat(downloaded.path)).mtimeMs,
+                etag: downloaded.receipt.etag ?? "",
+                md5: "",
+                lastModified: downloaded.receipt.lastModified,
+                inspectedAt: downloaded.receipt.fetchedAt,
+              };
+            }
+            if (source)
+              additionPath = await buildCapabilities(
+                source,
+                target.index.manifest,
+                change.request,
+                change.rebuild,
+                work,
+                abort.signal,
+                report,
+              );
+            else if (change.donor) {
+              file = await PackageSource.open(change.donor);
+              const donor = await new AtlasReader(file).open();
+              try {
+                if (
+                  donor.index.manifest.snapshot !==
+                  change.request.sourceSnapshot
+                )
+                  throw new Error("Donor snapshot changed");
+                const s = familySelection(
+                  target.index.manifest,
+                  change.rebuild,
+                  change.request.name,
+                  change.request.maxBytes,
+                  change.request.paddingCells,
+                );
+                s.snapshot = donor.index.manifest.snapshot;
+                // Grouped families only import categories actually retained in this donor.
+                s.featureKinds = s.featureKinds.filter((k) =>
+                  donor.index.manifest.featureKinds?.includes(k),
+                );
+                additionPath = output + ".addition.atlas";
+                await preparePackage(
+                  donor,
+                  s,
+                  additionPath,
+                  abort.signal,
+                  report,
+                );
+              } finally {
+                donor.dispose();
+                await file.close();
+                file = undefined;
+              }
+            } else throw new Error("Missing amendment source");
+            file = await PackageSource.open(additionPath!);
+            addition = await new AtlasReader(file).open();
+          }
+          await composeCapabilities(
+            target,
+            addition,
+            change.request,
+            change.rebuild,
+            output,
+            abort.signal,
+            report,
+            async () => {
+              const storage = await readStorage(dirname(output));
+              if (storage.availableBytes < DISK_RESERVE)
+                throw new Error(
+                  "Amendment stopped at the free-space reserve. Original files and checkpoints are retained.",
+                );
+            },
+          );
+        } finally {
+          target.dispose();
+          addition?.dispose();
+          await file?.close();
+          file = undefined;
+          await rm(output + ".addition.atlas", { force: true });
+        }
+      } else if (data.amendment) {
         file = await PackageSource.open(data.source);
         targetFile = await PackageSource.open(data.amendment.target);
         const target = await new AtlasReader(targetFile).open(),
@@ -99,7 +231,7 @@ process.on(
             ? await importPbf(
                 data.sourcePlan,
                 data.selection,
-                join(dirname(output), "sources"),
+                join(dirname(output), "../sources/regional"),
                 work,
                 abort.signal,
                 report,
@@ -154,7 +286,10 @@ process.on(
       await result?.close();
       await file?.close();
       await targetFile?.close();
-      if (!data.cachedSource || final!.type === "ready")
+      if (
+        (!data.cachedSource && !data.capabilityChange) ||
+        final!.type === "ready"
+      )
         await rm(work, { recursive: true, force: true });
     }
     if (process.connected) process.send?.(final);

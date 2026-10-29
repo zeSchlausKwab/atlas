@@ -78,6 +78,7 @@ const sourceCache = new SourceCache(
   access,
   process.env.ATLAS_SOURCE_SYSTEMD === "1",
 );
+sourceCache.beforeDelete = (id) => preparations.assertSourceUnused(id);
 sourceCache.startQueue();
 const library = new HostedLibrary(preparations, (reader) => {
   const child = new AtlasEngine(reader, async () =>

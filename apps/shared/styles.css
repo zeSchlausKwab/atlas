@@ -3309,3 +3309,16 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 .amend-dialog details p {
   margin-top: 12px;
 }
+
+/* Per-map serving recipe; states distinguish retained bytes from queued construction. */
+.capability-composer { margin:24px 0; padding-top:20px; border-top:1px solid var(--line); }
+.capability-composer h4 { margin:0 0 8px; }
+.capability-composer fieldset { border:0; padding:12px 0; margin:0; display:grid; gap:8px; }
+.capability-composer legend { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.1em; padding:0; }
+.capability-option { display:grid; grid-template-columns:18px 1fr auto; gap:10px; align-items:center; font-size:14px; }
+.capability-option input { accent-color:var(--green); }
+.capability-option small { color:var(--muted); font-size:11px; }
+.capability-composer details { margin:12px 0; }
+.capability-composer input[type=number] { display:block; padding:8px; margin-top:8px; max-width:180px; font:inherit; }
+.capability-composer [role=status] { font-size:13px; }
+@media(max-width:560px) { .capability-option { grid-template-columns:18px 1fr; } .capability-option small { grid-column:2; } }

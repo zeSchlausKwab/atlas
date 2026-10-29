@@ -53,11 +53,17 @@ export class HostedLibrary {
       match = path.match(/^\/maps\/([a-f0-9-]{36})(\.atlas|\/api\/[^/]+)$/);
     if (!match) return;
     const id = match[1]!;
-    if (this.preparations.jobs.get(id)?.state !== "ready")
+    if (
+      this.preparations.jobs.get(id)?.state !== "ready" ||
+      this.preparations.jobs.get(id)?.served === false
+    )
       return new Response("Map not found", { status: 404 });
     try {
       const source = await this.source(id);
-      if (this.preparations.jobs.get(id)?.state !== "ready")
+      if (
+        this.preparations.jobs.get(id)?.state !== "ready" ||
+        this.preparations.jobs.get(id)?.served === false
+      )
         return new Response("Map not found", { status: 404 });
       await source.assertUnchanged();
       if (match[2] === ".atlas")

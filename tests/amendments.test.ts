@@ -532,3 +532,169 @@ test("host amendment uses the persistent queue, protects dependencies and serves
     await rm(dir, { recursive: true, force: true });
   }
 }, 15000);
+
+test("capability revisions preserve retained bytes and physically remove unchecked families", async () => {
+  const { composeCapabilities } = await import(
+    "../packages/provisioning/src/compose-capabilities"
+  );
+  const { installedCapabilities } = await import(
+    "../packages/provisioning/src/families"
+  );
+  const f = await fixture(),
+    dir = await mkdtemp("/tmp/atlas-family-");
+  let next: AtlasReader | undefined, limited: AtlasReader | undefined;
+  try {
+    const request = {
+      targetId: "demo",
+      targetSnapshot: f.options.targetSnapshot,
+      name: "Composed",
+      capabilities: ["tile:water", "routing:cycling"],
+      maxBytes: 1024 ** 2,
+      paddingCells: 1,
+    };
+    await composeCapabilities(
+      f.target,
+      f.donor.reader,
+      request,
+      ["routing:cycling"],
+      dir + "/new.atlas",
+      signal(),
+    );
+    next = await new AtlasReader(
+      new FileSource(Bun.file(dir + "/new.atlas")),
+    ).open();
+    expect(installedCapabilities(next.index.manifest)).toEqual([
+      "tile:water",
+      "routing:cycling",
+    ]);
+    for (const old of await f.target.allBlocks())
+      expect(
+        (await next.allBlocks()).find((b) => b.key === old.key)?.hash,
+      ).toBe(old.hash);
+    const engine = new AtlasEngine(next, async () => {});
+    expect((await engine.route(points[0]!, points[2]!, "cycling")).status).toBe(
+      "found",
+    );
+    engine.destroy();
+    await composeCapabilities(
+      next,
+      undefined,
+      {
+        ...request,
+        targetSnapshot: next.index.manifest.snapshot,
+        capabilities: ["tile:water"],
+      },
+      [],
+      dir + "/limited.atlas",
+      signal(),
+    );
+    limited = await new AtlasReader(
+      new FileSource(Bun.file(dir + "/limited.atlas")),
+    ).open();
+    expect(limited.index.manifest.transport).toBeUndefined();
+    expect(
+      (await limited.allBlocks()).some((b) => b.key.startsWith("routing/")),
+    ).toBe(false);
+    expect(await limited.block("custom/demo")).toEqual(f.inputs[1]!.bytes);
+  } finally {
+    next?.dispose();
+    limited?.dispose();
+    f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("capability queue pins inputs, activates new revision and retains an unserved original", async () => {
+  const { familySelection } = await import(
+    "../packages/provisioning/src/families"
+  );
+  const f = await fixture(),
+    dir = await mkdtemp("/tmp/atlas-cap-queue-");
+  let manager: Preparations | undefined, library: HostedLibrary | undefined;
+  try {
+    await Bun.write(
+      dir + "/base.atlas",
+      await encodePackage(f.donor.manifest, f.donor.inputs, { paged: true }),
+    );
+    manager = await Preparations.open(
+      dir + "/hosted",
+      dir + "/base.atlas",
+      f.donor.reader.index.manifest,
+    );
+    const id = crypto.randomUUID(),
+      m = f.target.index.manifest;
+    const target: PreparationJob = {
+      id,
+      name: m.name,
+      state: "ready",
+      createdAt: new Date().toISOString(),
+      selection: familySelection(m, ["tile:water"], m.name, 1024 ** 2, 1),
+      manifest: m,
+      size: f.bytes.length,
+      progress: {
+        phase: "verifying",
+        message: "ready",
+        completed: 1,
+        total: 1,
+        readBytes: 0,
+        writtenBytes: f.bytes.length,
+      },
+    };
+    await Bun.write(manager.path(id), f.bytes);
+    manager.jobs.set(id, target);
+    library = new HostedLibrary(
+      manager,
+      (r) => new AtlasEngine(r, async () => {}),
+    );
+    const change = {
+      targetId: id,
+      targetSnapshot: m.snapshot,
+      name: "New capabilities",
+      capabilities: ["tile:water", "routing:cycling"],
+      maxBytes: 1024 ** 2,
+      paddingCells: 1,
+    };
+    const plan = await manager.planCapabilities(change);
+    expect(plan.change.sourceKind).toBe("atlas");
+    expect(plan.rebuild).toEqual(["routing:cycling"]);
+    await expect(
+      manager.planCapabilities({ ...change, targetSnapshot: "0".repeat(64) }),
+    ).rejects.toThrow("revision changed");
+    await expect(
+      manager.planCapabilities({ ...change, capabilities: ["bogus"] }),
+    ).rejects.toThrow("supported");
+    const job = await manager.createCapabilities(plan.change);
+    await expect(manager.delete(id)).rejects.toThrow("active or queued");
+    await until(() =>
+      ["ready", "failed"].includes(manager!.jobs.get(job.id)!.state),
+    );
+    expect(job.error).toBeUndefined();
+    expect(job.state).toBe("ready");
+    expect(manager.catalog().map((m) => m.id)).toEqual([job.id]);
+    expect(target.served).toBe(false);
+    expect(target.supersededBy).toBe(job.id);
+    expect(await Bun.file(manager.path(id)).exists()).toBe(true);
+    expect(
+      (await library.handle(new Request(`http://localhost/maps/${id}.atlas`)))!
+        .status,
+    ).toBe(404);
+    const response = await library.handle(
+      new Request(`http://localhost/maps/${job.id}/api/route`, {
+        method: "POST",
+        body: JSON.stringify({
+          snapshot: job.manifest!.snapshot,
+          input: { start: points[0], end: points[2], profile: "cycling" },
+        }),
+      }),
+    );
+    expect(response!.status).toBe(200);
+    expect((await response!.json()).result.status).toBe("found");
+    await manager.setServed(id, true);
+    expect(manager.catalog()).toHaveLength(2);
+  } finally {
+    await library?.close();
+    await manager?.close();
+    f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 15000);

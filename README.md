@@ -92,17 +92,31 @@ files or server code. See [server/client configuration](docs/SERVER-CLIENT.md).
 
 ## Amend an existing map
 
-**Your map library → Amend capabilities** can add walking, cycling or driving
-routing from a compatible Atlas source. Review the data reuse and storage plan,
-then queue a new self-contained revision. Existing display, extraction and custom
-blocks retain their compressed bytes and hashes. The original map stays available.
-The completed revision can be published using **Publish with Hashtree**.
+Each map card has **Capabilities to serve** checkboxes. Checked capabilities marked
+**In file** already exist; selecting **Build when applied** queues construction of
+missing data. **Review changes** shows dependencies; **Apply & queue** creates a new,
+self-contained revision and switches serving only when it succeeds. Unchecked
+families are omitted from the replacement. The original file is retained locally,
+with **Serve this revision again** available. Publication of a new Hashtree revision
+remains explicit; copies consumers already hold cannot be recalled.
 
-This first slice copies existing RCL2 graph cells from the same source PBF snapshot;
-adding to an existing graph also requires matching compiled graph identity.
-It does not yet build missing routing from a PBF. Raster imports, georeferenced
-uploads and dependency-driven plugin installation are in the
-[accepted implementation plan](docs/AMENDMENTS-AND-RASTER.md).
+Geofabrik imports retain the downloaded regional PBF in **Source library**, including
+imports made before this UI existed. Sources can be reused or deleted there. Finished
+maps remain self-contained; deletion is refused for active/queued build inputs.
+External registered NAS files are never deleted. Amendments resolve the exact original
+PBF fingerprint, a compatible Atlas donor, or the original dated download. They never
+silently substitute a newer snapshot.
+
+PBF amendments compile selected missing geometry, labels, routing, search and extraction
+families. Adding a transport mode rebuilds the selected graph modes together so that
+their identity remains coherent. Other retained compressed blocks are copied unchanged,
+including unknown custom blocks. Labels and standard feature-extraction categories are
+grouped for now because they share internal indexes. Cancelled PBF jobs retain compiler
+checkpoints. New construction needs Osmium and Cargo; donor-only amendments do not.
+
+The existing CLI below remains the precompiled-routing-donor workflow. Raster imports,
+georeferenced uploads and dependency-driven plugin installation are tracked in the
+[implementation plan](docs/AMENDMENTS-AND-RASTER.md).
 
 ```sh
 # Review a plan without writing a map:

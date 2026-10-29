@@ -88,8 +88,44 @@ export async function startSources() {
       if (job.sha256) {
         const hash = document.createElement("p");
         hash.className = "quiet";
-        hash.textContent = `Published MD5 verified · SHA-256 ${job.sha256.slice(0, 20)}…`;
+        hash.textContent = `${job.md5 ? "Published MD5 verified · " : "Retained import · "}SHA-256 ${job.sha256.slice(0, 20)}…`;
         card.append(hash);
+      }
+      if (["ready", "paused", "failed"].includes(job.state)) {
+        const remove = document.createElement("button");
+        remove.textContent = "Delete source…";
+        remove.onclick = () => {
+          const dialog = document.createElement("dialog"),
+            title = document.createElement("h3"),
+            note = document.createElement("p"),
+            confirm = document.createElement("button"),
+            cancel = document.createElement("button"),
+            error = document.createElement("p");
+          dialog.className = "amend-dialog";
+          title.textContent = `Delete ${job.name} PBF?`;
+          note.textContent =
+            "Deletes this cached source and its partial download. Finished Atlas maps remain usable. Future amendments may need to download the pinned PBF again. External NAS files are never deleted.";
+          confirm.textContent = "Delete source";
+          cancel.textContent = "Keep source";
+          error.setAttribute("role", "alert");
+          cancel.onclick = () => dialog.close();
+          dialog.onclose = () => dialog.remove();
+          confirm.onclick = async () => {
+            confirm.disabled = true;
+            try {
+              await post("delete", { id: job.id });
+              dialog.close();
+              await refresh();
+            } catch (e) {
+              error.textContent = String(e);
+              confirm.disabled = false;
+            }
+          };
+          dialog.append(title, note, error, cancel, confirm);
+          document.body.append(dialog);
+          dialog.showModal();
+        };
+        card.append(remove);
       }
       list.append(card);
     }
@@ -111,7 +147,9 @@ export async function startSources() {
         selected = locations.value;
       locations.replaceChildren(
         ...data.jobs
-          .filter((j: SourceJob) => j.state === "ready")
+          .filter(
+            (j: SourceJob) => j.state === "ready" && j.kind !== "regional",
+          )
           .map((j: SourceJob) => new Option(j.name, j.id)),
       );
       if ([...locations.options].some((o) => o.value === selected))

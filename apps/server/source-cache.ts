@@ -1,3 +1,5 @@
+import { regionalSources, deleteRegionalSource } from "./regional-sources";
+import { rm } from "node:fs/promises";
 import { registerSourceLocation } from "./source-location";
 import { PbfSources } from "./pbf-sources";
 import { WORLD_SOURCE } from "../../packages/provisioning/src/global-source";
@@ -26,6 +28,41 @@ export class SourceCache {
     private access: AdminAccess = adminAccess(),
     private systemd = false,
   ) {}
+  beforeDelete?: (id: string) => Promise<void>;
+  async delete(id: string) {
+    if (this.busy)
+      throw new Error("A source action is running; try again shortly.");
+    const job = (await this.list()).find((j) => j.id === id);
+    if (!job) throw new Error("Source not found");
+    if (
+      !["ready", "paused", "failed"].includes(job.state) ||
+      (await this.running(id))
+    )
+      throw new Error("Pause the download before deleting its source.");
+    this.busy = true;
+    try {
+      await this.beforeDelete?.(id);
+      if (id.startsWith("regional-"))
+        await deleteRegionalSource(this.directory, id);
+      else {
+        if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("Invalid source ID");
+        // External mounted/NAS files are never deleted; remove the local registration only.
+        for (const suffix of [
+          ".osm.pbf",
+          ".osm.pbf.part",
+          ".osm.pbf.source.json",
+          ".location.json",
+          ".location-progress.json",
+          ".worker.js",
+          ".json",
+        ])
+          await rm(join(this.directory, id + suffix), { force: true });
+      }
+      return { deleted: id };
+    } finally {
+      this.busy = false;
+    }
+  }
   startQueue() {
     if (this.queueTimer) return;
     this.queueTimer = setInterval(
@@ -63,7 +100,7 @@ export class SourceCache {
   }
   async list(): Promise<SourceJob[]> {
     await mkdir(this.directory, { recursive: true });
-    return Promise.all(
+    const jobs = await Promise.all(
       (await readdir(this.directory))
         .filter((n) => /^[a-f0-9]{32}\.json$/.test(n))
         .map(async (n) => {
@@ -108,6 +145,16 @@ export class SourceCache {
           return job;
         }),
     );
+    return [
+      ...jobs,
+      ...(await regionalSources(this.directory)).map((v) => {
+        const { path, mtimeMs, ...job } = v.job as SourceJob & {
+          path?: string;
+          mtimeMs?: number;
+        };
+        return job;
+      }),
+    ];
   }
   private async workerStatus(id: string) {
     if (!this.systemd) return { active: this.children.has(id), result: "" };
@@ -311,6 +358,8 @@ export class SourceCache {
       return json({ error: "Same-origin JSON request required" }, 403);
     try {
       const body = await request.json();
+      if (url.pathname === "/admin/sources/delete")
+        return json(await this.delete(body.id));
       if (url.pathname === "/admin/sources/location") {
         if (this.busy) throw new Error("A source action is already running");
         if (typeof body.path !== "string" || body.path.length > 2048)

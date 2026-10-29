@@ -1,4 +1,4 @@
-import { openAmendment } from "./host-amend";
+import { capabilityPanel } from "./host-capabilities";
 import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
 import { objectCatalog } from "../../../packages/objects/src/index";
 import { publishMap } from "./host-discovery";
@@ -54,7 +54,13 @@ let installedScope: SelectionScope,
   globalScope: SelectionScope,
   sourcePlan: PbfPlan | undefined;
 let storage: StorageInfo | undefined;
-type CachedChoice = { id: string; name: string; kind: string; bytes: number };
+type CachedChoice = {
+  id: string;
+  name: string;
+  kind: string;
+  bytes: number;
+  sha256?: string;
+};
 type AtlasChoice = {
   id: string;
   manifest: Manifest;
@@ -467,10 +473,14 @@ function jobs(values: PreparationJob[]) {
   });
   activeBuild = values.some((j) => ["running", "cancelling"].includes(j.state));
   for (const id of composition)
-    if (!values.some((j) => j.id === id && j.state === "ready"))
+    if (
+      !values.some(
+        (j) => j.id === id && j.state === "ready" && j.served !== false,
+      )
+    )
       composition.delete(id);
   updateComposition();
-  const identity = JSON.stringify(values);
+  const identity = JSON.stringify([values, cachedSources]);
   if (identity === lastJobs) return;
   lastJobs = identity;
   const list = el("jobs"),
@@ -482,7 +492,11 @@ function jobs(values: PreparationJob[]) {
       heading = text("div", "", "preparation-card-heading");
     heading.append(
       text("h3", job.name),
-      text("span", job.state, "state-badge"),
+      text(
+        "span",
+        job.state === "ready" && job.served === false ? "retained" : job.state,
+        "state-badge",
+      ),
     );
     card.append(heading);
     if (job.state === "ready" && job.manifest) {
@@ -573,24 +587,44 @@ function jobs(values: PreparationJob[]) {
       const actions = text("div", "", "host-actions host-card-actions");
       const reuse = text("button", "Use as source") as HTMLButtonElement;
       reuse.onclick = () => void chooseSource("atlas", `atlas:${job.id}`);
-      const amend = text("button", "Amend capabilities") as HTMLButtonElement;
-      amend.onclick = () =>
-        openAmendment(
-          job,
-          [
-            { id: "demo", manifest: source, bytes: baseSourceBytes },
-            ...values
-              .filter((j) => j.state === "ready" && j.manifest)
-              .map((j) => ({
-                id: j.id,
-                manifest: j.manifest!,
-                bytes: j.size ?? 0,
-              })),
-          ],
-          refresh,
+      const serve = text(
+        "button",
+        job.served === false ? "Serve this revision again" : "Stop serving",
+      ) as HTMLButtonElement;
+      serve.onclick = async () => {
+        serve.disabled = true;
+        try {
+          await request("/admin/preparations/serve", {
+            id: job.id,
+            served: job.served === false,
+          });
+          await refresh();
+        } catch (e) {
+          serve.disabled = false;
+          serve.textContent = String(e);
+        }
+      };
+      actions.append(reuse, serve, deleteButton(job));
+      if (job.served === false) {
+        links.replaceChildren();
+        card.append(
+          text(
+            "p",
+            job.supersededBy
+              ? "Replaced by a newer revision. File retained locally; no longer advertised or served."
+              : "Not served. File retained locally.",
+            "quiet",
+          ),
         );
-      actions.append(reuse, amend, deleteButton(job));
-      card.append(links, details, select, actions);
+        check.disabled = true;
+      }
+      card.append(
+        links,
+        capabilityPanel(job, cachedSources, refresh),
+        details,
+        select,
+        actions,
+      );
       library.append(card);
     } else {
       if (["failed", "cancelled"].includes(job.state)) {
@@ -758,11 +792,11 @@ async function refresh() {
       }
     }
     baseSourceBytes = data.sourceBytes ?? 0;
-    jobs(data.jobs);
     const identity = JSON.stringify([cachedSources, atlasSources]);
     oceanSource = data.oceanSource ?? undefined;
     cachedSources = data.cachedSources ?? [];
     atlasSources = data.atlasSources ?? [];
+    jobs(data.jobs);
     compilerReady = data.globalSource.ready;
     if (identity !== JSON.stringify([cachedSources, atlasSources])) {
       const previous = sourceValue();

@@ -12,7 +12,7 @@ export const SOURCE_RESERVE = DISK_RESERVE;
 // Bound network read-ahead even on runtimes that do not propagate stream backpressure.
 export const SOURCE_RANGE_BYTES = 16 * 1024 ** 2;
 export class RetryableSourceError extends Error {}
-export type SourceKind = "planet" | "europe";
+export type SourceKind = "planet" | "europe" | "regional";
 export interface CachedSource {
   id: string;
   kind: SourceKind;

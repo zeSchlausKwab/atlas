@@ -19,7 +19,7 @@ Status: implemented locally; remote activation deferred while the large build ru
 
 Deliver an amendment planner and writer shared by CLI and host console. First
 supported input: a compatible Atlas archive containing precompiled RCL2 transport
-cells. A host can open **Your map library → Amend capabilities**, select missing
+cells. The initial donor workflow lets a host select missing
 travel modes, review reuse/import/storage estimates, and queue a new file. Normal
 preparation jobs and amendment jobs share the persisted single-worker queue.
 
@@ -44,14 +44,32 @@ results; matching hashes for all original display/feature/custom blocks; both ol
 and new files reopen independently; rejected incompatible inputs and cancellation
 leave the original untouched. Verify through CLI, host queue and HTTP routing.
 
-### Follow-up builder input: retained source/PBF
+### Retained PBFs and host capability composition — implemented locally
 
-A map that lacks a compatible routing donor needs a routing-only construction pass.
-Resolve an exact pinned PBF (including NAS-backed sources), or a retained source
-store whose topology/access/restriction/dependency completeness meets the builder's
-contract. Do not infer routing from rendered roads. Build only missing graph
-families and feed their output into the amendment writer. Independently extracted
-graphs must not claim shared graph identity merely because the planet hash matches.
+The map library now presents capability checkboxes directly on each map. The host
+reviews and applies a desired set; a new immutable revision is built in the persisted
+queue. Existing selected blocks and unknown custom blocks keep their compressed bytes.
+Unchecked families are omitted. The previous map stays served throughout preparation;
+a successful replacement retires it from the catalog and HTTP serving, retaining its
+file and a reactivation action. Hashtree publication of the replacement stays explicit.
+
+Regional Geofabrik downloads are retained and listed alongside planet/Europe inputs.
+Both the old hosted-source cache and the new common source cache are discovered without
+copying data. Delete removes managed cached bytes or a NAS registration, never external
+NAS bytes. Active and queued source dependencies block deletion.
+
+Missing families resolve a matching retained PBF by exact source ancestry. If absent,
+a compatible Atlas donor is considered, then the original pinned dated download can be
+retried and checksum-verified. New source versions cannot be substituted implicitly.
+Routing-only builds skip display and semantic construction. Adding a mode rebuilds all
+selected graph modes together; independently compiled graph identifiers are not mixed.
+The PBF builder retains extraction receipts and compiler checkpoints across failures.
+
+Built-in choices include display layers, grouped labels, each transport mode, search,
+reverse streets, peak queries, grouped feature extraction, boundaries and tagged source
+objects/relationships. Labels and standard feature pages remain grouped to avoid merging
+incompatible local page ordinals. This is a built-in family adapter, not yet the general
+plugin descriptor system below. Raster amendments remain a separate next milestone.
 
 ### Verification — 2026-10-29
 
@@ -67,6 +85,14 @@ large-archive performance guarantee.
 invalidation, actual queued execution, retained original downloads, existing-mode
 disabling, HTTP routing and a 390-pixel mobile dialog, with no browser exceptions.
 No changes were deployed to the busy LAN server.
+
+The Madeira PBF rehearsal reused the retained **407.08 MiB Portugal PBF**. It
+preserved all **14,222 original blocks** and grew from **19,219,219 bytes** to
+**105,083,632 bytes** after adding three transport modes, place/address search and
+reverse streets. HTTP tests found routes through Funchal in each mode, produced a
+walking isochrone, found Funchal by name and identified Avenida Arriaga from coordinates.
+The original remained served during construction and was retained locally afterward.
+
 
 ## Milestone 2 — extensible family catalog and build dependencies
 
