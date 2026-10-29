@@ -146,6 +146,15 @@ export interface Manifest {
     poiTags: boolean;
     administrativeHierarchy: boolean;
   };
+  /** Immutable revision lineage; payload families remain self-contained. */
+  amendment?: {
+    version: 1;
+    parentSnapshot: string;
+    sourceSnapshot: string;
+    builder: string;
+    addedFamilies: string[];
+    routingPaddingCells: number;
+  };
   selection?: {
     polygon: [number, number][];
     parentSnapshot: string;
@@ -323,6 +332,23 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       !manifest.capabilities.includes("feature-extraction"))
   )
     throw new Error("Invalid feature schema");
+  if (manifest.amendment) {
+    const a = manifest.amendment;
+    if (
+      a.version !== 1 ||
+      !/^[a-f0-9]{64}$/.test(a.parentSnapshot) ||
+      !/^[a-f0-9]{64}$/.test(a.sourceSnapshot) ||
+      typeof a.builder !== "string" ||
+      !a.builder ||
+      !Array.isArray(a.addedFamilies) ||
+      !a.addedFamilies.length ||
+      a.addedFamilies.some((f) => typeof f !== "string" || !f) ||
+      !Number.isInteger(a.routingPaddingCells) ||
+      a.routingPaddingCells < 0 ||
+      a.routingPaddingCells > 4
+    )
+      throw new Error("Invalid amendment provenance");
+  }
   if (manifest.selection) {
     const s = manifest.selection;
     if (

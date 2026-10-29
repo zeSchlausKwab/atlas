@@ -1,3 +1,4 @@
+import { openAmendment } from "./host-amend";
 import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
 import { objectCatalog } from "../../../packages/objects/src/index";
 import { publishMap } from "./host-discovery";
@@ -42,6 +43,7 @@ const text = (tag: string, value: string, cls?: string) => {
   if (cls) e.className = cls;
   return e;
 };
+let baseSourceBytes = 0;
 let source: Manifest,
   preview: HostPreview | undefined,
   points: Polygon = [],
@@ -571,7 +573,23 @@ function jobs(values: PreparationJob[]) {
       const actions = text("div", "", "host-actions host-card-actions");
       const reuse = text("button", "Use as source") as HTMLButtonElement;
       reuse.onclick = () => void chooseSource("atlas", `atlas:${job.id}`);
-      actions.append(reuse, deleteButton(job));
+      const amend = text("button", "Amend capabilities") as HTMLButtonElement;
+      amend.onclick = () =>
+        openAmendment(
+          job,
+          [
+            { id: "demo", manifest: source, bytes: baseSourceBytes },
+            ...values
+              .filter((j) => j.state === "ready" && j.manifest)
+              .map((j) => ({
+                id: j.id,
+                manifest: j.manifest!,
+                bytes: j.size ?? 0,
+              })),
+          ],
+          refresh,
+        );
+      actions.append(reuse, amend, deleteButton(job));
       card.append(links, details, select, actions);
       library.append(card);
     } else {
@@ -739,6 +757,7 @@ async function refresh() {
         /* Native job progress remains available. */
       }
     }
+    baseSourceBytes = data.sourceBytes ?? 0;
     jobs(data.jobs);
     const identity = JSON.stringify([cachedSources, atlasSources]);
     oceanSource = data.oceanSource ?? undefined;

@@ -1,3 +1,9 @@
+import { readStorage } from "./storage";
+import { DISK_RESERVE } from "../../packages/provisioning/src/capacity";
+import {
+  amendRouting,
+  type RoutingAmendment,
+} from "../../packages/provisioning/src/amend";
 import {
   importCachedPbf,
   planCachedBuild,
@@ -26,6 +32,7 @@ process.on(
     selection: PackageSelection;
     sourcePlan?: PbfPlan;
     cachedSource?: VerifiedBuildSource;
+    amendment?: { request: RoutingAmendment; target: string };
   }) => {
     if (data.type === "cancel") {
       abort.abort();
@@ -35,6 +42,7 @@ process.on(
     started = true;
     const { output } = data,
       work = output.replace(/\.atlas$/, ".work");
+    let targetFile: PackageSource | undefined;
     let file: PackageSource | undefined,
       result: PackageSource | undefined,
       final: Record<string, unknown>;
@@ -53,52 +61,79 @@ process.on(
       }
     };
     try {
-      const source = data.cachedSource
-        ? await importCachedPbf(
-            data.cachedSource,
-            data.selection,
-            work,
+      if (data.amendment) {
+        file = await PackageSource.open(data.source);
+        targetFile = await PackageSource.open(data.amendment.target);
+        const target = await new AtlasReader(targetFile).open(),
+          source = await new AtlasReader(file).open();
+        try {
+          await amendRouting(
+            target,
+            source,
+            data.amendment.request,
+            output,
             abort.signal,
             report,
-          )
-        : data.sourcePlan
-          ? await importPbf(
-              data.sourcePlan,
+            async () => {
+              const storage = await readStorage(dirname(output));
+              if (storage.availableBytes < DISK_RESERVE)
+                throw new Error(
+                  "Amendment stopped to preserve server free space. Original files are unchanged; free space and queue again.",
+                );
+            },
+          );
+        } finally {
+          target.dispose();
+          source.dispose();
+        }
+      } else {
+        const source = data.cachedSource
+          ? await importCachedPbf(
+              data.cachedSource,
               data.selection,
-              join(dirname(output), "sources"),
               work,
               abort.signal,
               report,
             )
-          : data.source;
-      if (data.cachedSource && planCachedBuild(data.selection).partitioned) {
-        // The partitioned compiler already applies the exact capability/polygon selection.
-        // Move the completed archive; avoid rewriting Europe through the regional excerpt path.
-        abort.signal.throwIfAborted();
-        await rename(source, output);
-      } else {
-        file = await PackageSource.open(source);
-        abort.signal.throwIfAborted();
-        const reader = await new AtlasReader(file).open();
-        const selection =
-          data.sourcePlan || data.cachedSource
-            ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
-            : data.selection;
-        const prepared = await preparePackage(
-          reader,
-          selection,
-          output,
-          abort.signal,
-          report,
-        );
-        report({
-          phase: "verifying",
-          message: "Verifying the saved package…",
-          completed: 0,
-          total: 0,
-          readBytes: reader.bytesRead,
-          writtenBytes: prepared.size,
-        });
+          : data.sourcePlan
+            ? await importPbf(
+                data.sourcePlan,
+                data.selection,
+                join(dirname(output), "sources"),
+                work,
+                abort.signal,
+                report,
+              )
+            : data.source;
+        if (data.cachedSource && planCachedBuild(data.selection).partitioned) {
+          // The partitioned compiler already applies the exact capability/polygon selection.
+          // Move the completed archive; avoid rewriting Europe through the regional excerpt path.
+          abort.signal.throwIfAborted();
+          await rename(source, output);
+        } else {
+          file = await PackageSource.open(source);
+          abort.signal.throwIfAborted();
+          const reader = await new AtlasReader(file).open();
+          const selection =
+            data.sourcePlan || data.cachedSource
+              ? { ...data.selection, snapshot: reader.index.manifest.snapshot }
+              : data.selection;
+          const prepared = await preparePackage(
+            reader,
+            selection,
+            output,
+            abort.signal,
+            report,
+          );
+          report({
+            phase: "verifying",
+            message: "Verifying the saved package…",
+            completed: 0,
+            total: 0,
+            readBytes: reader.bytesRead,
+            writtenBytes: prepared.size,
+          });
+        }
       }
       result = await PackageSource.open(output);
       const verified = await new AtlasReader(result).open();
@@ -118,6 +153,7 @@ process.on(
     } finally {
       await result?.close();
       await file?.close();
+      await targetFile?.close();
       if (!data.cachedSource || final!.type === "ready")
         await rm(work, { recursive: true, force: true });
     }

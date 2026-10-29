@@ -3253,3 +3253,59 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 .chat-recipe p { color:var(--muted); line-height:1.5; }
 .chat-recipe p[role=status] { color:var(--ink); }
 .chat-recipe p[role=alert] { color:var(--accent); }
+
+/* Keep amendment review stable while the host library polls job progress. */
+.amend-dialog {
+  width: min(680px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 28px;
+}
+.amend-dialog::backdrop {
+  background: rgb(25 45 35 / 35%);
+}
+.amend-dialog form {
+  display: grid;
+  gap: 18px;
+}
+.amend-dialog h2,
+.amend-dialog p {
+  margin: 0;
+}
+.amend-dialog label {
+  display: grid;
+  gap: 8px;
+}
+.amend-dialog input:not([type="checkbox"]),
+.amend-dialog select {
+  width: 100%;
+  padding: 11px 13px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.amend-dialog input[type="checkbox"] { accent-color: var(--green); }
+.amend-dialog fieldset {
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+.amend-dialog .amend-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.amend-dialog [role="status"] {
+  line-height: 1.6;
+}
+.amend-dialog [role="status"] li {
+  margin: 8px 0;
+}
+.amend-dialog details p {
+  margin-top: 12px;
+}

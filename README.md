@@ -90,6 +90,36 @@ back to localhost if you previously used another host.
 and `client-config.json`. It can be hosted independently without Bun, OSM source
 files or server code. See [server/client configuration](docs/SERVER-CLIENT.md).
 
+## Amend an existing map
+
+**Your map library → Amend capabilities** can add walking, cycling or driving
+routing from a compatible Atlas source. Review the data reuse and storage plan,
+then queue a new self-contained revision. Existing display, extraction and custom
+blocks retain their compressed bytes and hashes. The original map stays available.
+The completed revision can be published using **Publish with Hashtree**.
+
+This first slice copies existing RCL2 graph cells from the same source PBF snapshot;
+adding to an existing graph also requires matching compiled graph identity.
+It does not yet build missing routing from a PBF. Raster imports, georeferenced
+uploads and dependency-driven plugin installation are in the
+[accepted implementation plan](docs/AMENDMENTS-AND-RASTER.md).
+
+```sh
+# Review a plan without writing a map:
+bun run map:amend --map geometry.atlas --source complete.atlas --profiles walking,cycling --plan
+# Create a new revision (never overwrite a published archive):
+bun run map:amend --map geometry.atlas --source complete.atlas --profiles walking,cycling --output amended.atlas
+# Repeat the local geometry → routing proof after `bun run setup`:
+bun run verify:amendment
+```
+
+The CLI also accepts `--name`, `--max-mib` and `--padding`. The verification script
+uses the local Liechtenstein sample and leaves original/amended files plus a JSON
+report in the printed temporary directory. No remote server or download is needed.
+Amendments share the host preparation queue. Cancellation removes partial output;
+**Queue again** repeats the copy. The current format streams a new file rather
+than appending in place; cross-revision Hashtree leaf reuse is not guaranteed.
+
 ## Vienna Plus and offline drawing
 
 **Vienna Plus is ready: 863.8 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with three transport networks, isochrones, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).

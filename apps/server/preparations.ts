@@ -1,3 +1,10 @@
+import { AtlasReader } from "../../packages/format/src/reader";
+import { PackageSource } from "./package-source";
+import {
+  planRoutingAmendment,
+  routingAmendmentSelection,
+  type RoutingAmendment,
+} from "../../packages/provisioning/src/amend";
 import { configuredOcean } from "../../packages/provisioning/src/ocean-source";
 import { verifiedSource, verifiedSources } from "./verified-sources";
 import {
@@ -28,6 +35,10 @@ import {
 } from "../../packages/provisioning/src/global-source";
 import { validateImportSize } from "../../packages/provisioning/src/import-pbf";
 import { PbfSources } from "./pbf-sources";
+export interface HostedAmendment extends RoutingAmendment {
+  targetId: string;
+  sourceId: string;
+}
 export interface PreparationJob {
   id: string;
   name: string;
@@ -45,6 +56,7 @@ export interface PreparationJob {
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
   sourceAtlasId?: string;
+  amendment?: HostedAmendment;
   progress: PreparationProgress;
   error?: string;
   size?: number;
@@ -128,7 +140,16 @@ export class Preparations {
         recursive: true,
         force: true,
       });
-    for (const suffix of ["", ".part", ".payload.part"])
+    for (const suffix of [
+      "",
+      ".part",
+      ".payload.part",
+      ".directory.part",
+      ".amend.lock",
+      ".amend.part",
+      ".amend.part.payload.part",
+      ".amend.part.directory.part",
+    ])
       await rm(this.path(id) + suffix, { force: true });
   }
   get sourceDirectory() {
@@ -167,6 +188,45 @@ export class Preparations {
       throw new Error("Only stopped preparations can be queued again.");
     return this.create(job.selection, job);
   }
+  private amendmentInput(id: string) {
+    if (id === "demo") return { path: this.sourcePath, manifest: this.source };
+    const job = this.jobs.get(id);
+    if (!job?.manifest || job.state !== "ready")
+      throw new Error("Amendment inputs must be ready Atlas maps.");
+    return { path: this.path(id), manifest: job.manifest };
+  }
+  async planAmendment(value: HostedAmendment) {
+    const a = this.amendmentInput(value?.targetId),
+      b = this.amendmentInput(value?.sourceId);
+    routingAmendmentSelection(a.manifest, b.manifest, value);
+    const targetFile = await PackageSource.open(a.path);
+    let sourceFile: PackageSource | undefined,
+      target: AtlasReader | undefined,
+      source: AtlasReader | undefined;
+    try {
+      sourceFile = await PackageSource.open(b.path);
+      target = await new AtlasReader(targetFile).open();
+      source = await new AtlasReader(sourceFile).open();
+      return await planRoutingAmendment(target, source, value);
+    } finally {
+      target?.dispose();
+      source?.dispose();
+      await targetFile.close();
+      await sourceFile?.close();
+    }
+  }
+  async createAmendment(value: HostedAmendment) {
+    const a = this.amendmentInput(value?.targetId),
+      b = this.amendmentInput(value?.sourceId);
+    const selection = routingAmendmentSelection(a.manifest, b.manifest, value);
+    // Full plan verifies selected cells before accepting the queued job.
+    await this.planAmendment(value);
+    return this.create({
+      ...selection,
+      sourceAtlasId: value.sourceId === "demo" ? undefined : value.sourceId,
+      amendment: value,
+    });
+  }
   async create(value: unknown, previous?: PreparationJob, start = false) {
     if (this.closing)
       throw new Error("Server is stopping; try again after restart.");
@@ -175,7 +235,17 @@ export class Preparations {
       cachedSourceId?: string;
       maxSourceBytes?: number;
       sourceAtlasId?: string;
+      amendment?: HostedAmendment;
     } | null;
+    const amendment = previous?.amendment ?? extra?.amendment;
+    if (
+      amendment &&
+      (extra?.cachedSourceId ||
+        extra?.sourcePlanId ||
+        previous?.cachedSource ||
+        previous?.sourcePlan)
+    )
+      throw new Error("An amendment uses existing Atlas inputs only.");
     const plan =
       previous?.sourcePlan ??
       (extra?.sourcePlanId ? this.sources.get(extra.sourcePlanId) : undefined);
@@ -190,11 +260,10 @@ export class Preparations {
       throw new Error("Choose exactly one source.");
     if (extra?.sourcePlanId && !plan)
       throw new Error("Source plan expired. Check Geofabrik again.");
-    const atlas = extra?.sourceAtlasId
-      ? this.jobs.get(extra.sourceAtlasId)
-      : undefined;
+    const atlasId = previous?.sourceAtlasId ?? extra?.sourceAtlasId;
+    const atlas = atlasId ? this.jobs.get(atlasId) : undefined;
     if (
-      extra?.sourceAtlasId &&
+      atlasId &&
       (!atlas || ["deleting", "failed", "cancelled"].includes(atlas.state))
     )
       throw new Error("The selected Atlas dataset is no longer available.");
@@ -206,6 +275,13 @@ export class Preparations {
         ...(value as PackageSelection),
         snapshot: atlas.manifest.snapshot,
       };
+    if (amendment) {
+      const a = this.amendmentInput(amendment.targetId),
+        b = this.amendmentInput(amendment.sourceId);
+      if ((atlas?.id ?? "demo") !== amendment.sourceId)
+        throw new Error("Amendment source changed.");
+      value = routingAmendmentSelection(a.manifest, b.manifest, amendment);
+    }
     const inputPath = atlas ? this.path(atlas.id) : this.sourcePath;
     const selectedOcean = (value as PackageSelection)?.ocean;
     if (selectedOcean) {
@@ -261,6 +337,7 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         sourceAtlasId: atlas?.id,
+        amendment,
         resumeCheckpoint: !!previous?.cachedSource,
         progress: {
           phase: "planning",
@@ -295,11 +372,13 @@ export class Preparations {
               resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
             ).size
           : 0;
-      const needed = cached
-        ? previous?.resumeCheckpoint
-          ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
-          : cachedBuildSpace(value.maxBytes, partitioned)
-        : preparationSpace(value.maxBytes, plan?.bytes);
+      const needed = amendment
+        ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+        : cached
+          ? previous?.resumeCheckpoint
+            ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
+            : cachedBuildSpace(value.maxBytes, partitioned)
+          : preparationSpace(value.maxBytes, plan?.bytes);
       if (disk.availableBytes < needed)
         throw new Error(
           previous
@@ -320,6 +399,7 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         sourceAtlasId: atlas?.id,
+        amendment,
         progress: {
           phase: "planning",
           message: cached
@@ -410,6 +490,12 @@ export class Preparations {
         selection: job.selection,
         sourcePlan: plan,
         cachedSource: cached,
+        amendment: amendment
+          ? {
+              request: amendment,
+              target: this.amendmentInput(amendment.targetId).path,
+            }
+          : undefined,
       });
       return job;
     } catch (e) {
@@ -458,7 +544,11 @@ export class Preparations {
     if (
       this.activeSource === id ||
       [...this.jobs.values()].some(
-        (j) => j.sourceAtlasId === id && j.state === "queued",
+        (j) =>
+          (j.sourceAtlasId === id ||
+            j.amendment?.targetId === id ||
+            j.amendment?.sourceId === id) &&
+          ["queued", "running", "cancelling"].includes(j.state),
       )
     )
       throw new Error(
@@ -499,6 +589,7 @@ export class Preparations {
           error: "Server disk information is unavailable.",
         })),
         source: this.source,
+        sourceBytes: Bun.file(this.sourcePath).size,
         available: availability(this.source),
         atlasSources: this.catalog().map((map) => ({
           id: map.id,
@@ -540,6 +631,10 @@ export class Preparations {
               ? this.delete(match[1]!)
               : this.cancel(match[1]!)),
         );
+      if (url.pathname === "/admin/preparations/amend-plan")
+        return json(await this.planAmendment(JSON.parse(raw)));
+      if (url.pathname === "/admin/preparations/amend")
+        return json(await this.createAmendment(JSON.parse(raw)), 202);
       if (url.pathname === "/admin/preparations/source-plan")
         return json(await this.sources.plan(JSON.parse(raw)));
       if (url.pathname !== "/admin/preparations")
