@@ -21,6 +21,8 @@ export class StyleControls {
       const saved = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
       if (saved) {
         this.style = parseStyle(saved.style);
+        // Adopt the slimmer baseline once without losing the saved palette or camera.
+        if (saved.roadBaseline !== 2) this.style.widths.roads = 1;
         this.scene = parseScene(saved.scene);
       }
     } catch {
@@ -133,7 +135,11 @@ export class StyleControls {
     try {
       localStorage.setItem(
         STORAGE,
-        JSON.stringify({ style: this.style, scene: this.scene }),
+        JSON.stringify({
+          style: this.style,
+          scene: this.scene,
+          roadBaseline: 2,
+        }),
       );
     } catch {}
   }

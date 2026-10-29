@@ -717,6 +717,9 @@ impl Renderer {
                 !v.is_finite()
                     || if i == 2 {
                         !(0. ..=2.).contains(v)
+                    } else if i == 3 || i == 4 {
+                        // Road style 1x compiles to the slimmer 0.5 GPU multiplier.
+                        !(0.125..=2.).contains(v)
                     } else {
                         !(0.25..=4.).contains(v)
                     }

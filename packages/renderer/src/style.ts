@@ -160,8 +160,9 @@ export function compileStyle(input: MapStyle) {
       1,
       style.widths.water,
       style.widths.buildingEdges,
-      style.widths.roads,
-      style.widths.roads,
+      // Public 1× is the previous half-width road style, including its casing.
+      style.widths.roads * 0.5,
+      style.widths.roads * 0.5,
       style.widths.paths,
       style.widths.railways,
       1,
