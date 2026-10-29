@@ -1,5 +1,5 @@
 import {
-  CAPABILITY_CHOICES,
+  capabilityChoices,
   installedCapabilities,
   pinnedPbfMatches,
 } from "../../../packages/provisioning/src/families";
@@ -61,7 +61,9 @@ export function capabilityPanel(
     const field = el("fieldset"),
       legend = el("legend", group);
     field.append(legend);
-    for (const choice of CAPABILITY_CHOICES.filter((c) => c.group === group)) {
+    for (const choice of capabilityChoices(m).filter(
+      (c) => c.group === group,
+    )) {
       const label = el("label"),
         input = el("input"),
         state = el(

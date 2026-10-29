@@ -1,5 +1,5 @@
 import {
-  CAPABILITY_CHOICES,
+  capabilityChoices,
   installedCapabilities,
   familySelection,
   pinnedPbfMatches,
@@ -264,7 +264,7 @@ export class Preparations {
       !value.capabilities.length ||
       new Set(value.capabilities).size !== value.capabilities.length ||
       value.capabilities.some(
-        (c) => !CAPABILITY_CHOICES.some((v) => v.id === c),
+        (c) => !capabilityChoices(m).some((v) => v.id === c),
       )
     )
       throw new Error("Choose supported, distinct capabilities");

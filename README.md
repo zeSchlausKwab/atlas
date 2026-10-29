@@ -134,6 +134,33 @@ Amendments share the host preparation queue. Cancellation removes partial output
 **Queue again** repeats the copy. The current format streams a new file rather
 than appending in place; cross-revision Hashtree leaf reuse is not guaranteed.
 
+## Raster imagery prototype
+
+`bun run demo:raster` downloads a small European Natural Earth relief pyramid via
+OpenFreeMap and builds `data/raster-relief/relief.atlas` (148 PNG tiles, about 18.6 MiB).
+This is a separate self-contained map, with projection, coverage, tile size, zooms,
+licence and attribution in its raster descriptor. It is visual relief, not a numeric DEM.
+
+Serve it through the regular server and add its catalog in the client composer:
+
+```sh
+ATLAS_FILE=data/raster-relief/relief.atlas ATLAS_DATA_DIR=data/raster-rehearsal PORT=3182 bun run server
+# Open the normal client with ?server=http://127.0.0.1:3182/&maps=demo
+```
+
+The client reads only visible raster tiles, blends relief beneath labels, and exposes
+**Raster opacity** per source. Zero opacity stops scheduling reads. Raster reads are
+included in map-byte accounting and use the normal verified block cache. Natural
+Earth is coarse imagery; zooming beyond its z6 pyramid magnifies those pixels.
+This first renderer uses a bounded Canvas image plane and the existing orthographic
+camera. It does not yet provide GPU raster textures, numeric terrain, uploads,
+arbitrary reprojection, raster region exports, or a raster amendment UI.
+
+For your own pre-tiled imagery, use `bun run raster:import --help`. The importer takes
+an XYZ PNG directory and a JSON layer descriptor like `data/raster-relief/layer.json`.
+It refuses to overwrite existing archives. Different raster and vector provenance
+can coexist in a client composition; shared graph identity is only needed for routing.
+
 ## Vienna Plus and offline drawing
 
 **Vienna Plus is ready: 863.8 MB, 118,491 spatial tile addresses across every zoom from 0 through 16**, with three transport networks, isochrones, location search, street geometry, peaks and optional selectable source geometry. The recipe combines public Austria/Slovakia/Hungary extracts (1.48 GB total source download) and enforces a 2 GB final-package ceiling. No zoom levels are dropped to fit the budget. See [coverage, exact counts and reproduction recipe](docs/VIENNA-PLUS.md).

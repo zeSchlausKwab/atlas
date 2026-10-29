@@ -3322,3 +3322,5 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 .capability-composer input[type=number] { display:block; padding:8px; margin-top:8px; max-width:180px; font:inherit; }
 .capability-composer [role=status] { font-size:13px; }
 @media(max-width:560px) { .capability-option { grid-template-columns:18px 1fr; } .capability-option small { grid-column:2; } }
+
+.raster-plane { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }

@@ -41,6 +41,7 @@ interface Entry {
   enabled: boolean;
   layers: MapLayer[];
   labels: boolean;
+  rasterOpacity?: number;
   delivery?: "http" | "hashtree";
   color: string;
   reader?: AtlasReader;
@@ -55,6 +56,7 @@ interface SavedSource {
   enabled: boolean;
   layers: MapLayer[];
   labels: boolean;
+  rasterOpacity?: number;
 }
 interface Recipe {
   version: 1;
@@ -129,6 +131,7 @@ export async function createComposer(
         enabled: true,
         layers: e.layers,
         labels: e.labels,
+        rasterOpacity: e.rasterOpacity,
         color: e.color,
       }));
   const focused = () => active().find((s) => s.id === focusId)?.reader;
@@ -161,6 +164,7 @@ export async function createComposer(
         enabled: e.enabled,
         layers: e.layers,
         labels: e.labels,
+        rasterOpacity: e.rasterOpacity,
         delivery: e.delivery,
       })),
       coverage: map.coverage,
@@ -206,6 +210,7 @@ export async function createComposer(
               enabled: true,
               layers: e.layers,
               labels: e.labels,
+              rasterOpacity: e.rasterOpacity,
               color: e.color,
             }) satisfies CompositionMapSource,
         ),
@@ -404,6 +409,25 @@ export async function createComposer(
         row.append(input, text("span", "Labels"));
         layers.append(row);
       }
+      if (m.rasters?.length) {
+        const row = text("label", "Raster opacity"),
+          dial = document.createElement("input");
+        dial.type = "range";
+        dial.min = "0";
+        dial.max = "1";
+        dial.step = "0.05";
+        dial.value = String(entry.rasterOpacity ?? 0.6);
+        dial.oninput = () => {
+          entry.rasterOpacity = Number(dial.value);
+          sync();
+          save();
+        };
+        row.append(dial);
+        layers.append(
+          row,
+          text("p", m.rasters.map((r) => r.name).join(" · "), "quiet"),
+        );
+      }
       card.append(layers);
       const links = text("div", "", "host-actions"),
         fit = text("button", "Go to map") as HTMLButtonElement;
@@ -498,6 +522,9 @@ export async function createComposer(
       ) ?? [...(offer.manifest.tileLayers ?? [])],
       labels:
         saved?.labels ?? offer.manifest.capabilities.includes("map-labels"),
+      rasterOpacity: Number.isFinite(saved?.rasterOpacity)
+        ? Math.max(0, Math.min(1, saved!.rasterOpacity!))
+        : 0.6,
       delivery: saved?.delivery ?? "hashtree",
       color: colors[entries.length % colors.length]!,
     });

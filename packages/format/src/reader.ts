@@ -38,7 +38,7 @@ export type TransferPurpose =
 export function purposeOf(key: string): TransferPurpose {
   if (key === "header" || key === "index" || key.startsWith("index/"))
     return "directory";
-  if (key.startsWith("tile/")) return "map";
+  if (key.startsWith("tile/") || key.startsWith("raster/")) return "map";
   if (key.startsWith("boundaries/") || key.startsWith("objects/"))
     return "features";
   if (key.startsWith("features/") && key !== "features/geojson")

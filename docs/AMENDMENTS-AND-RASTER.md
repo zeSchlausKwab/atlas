@@ -115,7 +115,26 @@ require shared routing identity. Coverage is family-specific.
 
 ## Milestone 3 — visual raster delivery
 
-Status: planned.
+Status: first delivery/composition proof implemented locally; embedding and upload remain next.
+
+`demo:raster` retains 148 Natural Earth/OpenFreeMap PNG tiles around Europe at z0–6
+in an 18.6 MiB standalone Atlas. Raster families have validated versioned descriptors
+(projection, matrix, tile dimensions, imagery kind, extent, zooms, provenance, licence).
+A paged `raster/<id>/<z>/<x>/<y>` namespace supports ordinary verified range reads.
+`raster:import` accepts a local XYZ PNG pyramid and emits an immutable archive.
+
+The existing consumer renders them through a bounded Canvas image plane with the
+same camera as vectors, beneath labels. Composer opacity controls selective loading;
+zero stops new reads. Cached tiles redraw in cache-only mode. Browser verification
+combined relief from port 3182 and vectors from port 3181 with 18 range requests,
+confirmed rendered image pixels, zero-opacity hiding, and cache-only restoration
+without further requests. Existing vector archives and all 318 tests still pass.
+
+This proof uses the provider's already tiled imagery, so it needs no local GDAL.
+It is not numeric elevation or a full high-resolution terrain import. The original
+GeoTIFF pipeline, clipping/export of raster families, embedded raster amendments,
+GPU textured rendering and arbitrary image georeferencing remain below.
+
 
 Import the 24.01 MB Natural Earth shaded-relief source into a standalone
 `relief.atlas`; create tiled overviews and preserve attribution/provenance. Add

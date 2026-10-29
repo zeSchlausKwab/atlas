@@ -1,3 +1,4 @@
+import { validateRasters, type RasterLayer } from "./raster";
 import { pagedZoom } from "../../geocoding/src/paging";
 /** ATLAS v0.1: immutable single-file package with independently addressed blocks. */
 export const MAGIC = "ATLAS001";
@@ -132,6 +133,7 @@ export interface Manifest {
     | "objects"
   )[];
   tileLayers?: MapLayer[];
+  rasters?: RasterLayer[];
   buildingHeights?: {
     tagged: number;
     estimated: number;
@@ -186,7 +188,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|raster\/[a-z][a-z0-9_-]{0,63}|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -307,6 +309,12 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       new Set(manifest.tileLayers).size !== manifest.tileLayers.length)
   )
     throw new Error("Invalid map layer catalog");
+  validateRasters(manifest.rasters);
+  if (
+    manifest.capabilities.includes("raster-rendering") !==
+    !!manifest.rasters?.length
+  )
+    throw new Error("Raster capability mismatch");
   if (manifest.buildingHeights) {
     const h = manifest.buildingHeights;
     if (
@@ -484,24 +492,31 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
             (p.prefix
               ? !manifest.tileLayers?.includes(p.prefix.slice(5) as MapLayer)
               : !!manifest.tileLayers)
-          : isRoutingCell(`${p.prefix}/`)
-            ? p.z !== routingZoom(manifest, p.prefix!)
-            : p.prefix === "labels/settlements" ||
-                p.prefix === "query/peaks-data"
-              ? p.z !== 8
-              : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
-                ? p.z !== manifest.labelZoom
-                : /^objects\/(geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)$/.test(
-                      p.prefix!,
-                    )
-                  ? p.z !== 26
-                  : /^boundaries\/(records|geometry)$/.test(p.prefix!)
-                    ? p.z !== 16
-                    : pagedZoom(p.prefix!) !== undefined
-                      ? p.z !== pagedZoom(p.prefix!)
-                      : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                          p.prefix!,
-                        ) || p.z !== manifest.featureZoom) ||
+          : p.prefix?.startsWith("raster/")
+            ? !manifest.rasters?.some(
+                (r) =>
+                  p.prefix === `raster/${r.id}` &&
+                  p.z >= r.minZoom &&
+                  p.z <= r.maxZoom,
+              )
+            : isRoutingCell(`${p.prefix}/`)
+              ? p.z !== routingZoom(manifest, p.prefix!)
+              : p.prefix === "labels/settlements" ||
+                  p.prefix === "query/peaks-data"
+                ? p.z !== 8
+                : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
+                  ? p.z !== manifest.labelZoom
+                  : /^objects\/(geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)$/.test(
+                        p.prefix!,
+                      )
+                    ? p.z !== 26
+                    : /^boundaries\/(records|geometry)$/.test(p.prefix!)
+                      ? p.z !== 16
+                      : pagedZoom(p.prefix!) !== undefined
+                        ? p.z !== pagedZoom(p.prefix!)
+                        : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                            p.prefix!,
+                          ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -691,6 +706,21 @@ export function validateBlocks(
         (block.rawLength ?? block.length) > 16 * 1024 * 1024
       )
         throw new Error("Invalid routing cell address or size");
+    }
+    if (block.key.startsWith("raster/")) {
+      const a = spatialAddress(block.key),
+        r = manifest.rasters?.find((r) => a?.prefix === `raster/${r.id}`);
+      if (
+        !a ||
+        !r ||
+        a.z < r.minZoom ||
+        a.z > r.maxZoom ||
+        a.x >= 2 ** a.z ||
+        a.y >= 2 ** a.z ||
+        block.key !== `${a.prefix}/${a.z}/${a.x}/${a.y}` ||
+        (block.rawLength ?? block.length) > 8 * 1024 ** 2
+      )
+        throw new Error("Invalid raster tile address or size");
     }
     if (block.key.startsWith("tile/")) {
       if (

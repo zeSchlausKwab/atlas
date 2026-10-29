@@ -1,3 +1,4 @@
+import { validateRasters } from "./raster";
 import { parseTree, type TreeOffer } from "../../hashtree/src/source";
 import { MAP_LAYERS, type Manifest } from "./index";
 export interface MapOffer {
@@ -50,6 +51,7 @@ export function parseCatalog(value: unknown, base: string): MapOffer[] {
           !f.tileLayers.every((s: unknown) => MAP_LAYERS.includes(s as never))))
     )
       throw new Error("Invalid map offer in catalog");
+    validateRasters(f.rasters);
     const url = httpUrl(m.url, base);
     if (seen.has(url)) throw new Error("Duplicate map URL in catalog");
     seen.add(url);

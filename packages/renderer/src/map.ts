@@ -1,3 +1,4 @@
+import { RasterPlane } from "./raster";
 import { PlacesView } from "../../labels/src/place-pages";
 import { defaultOverlays } from "./overlays";
 import { MapInput } from "./input";
@@ -178,6 +179,7 @@ export class AtlasMap {
   private lastDraw = 0;
   private triangles = 0;
   private overlay: HTMLCanvasElement;
+  private raster: RasterPlane;
   private constructor(
     readonly canvas: HTMLCanvasElement,
     readonly reader: AtlasReader,
@@ -194,6 +196,12 @@ export class AtlasMap {
     this.overlay = document.createElement("canvas");
     this.overlay.className = "map-overlay";
     canvas.after(this.overlay);
+    this.raster = new RasterPlane(
+      reader,
+      this.overlay,
+      () => this.invalidate(),
+      onError,
+    );
     this.observer = new ResizeObserver(() => this.invalidate());
     this.observer.observe(canvas);
   }
@@ -443,6 +451,7 @@ export class AtlasMap {
   setOffline(offline: boolean) {
     this.reader.offline = offline;
     this.tiles.retry();
+    this.raster.retry();
     this.labels.retry();
     this.placesFailed = false;
     this.placesView?.retry();
@@ -509,6 +518,7 @@ export class AtlasMap {
         c.height = Math.round(height * ratio);
     }
     const state = this.tiles.update(this.visibleTiles());
+    this.raster.draw(this.camera, ratio);
     const start = performance.now();
     this.triangles = this.renderer.render(
       ...this.center,
@@ -526,14 +536,14 @@ export class AtlasMap {
     this.drawOverlay(width, height, ratio, state.view);
     this.onStats({
       zoom: this.zoom,
-      tiles: state.tiles,
-      wanted: state.wanted,
-      missing: state.missing,
+      tiles: state.tiles + this.raster.stats.tiles,
+      wanted: state.wanted + this.raster.stats.wanted,
+      missing: state.missing + this.raster.stats.missing,
       triangles: this.triangles,
       fallbackTiles: state.presented.filter((b) => b.z !== state.view.zoom)
         .length,
       drawMs: this.lastDraw,
-      loading: state.loading,
+      loading: state.loading + this.raster.stats.loading,
       labels: this.labelStats,
     });
   }
@@ -599,6 +609,7 @@ export class AtlasMap {
     this.labels.destroy();
     this.overlays.destroy();
     this.tiles.destroy();
+    this.raster.destroy();
     cancelAnimationFrame(this.frame);
     this.input.destroy();
     this.observer.disconnect();

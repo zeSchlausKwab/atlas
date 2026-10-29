@@ -47,7 +47,9 @@
     "verify:continuous-pair": "bun scripts/verify-continuous-pair.ts",
     "verify:recipes-pair": "bun scripts/verify-recipes-pair.ts",
     "map:amend": "bun scripts/amend-map.ts",
-    "verify:amendment": "bun scripts/verify-amendment.ts"
+    "verify:amendment": "bun scripts/verify-amendment.ts",
+    "raster:import": "bun scripts/import-raster.ts",
+    "demo:raster": "bun scripts/raster-demo.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.31",

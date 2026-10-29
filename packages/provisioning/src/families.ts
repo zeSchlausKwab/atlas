@@ -28,6 +28,7 @@ export const CAPABILITY_CHOICES = [
 ];
 export function installedCapabilities(m: Manifest): string[] {
   return [
+    ...(m.rasters ?? []).map((r) => `raster:${r.id}`),
     ...(m.tileLayers ?? []).map((l) => `tile:${l}`),
     ...(m.capabilities.includes("map-labels") ? ["labels"] : []),
     ...TRANSPORT_MODES.filter((p) => m.transport?.profiles[p]).map(
@@ -47,6 +48,7 @@ export function installedCapabilities(m: Manifest): string[] {
   ];
 }
 export function blockFamily(key: string): string | undefined {
+  if (key.startsWith("raster/")) return `raster:${key.split("/")[1]}`;
   if (key.startsWith("tile/")) return `tile:${key.split("/")[1]}`;
   if (key.startsWith("routing/")) return `routing:${key.split("/")[1]}`;
   if (key.startsWith("labels/")) return "labels";
@@ -125,4 +127,15 @@ export function coversCapabilities(
     type: "FeatureCollection",
     features: [shape(target), shape(source)],
   });
+}
+
+export function capabilityChoices(m: Manifest) {
+  return [
+    ...CAPABILITY_CHOICES,
+    ...(m.rasters ?? []).map((r) => ({
+      id: `raster:${r.id}`,
+      label: r.name,
+      group: "Map",
+    })),
+  ];
 }

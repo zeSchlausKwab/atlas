@@ -91,17 +91,19 @@ export async function composeCapabilities(
       n = addition?.index.manifest;
     const present = request.capabilities.filter((f) =>
       writer!.hasPrefix(
-        f.startsWith("tile:")
-          ? `tile/${f.slice(5)}/`
-          : f.startsWith("routing:")
-            ? `routing/${f.slice(8)}/`
-            : f === "search"
-              ? "search/locations"
-              : f === "reverse"
-                ? "search/streets"
-                : f === "peaks"
-                  ? "query/peaks"
-                  : `${f}/`,
+        f.startsWith("raster:")
+          ? `raster/${f.slice(7)}/`
+          : f.startsWith("tile:")
+            ? `tile/${f.slice(5)}/`
+            : f.startsWith("routing:")
+              ? `routing/${f.slice(8)}/`
+              : f === "search"
+                ? "search/locations"
+                : f === "reverse"
+                  ? "search/streets"
+                  : f === "peaks"
+                    ? "query/peaks"
+                    : `${f}/`,
       ),
     );
     const has = (f: string) => present.includes(f),
@@ -126,6 +128,7 @@ export async function composeCapabilities(
     const routingOwner = present.find((f) => f.startsWith("routing:"));
     const known = new Set([
       "vector-rendering",
+      "raster-rendering",
       "building-heights",
       "map-labels",
       "location-search",
@@ -144,6 +147,9 @@ export async function composeCapabilities(
     ]);
     const caps = [
       ...m.capabilities.filter((c) => !known.has(c)),
+      ...(present.some((f) => f.startsWith("raster:"))
+        ? ["raster-rendering"]
+        : []),
       ...(present.some((f) => f.startsWith("tile:"))
         ? ["vector-rendering"]
         : []),
@@ -177,6 +183,7 @@ export async function composeCapabilities(
     const manifest: Omit<Manifest, "snapshot"> = {
       ...base,
       name: request.name,
+      rasters: m.rasters?.filter((r) => has(`raster:${r.id}`)),
       tileLayers: m.tileLayers?.filter((l) => has(`tile:${l}`)) ?? [],
       features: writer.featureCount("tile/"),
       featureCountKind: "tile-records",
