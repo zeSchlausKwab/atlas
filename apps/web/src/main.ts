@@ -102,6 +102,7 @@ let map: WorkspaceMap | undefined;
 let composer: ClientComposer | undefined;
 let composerAbort: AbortController | undefined;
 let compositionSources: CompositionMapSource[] | undefined;
+let compositionInput: ByteSource | undefined;
 let toolSignature = "";
 const appearance = new StyleControls(() => map);
 let sourceLabel = "server";
@@ -269,6 +270,7 @@ let reopening:
   | {
       source: ByteSource;
       composition?: boolean;
+      compositionInput?: ByteSource;
       center?: [number, number];
       zoom?: number;
     }
@@ -285,6 +287,7 @@ function closeSession() {
   composer?.destroy();
   composer = undefined;
   compositionSources = undefined;
+  compositionInput = undefined;
   map?.destroy();
   map = undefined;
 }
@@ -533,6 +536,7 @@ function bindTools() {
 }
 async function openComposition(local?: ByteSource) {
   closeSession();
+  compositionInput = local;
   const opening = session;
   const abort = (composerAbort = new AbortController());
   events = [];
@@ -655,6 +659,7 @@ el("purge-caches").onclick = async () => {
     reopening = {
       source: reader.source,
       composition: !!compositionSources,
+      compositionInput,
       center: map?.center,
       zoom: map?.zoom,
     };
@@ -716,7 +721,7 @@ el("reopen-map").onclick = async () => {
   const saved = reopening;
   if (!saved) return;
   reopening = undefined;
-  if (saved.composition) await openComposition();
+  if (saved.composition) await openComposition(saved.compositionInput);
   else
     await open(
       saved.source instanceof HttpSource
@@ -740,6 +745,7 @@ if (cacheChannel)
       reopening = {
         source: reader.source,
         composition: !!compositionSources,
+        compositionInput,
         center: map?.center,
         zoom: map?.zoom,
       };

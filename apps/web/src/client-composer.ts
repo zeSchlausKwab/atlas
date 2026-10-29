@@ -95,6 +95,7 @@ export async function createComposer(
   const entries: Entry[] = [],
     catalogs = new Set<string>(),
     store = options.store;
+  const pinnedWarnings: string[] = [];
   let recipe: Recipe | undefined,
     starting = true,
     paused = false;
@@ -202,11 +203,14 @@ export async function createComposer(
         pitch: map.pitch,
         bearing: map.bearing,
       };
-    history.replaceState(
-      null,
-      "",
-      `/#view=${encodeURIComponent(JSON.stringify(value))}`,
-    );
+    const link = new URL(location.href);
+    link.pathname = "/";
+    for (const key of ["map", "maps", "source", "api"])
+      link.searchParams.delete(key);
+    const fragment = new URLSearchParams(location.hash.slice(1));
+    fragment.set("view", JSON.stringify(value));
+    link.hash = fragment.toString();
+    history.replaceState(null, "", link.href);
   }
   function status(entry: Entry) {
     if (!entry.status) return;
@@ -537,9 +541,9 @@ export async function createComposer(
     if (!offer.hashtree) return;
     const pinned = recipe?.sources.find((s) => s.url === offer.url);
     if (pinned?.root && pinned.root !== offer.hashtree.root) {
-      message(
-        `Pinned revision of ${offer.manifest.name} is unavailable. Start a new composition to use its replacement.`,
-      );
+      const warning = `Pinned revision of ${offer.manifest.name} is unavailable. Start a new composition to use its replacement.`;
+      pinnedWarnings.push(warning);
+      message(warning);
       return;
     }
     const mirror =
@@ -786,8 +790,8 @@ export async function createComposer(
   el<HTMLInputElement>("coverage").checked = map.coverage;
   map.invalidate();
   message(
-    failures.length
-      ? failures.join(" · ")
+    failures.length || pinnedWarnings.length
+      ? [...failures, ...pinnedWarnings].join(" · ")
       : `${entries.length} maps discovered. Choose sources, then use the normal Route and Explore tabs.`,
   );
   el<HTMLFormElement>("nostr-form").onsubmit = async (e) => {

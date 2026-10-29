@@ -78,11 +78,13 @@ Legacy combined-layer archives need regeneration/splitting before this demo can 
 
 ## Verification
 
-On 29 October, the complete Bun suite passed (351 tests). A visible browser check
+On 29 October, the complete Bun suite passed (351 tests); a subsequent integration
+test also verified a persisted automatic retry dispatching and completing work. A visible browser check
 packed two real Liechtenstein archives (vector/tools plus satellite imagery),
 loaded both members over Hashtree with zero `.atlas` HTTP range requests, and
-opened the resulting file with its host blocked. Member-specific server tools and
-mobile layout were checked. Unit tests verify byte identity, custom data retention,
+opened the resulting file with its host blocked. Member-specific server tools, saved raster opacity and mobile layout were checked.
+With the map host blocked, the packed local file completed nearest-street lookup
+and a walking isochrone, then reopened successfully after cache purge. Unit tests verify byte identity, custom data retention,
 routing without the originals, input deletion protection and raster excerpt bytes.
 
 Earlier composition checks:

@@ -78,3 +78,22 @@ attempt. After three automatic retries, manual **Resume saved build** starts a n
 retry cycle while keeping its failure history. Stop/cancel never resumes itself.
 Low disk, corrupt databases, checksum failures and invalid inputs require attention.
 There is no wall-clock watchdog: legitimate long compilation passes are not killed.
+
+## Fresh deployment and queue — 29 October 2026
+
+Server release `20261029T170931742Z-d6f40793546b-3afcef8f` includes the recovery
+policy and automatic Hashtree publication. The seven legacy jobs/maps were removed;
+the verified NAS source, coastline input and signing identity remain available.
+The old demo base is replaced by an empty bootstrap package. About 357 GiB was
+available before restarting compilation.
+
+Queue receipt: `/home/nixuser/atlas/shared/recipes/europe-three-map-20261029-rebuild.json`.
+
+- Western Europe: `b8272577-990e-4eca-85b1-839c7be9ba18`.
+- Rhine–Alps: `95a9a7cf-d44c-4720-b33f-38aa2f26836f`.
+- Alps–Danube: `fa0b5b37-c2d7-4793-95ae-7f5857d48fe8`.
+
+At deployment verification the parent was extracting its region from the NAS
+planet; the two children were waiting for that parent. This records a started
+build, not completed datasets. The earlier native double-free remains unexplained;
+automatic retry improves recovery but does not repair that root cause.
