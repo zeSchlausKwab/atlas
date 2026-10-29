@@ -182,7 +182,19 @@ See [raster amendment API and guarantees](docs/RASTER-AMENDMENTS.md) for automat
 coverage rules, descriptor metadata and the remaining physical-copy limitation.
 
 For your own pre-tiled imagery, use `bun run raster:import --help`. The importer takes
-an XYZ PNG directory and a JSON layer descriptor like `data/raster-relief/layer.json`.
+a JPEG/PNG MBTiles file, or an XYZ directory and a JSON layer descriptor like
+`data/raster-relief/layer.json`. MBTiles ingestion reads SQLite directly, flips TMS
+rows to XYZ and preserves encoded image bytes. No GDAL or tile extraction directory
+is needed. Inspect first, then import:
+
+```sh
+bun run raster:import --mbtiles /path/to/imagery.mbtiles --dry-run
+bun run raster:import --mbtiles /path/to/imagery.mbtiles --id satellite --output data/satellite.atlas
+ATLAS_FILE=data/satellite.atlas ATLAS_DATA_DIR=data/satellite-host PORT=3183 bun run start
+```
+
+Use the normal client composer to combine this server's catalog with vector maps.
+See [MBTiles ingestion and the Alps rehearsal](docs/MBTILES.md).
 It refuses to overwrite existing archives. Different raster and vector provenance
 can coexist in a client composition; shared graph identity is only needed for routing.
 

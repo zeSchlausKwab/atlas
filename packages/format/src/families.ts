@@ -171,7 +171,10 @@ export function familyCatalog(m: Omit<Manifest, "snapshot">): DataFamily[] {
       },
       provenance: {
         ...r.source,
-        fingerprint: r.registration?.sha256 ?? r.provenance?.archiveSnapshot,
+        fingerprint:
+          r.source.sha256 ??
+          r.registration?.sha256 ??
+          r.provenance?.archiveSnapshot,
       },
       dependencies: [],
     });

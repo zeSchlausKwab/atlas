@@ -4,10 +4,10 @@ import { StreamWriter } from "../../cli/src/stream-writer";
 import { sha256, type Manifest } from "../../format/src/index";
 import {
   validateRasters,
-  pngTile,
+  rasterTile,
   type RasterLayer,
 } from "../../format/src/raster";
-/** Import a local XYZ PNG pyramid; no external tile service remains necessary. */
+/** Import a local XYZ PNG/JPEG pyramid; no external tile service remains necessary. */
 export async function packRaster(
   directory: string,
   layer: RasterLayer,
@@ -32,14 +32,19 @@ export async function packRaster(
         for (const file of (
           await readdir(join(directory, String(z), x))
         ).sort()) {
-          if (!/^(0|[1-9]\d*)\.png$/.test(file)) continue;
-          const y = Number(file.slice(0, -4));
+          const match = /^(0|[1-9]\d*)\.(png|jpg|jpeg)$/.exec(file);
+          if (
+            !match ||
+            (layer.encoding === "png" ? match[2] !== "png" : match[2] === "png")
+          )
+            continue;
+          const y = Number(match[1]);
           if (y >= 2 ** z) throw new Error("Invalid XYZ tile");
           signal.throwIfAborted();
           const bytes = new Uint8Array(
             await Bun.file(join(directory, String(z), x, file)).arrayBuffer(),
           );
-          pngTile(bytes, layer.tileSize);
+          rasterTile(bytes, layer);
           const key = `raster/${layer.id}/${z}/${x}/${y}`,
             hash = await sha256(bytes);
           identities.push(`${key}:${hash}`);
@@ -48,7 +53,8 @@ export async function packRaster(
         }
       }
     }
-    if (!identities.length) throw new Error("No PNG tiles in this XYZ pyramid");
+    if (!identities.length)
+      throw new Error("No matching raster tiles in this XYZ pyramid");
     const manifest: Omit<Manifest, "snapshot"> = {
       format: "atlas",
       version: 1,

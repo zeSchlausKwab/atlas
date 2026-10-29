@@ -1,7 +1,11 @@
 import { AtlasReader } from "../../format/src/reader";
 import { BudgetCache } from "../../format/src/cache";
 import { project } from "../../format/src/index";
-import { pngTile, type RasterLayer } from "../../format/src/raster";
+import {
+  rasterTile,
+  rasterMime,
+  type RasterLayer,
+} from "../../format/src/raster";
 import { cameraBounds, worldToScreen, type Camera } from "./camera";
 export interface RasterLayerView {
   enabled: boolean;
@@ -189,10 +193,12 @@ export class RasterPlane {
           return;
         }
         const bytes = await this.reader.block(t.key);
-        pngTile(bytes, t.layer.tileSize);
+        rasterTile(bytes, t.layer);
         if (this.dead || !this.wanted.has(t.key)) return;
         const image = await createImageBitmap(
-          new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "image/png" }),
+          new Blob([bytes as Uint8Array<ArrayBuffer>], {
+            type: rasterMime(t.layer.encoding),
+          }),
         );
         if (this.dead) {
           image.close();

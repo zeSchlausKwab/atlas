@@ -120,7 +120,10 @@ Status: delivery/composition, PNG/JPEG uploads and embedded raster amendments im
 in an 18.6 MiB standalone Atlas. Raster families have validated versioned descriptors
 (projection, matrix, tile dimensions, imagery kind, extent, zooms, provenance, licence).
 A paged `raster/<id>/<z>/<x>/<y>` namespace supports ordinary verified range reads.
-`raster:import` accepts a local XYZ PNG pyramid and emits an immutable archive.
+`raster:import` accepts a local XYZ PNG/JPEG pyramid or raster MBTiles and emits an
+immutable archive. The [Alps MBTiles rehearsal](MBTILES.md) imported 40,223 JPEG
+tiles into a 553 MiB archive and verified composition, cached rendering and embedded
+imagery alongside routing/search.
 
 The existing consumer renders them through a bounded Canvas image plane with the
 same camera as vectors, beneath labels. Composer opacity controls selective loading;
