@@ -66,3 +66,15 @@ away from the viewport, municipal/national polygons, physical coastlines, sea
 surfaces with island holes, and exact-tag point features. Repeat analysis from cache
 and verify no extra source reads. Local Vienna regressions cover these code paths;
 large-map performance still needs measurement after the builds finish.
+
+## Overnight recovery (2026-10-29)
+
+The preparation queue now persists automatic retries for recognized worker/native
+crashes and transient transfer failures (1 minute, 5 minutes, then 15 minutes).
+An unclean server restart also requeues interrupted active work. Completed native
+checkpoints are reused; retrying does not certify that an underlying bug is fixed.
+The host card exposes the original error, stage, checkpoint and each recovery
+attempt. After three automatic retries, manual **Resume saved build** starts a new
+retry cycle while keeping its failure history. Stop/cancel never resumes itself.
+Low disk, corrupt databases, checksum failures and invalid inputs require attention.
+There is no wall-clock watchdog: legitimate long compilation passes are not killed.

@@ -1,3 +1,4 @@
+import { recoverBuild, type BuildRecovery } from "./preparation-recovery";
 import type { ArchiveImport } from "./archive-import";
 import {
   planRasterAmendment,
@@ -75,6 +76,7 @@ export interface PreparationJob {
     | "deleting";
   selection: PackageSelection;
   resumeCheckpoint?: boolean;
+  recovery?: BuildRecovery;
   allowStorageRisk?: boolean;
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
@@ -102,6 +104,7 @@ export class Preparations {
   private settling?: Promise<void>;
   private dispatching?: Promise<void>;
   private closing = false;
+  private retryTimer?: ReturnType<typeof setTimeout>;
   private constructor(
     readonly directory: string,
     readonly sourcePath: string,
@@ -129,7 +132,8 @@ export class Preparations {
         continue;
       }
       if (job.state === "running" || job.state === "cancelling") {
-        job.state = "failed";
+        const wasStopping = job.state === "cancelling";
+        job.state = wasStopping ? "cancelled" : "failed";
         job.error = job.rasterAmendment
           ? "Server stopped. Requeue to copy the imagery revision again; original files are retained."
           : job.archiveImport
@@ -144,6 +148,11 @@ export class Preparations {
             !!job.imageImport ||
             !!job.archiveImport,
         );
+        if (!wasStopping)
+          recoverBuild(
+            job,
+            "Server interrupted an active preparation. " + job.error,
+          );
         await manager.persist(job);
       }
       if (
@@ -201,6 +210,21 @@ export class Preparations {
   get sourceDirectory() {
     return resolve(this.directory, "../sources");
   }
+  private wakeRetries() {
+    clearTimeout(this.retryTimer);
+    if (this.closing) return;
+    const times = [...this.jobs.values()]
+      .filter((j) => j.state === "queued" && j.recovery?.nextAttemptAt)
+      .map((j) => Date.parse(j.recovery!.nextAttemptAt!))
+      .filter((t) => Number.isFinite(t) && t > Date.now());
+    if (times.length) {
+      this.retryTimer = setTimeout(
+        () => void this.startQueue().catch(console.error),
+        Math.max(1, Math.min(...times) - Date.now()),
+      );
+      this.retryTimer.unref();
+    }
+  }
   async startQueue() {
     if (this.closing || this.active) return;
     if (this.dispatching) return this.dispatching;
@@ -210,6 +234,11 @@ export class Preparations {
       )) {
         if (this.closing || this.active) break;
         if (job.state !== "queued") continue;
+        if (
+          job.recovery?.nextAttemptAt &&
+          Date.parse(job.recovery.nextAttemptAt) > Date.now()
+        )
+          continue;
         if (
           job.sourceAtlasId &&
           this.jobs.get(job.sourceAtlasId)?.state !== "ready"
@@ -225,6 +254,7 @@ export class Preparations {
       }
     })().finally(() => {
       this.dispatching = undefined;
+      this.wakeRetries();
     });
     return this.dispatching;
   }
@@ -232,6 +262,10 @@ export class Preparations {
     const job = this.jobs.get(id);
     if (!job || !["failed", "cancelled"].includes(job.state))
       throw new Error("Only stopped preparations can be queued again.");
+    if (job.recovery) {
+      job.recovery.retries = 0;
+      delete job.recovery.nextAttemptAt;
+    }
     return this.create({ ...job.selection, allowStorageRisk }, job);
   }
   private sourcePlanForMap(id: string): PbfPlan | undefined {
@@ -925,6 +959,7 @@ export class Preparations {
         amendment,
         capabilityChange: capabilityPlan?.change,
         resumeCheckpoint: !!previous?.cachedSource,
+        recovery: previous?.recovery,
         allowStorageRisk,
         progress: {
           phase: "planning",
@@ -988,6 +1023,8 @@ export class Preparations {
           writtenBytes: 0,
         },
       } as PreparationJob);
+      if (job.recovery) delete job.recovery.nextAttemptAt;
+      job.error = undefined;
       this.jobs.set(id, job);
       await this.persist(job);
       let worker: Bun.Subprocess<"ignore", "ignore", "pipe">;
@@ -1054,6 +1091,8 @@ export class Preparations {
                 !!job.archiveImport,
             );
           }
+          if (finalState === "failed")
+            recoverBuild(job, job.error ?? "Unknown preparation failure");
           await this.persist(job);
         })()
           .catch((error) => {
@@ -1150,6 +1189,7 @@ export class Preparations {
     if (!job) throw new Error("Unknown preparation");
     if (job.state === "queued") {
       job.state = "cancelled";
+      if (job.recovery) delete job.recovery.nextAttemptAt;
       job.progress.message = "Removed from queue; preparation has not started.";
       await this.persist(job);
       return job;
@@ -1344,6 +1384,7 @@ export class Preparations {
   }
   async close() {
     this.closing = true;
+    clearTimeout(this.retryTimer);
     await this.dispatching;
     if (this.active) await this.cancel(this.active);
     await this.worker?.exited;

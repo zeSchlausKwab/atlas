@@ -615,7 +615,39 @@ function jobs(values: PreparationJob[]) {
         };
         card.append(resume);
       }
-      card.append(text("p", job.error ?? job.progress.message));
+      card.append(
+        text(
+          "p",
+          job.recovery?.nextAttemptAt
+            ? job.progress.message
+            : (job.error ?? job.progress.message),
+        ),
+      );
+      if (job.recovery?.nextAttemptAt)
+        card.append(
+          text(
+            "p",
+            `Retry scheduled ${new Date(job.recovery.nextAttemptAt).toLocaleString()}. You can stop this recovery with Remove from queue.`,
+            "quiet",
+          ),
+        );
+      if (job.recovery?.history.length) {
+        const history = document.createElement("details");
+        history.append(
+          text(
+            "summary",
+            `Recovery history · ${job.recovery.history.length} failures`,
+          ),
+        );
+        for (const attempt of job.recovery.history)
+          history.append(
+            text(
+              "p",
+              `${new Date(attempt.at).toLocaleString()} · ${attempt.action} · ${attempt.stage ?? "preparation"}${attempt.checkpointAt ? ` · checkpoint ${attempt.checkpointAt}` : ""}\n${attempt.error}`,
+            ),
+          );
+        card.append(history);
+      }
       const view = views.get(job.id);
       if (view) {
         const stages = text("ol", "", "build-stage-list");
