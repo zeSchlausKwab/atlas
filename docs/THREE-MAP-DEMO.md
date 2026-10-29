@@ -48,8 +48,8 @@ Use `--east=27` to change the large eastern edge (20–35°E, still enclosing th
 children). A saved receipt prevents duplicate submissions on a normal rerun.
 If a submission's outcome is unknown after a connection failure, inspect `/host`
 before retrying. Each job is recorded on disk. The child jobs wait until the parent
-is published; then they run in order. Queued jobs survive a server restart, while
-an interrupted active build requires explicit resume. Remove a queued job with
+is published; then they run in order. Queued jobs survive a server restart; interrupted active work uses the persisted
+automatic recovery policy below. Remove a queued job with
 its queue button; stopping a running cached-PBF job keeps its checkpoints.
 
 The host form can enqueue more preparations while another runs. Source downloads

@@ -82,6 +82,7 @@ export interface PreparationJob {
   cachedSource?: VerifiedBuildSource;
   imageImport?: ImageImport;
   archiveImport?: ArchiveImport;
+  compositionExport?: CompositionExport;
   rasterAmendment?: RasterAmendment;
   sourceAtlasId?: string;
   amendment?: HostedAmendment;
@@ -92,6 +93,11 @@ export interface PreparationJob {
   error?: string;
   size?: number;
   manifest?: Manifest;
+}
+export interface CompositionExport {
+  name: string;
+  inputs: Array<{ id: string; snapshot: string }>;
+  maxBytes?: number;
 }
 export class Preparations {
   readonly sources = new PbfSources();
@@ -190,6 +196,10 @@ export class Preparations {
       });
     for (const suffix of [
       "",
+      ".composition",
+      ".composition.part",
+      ".composition.payload.part",
+      ".composition.directory.part",
       ".part",
       ".payload.part",
       ".directory.part",
@@ -732,6 +742,52 @@ export class Preparations {
     void this.startQueue().catch(console.error);
     return job;
   }
+  private compositionInputs(request: CompositionExport) {
+    if (
+      !request ||
+      typeof request.name !== "string" ||
+      !request.name.trim() ||
+      request.name.length > 80 ||
+      !Array.isArray(request.inputs) ||
+      !request.inputs.length ||
+      request.inputs.length > 64 ||
+      new Set(request.inputs.map((i) => i?.id)).size !== request.inputs.length
+    )
+      throw new Error("Choose 1–64 distinct maps and a name");
+    if (!validBudget(request.maxBytes ?? NO_SIZE_LIMIT))
+      throw new Error("Invalid output budget");
+    return request.inputs.map((input) => {
+      const source = this.amendmentInput(input.id);
+      if (source.manifest.snapshot !== input.snapshot)
+        throw new Error("Composition source snapshot changed");
+      if (source.manifest.composition)
+        throw new Error(
+          "Choose original member maps; nested compositions are not supported",
+        );
+      return {
+        path: source.path,
+        manifest: source.manifest,
+        bytes: Bun.file(source.path).size,
+      };
+    });
+  }
+  async createComposition(
+    request: CompositionExport & { allowStorageRisk?: boolean },
+  ) {
+    const inputs = this.compositionInputs(request);
+    const selection = familySelection(
+      inputs[0]!.manifest,
+      installedCapabilities(inputs[0]!.manifest),
+      request.name,
+      request.maxBytes ?? NO_SIZE_LIMIT,
+      0,
+    );
+    return this.create({
+      ...selection,
+      compositionExport: request,
+      allowStorageRisk: request.allowStorageRisk,
+    });
+  }
   async create(value: unknown, previous?: PreparationJob, start = false) {
     if (this.closing)
       throw new Error("Server is stopping; try again after restart.");
@@ -743,6 +799,7 @@ export class Preparations {
       amendment?: HostedAmendment;
       capabilityChange?: CapabilityChange;
       rasterAmendment?: RasterAmendment;
+      compositionExport?: CompositionExport;
       allowStorageRisk?: boolean;
     } | null;
     if (
@@ -754,6 +811,21 @@ export class Preparations {
       extra?.allowStorageRisk ?? previous?.allowStorageRisk ?? false;
     const imageImport = previous?.imageImport;
     const archiveImport = previous?.archiveImport;
+    const compositionExport =
+      previous?.compositionExport ?? extra?.compositionExport;
+    const compositionInputs = compositionExport
+      ? this.compositionInputs(compositionExport)
+      : undefined;
+    if (
+      compositionExport &&
+      (extra?.cachedSourceId ||
+        extra?.sourcePlanId ||
+        extra?.sourceAtlasId ||
+        extra?.amendment ||
+        extra?.capabilityChange ||
+        extra?.rasterAmendment)
+    )
+      throw new Error("Choose one preparation type");
     const rasterAmendment = previous?.rasterAmendment ?? extra?.rasterAmendment;
     const rasterPlan = rasterAmendment
       ? await this.planRasters(rasterAmendment)
@@ -850,7 +922,9 @@ export class Preparations {
           "Choose the configured ocean source with a cached PBF; GDAL must be installed",
         );
     }
-    if (rasterPlan) {
+    if (compositionExport) {
+      // Each independent member is pinned above; the parent is only a container.
+    } else if (rasterPlan) {
       // Raster inputs are pinned and validated independently of PBF capability selections.
     } else if (archiveImport) {
       if (
@@ -922,25 +996,27 @@ export class Preparations {
             ),
           ).size
         : 0;
-    const needed = rasterPlan
-      ? rasterPlan.estimatedWorkspaceBytes
-      : archiveImport
-        ? DISK_RESERVE +
-          (archiveImport.format === "mbtiles" ? archiveImport.size * 2.2 : 0)
-        : imageImport
-          ? DISK_RESERVE + imageImport.estimatedBytes
-          : capabilityPlan
-            ? capabilityPlan.estimatedWorkspaceBytes
-            : amendment
-              ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-              : hostPreparationSpace(selection.maxBytes, {
-                  cached: !!cached,
-                  partitioned,
-                  resume: !!previous?.resumeCheckpoint,
-                  extractedBytes,
-                  sourceBytes: plan?.bytes,
-                  atlasBytes: Bun.file(inputPath).size,
-                });
+    const needed = compositionInputs
+      ? DISK_RESERVE + compositionInputs.reduce((n, i) => n + i.bytes, 0) * 2.1
+      : rasterPlan
+        ? rasterPlan.estimatedWorkspaceBytes
+        : archiveImport
+          ? DISK_RESERVE +
+            (archiveImport.format === "mbtiles" ? archiveImport.size * 2.2 : 0)
+          : imageImport
+            ? DISK_RESERVE + imageImport.estimatedBytes
+            : capabilityPlan
+              ? capabilityPlan.estimatedWorkspaceBytes
+              : amendment
+                ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+                : hostPreparationSpace(selection.maxBytes, {
+                    cached: !!cached,
+                    partitioned,
+                    resume: !!previous?.resumeCheckpoint,
+                    extractedBytes,
+                    sourceBytes: plan?.bytes,
+                    atlasBytes: Bun.file(inputPath).size,
+                  });
     const disk = await readStorage(this.directory);
     checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
     if (!start) {
@@ -954,6 +1030,7 @@ export class Preparations {
         cachedSource: cached,
         imageImport,
         archiveImport,
+        compositionExport,
         rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
@@ -1002,6 +1079,7 @@ export class Preparations {
         cachedSource: cached,
         imageImport,
         archiveImport,
+        compositionExport,
         rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
@@ -1145,6 +1223,12 @@ export class Preparations {
         cachedSource: cached,
         imageImport,
         archiveImport,
+        compositionExport: compositionExport
+          ? {
+              request: compositionExport,
+              paths: compositionInputs!.map((i) => i.path),
+            }
+          : undefined,
         rasterAmendment: rasterAmendment
           ? {
               request: rasterAmendment,
@@ -1219,7 +1303,8 @@ export class Preparations {
       this.activeSource === id ||
       [...this.jobs.values()].some(
         (j) =>
-          (j.sourceAtlasId === id ||
+          (j.compositionExport?.inputs.some((i) => i.id === id) ||
+            j.sourceAtlasId === id ||
             j.rasterAmendment?.targetId === id ||
             j.rasterAmendment?.layers.some((r) => r.sourceId === id) ||
             j.amendment?.targetId === id ||
@@ -1349,6 +1434,8 @@ export class Preparations {
               ? this.delete(match[1]!)
               : this.cancel(match[1]!)),
         );
+      if (url.pathname === "/admin/preparations/composition")
+        return json(await this.createComposition(JSON.parse(raw)), 202);
       if (url.pathname === "/admin/preparations/raster-plan")
         return json(await this.planRasters(JSON.parse(raw)));
       if (url.pathname === "/admin/preparations/raster")

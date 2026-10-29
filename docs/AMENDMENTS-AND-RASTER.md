@@ -284,3 +284,13 @@ a structured warning. **Start anyway** explicitly accepts that estimate for the
 saved job, including its queued dispatch; it does not disable runtime low-disk
 checks. Source downloads, map preparation and capability revisions share this
 flow. Explicit CLI/API byte ceilings remain supported for automated callers.
+
+## Composition packaging delivered (29 October 2026)
+
+The host library can now queue a self-contained composition of selected complete
+Atlas archives, preserving every member byte, including custom families and raster
+pixels. The client expands that file into the same composition used for independent
+Hashtree sources. Member-specific server tools retain their original capability and
+graph identities. New served files are automatically Hashtree indexed and announced.
+See [Composition](COMPOSITION.md) for the workflow and current limitations. Regional
+composition clipping, deduplication and per-member amendments remain future work.

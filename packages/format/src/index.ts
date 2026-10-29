@@ -1,3 +1,8 @@
+import {
+  validateComposition,
+  MEMBER_CHUNK_BYTES,
+  type ArchiveComposition,
+} from "./composition-schema";
 import { validateFamilies, type DataFamily } from "./families";
 import { validateRasters, type RasterLayer } from "./raster";
 import { pagedZoom } from "../../geocoding/src/paging";
@@ -136,6 +141,7 @@ export interface Manifest {
   tileLayers?: MapLayer[];
   rasters?: RasterLayer[];
   families?: DataFamily[];
+  composition?: ArchiveComposition;
   buildingHeights?: {
     tagged: number;
     estimated: number;
@@ -190,7 +196,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|raster\/[a-z][a-z0-9_-]{0,63}|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|members\/m[0-9]{1,3}|raster\/[a-z][a-z0-9_-]{0,63}|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -311,6 +317,11 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       new Set(manifest.tileLayers).size !== manifest.tileLayers.length)
   )
     throw new Error("Invalid map layer catalog");
+  validateComposition(manifest.composition);
+  if (
+    manifest.capabilities.includes("map-composition") !== !!manifest.composition
+  )
+    throw new Error("Composition capability mismatch");
   validateRasters(manifest.rasters);
   validateFamilies(manifest.families);
   if (
@@ -502,24 +513,29 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
                   p.z >= r.minZoom &&
                   p.z <= r.maxZoom,
               )
-            : isRoutingCell(`${p.prefix}/`)
-              ? p.z !== routingZoom(manifest, p.prefix!)
-              : p.prefix === "labels/settlements" ||
-                  p.prefix === "query/peaks-data"
-                ? p.z !== 8
-                : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
-                  ? p.z !== manifest.labelZoom
-                  : /^objects\/(geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)$/.test(
-                        p.prefix!,
-                      )
-                    ? p.z !== 26
-                    : /^boundaries\/(records|geometry)$/.test(p.prefix!)
-                      ? p.z !== 16
-                      : pagedZoom(p.prefix!) !== undefined
-                        ? p.z !== pagedZoom(p.prefix!)
-                        : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                            p.prefix!,
-                          ) || p.z !== manifest.featureZoom) ||
+            : p.prefix?.startsWith("members/")
+              ? p.z !== 26 ||
+                !manifest.composition?.members.some(
+                  (m) => p.prefix === `members/${m.id}`,
+                )
+              : isRoutingCell(`${p.prefix}/`)
+                ? p.z !== routingZoom(manifest, p.prefix!)
+                : p.prefix === "labels/settlements" ||
+                    p.prefix === "query/peaks-data"
+                  ? p.z !== 8
+                  : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
+                    ? p.z !== manifest.labelZoom
+                    : /^objects\/(geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)$/.test(
+                          p.prefix!,
+                        )
+                      ? p.z !== 26
+                      : /^boundaries\/(records|geometry)$/.test(p.prefix!)
+                        ? p.z !== 16
+                        : pagedZoom(p.prefix!) !== undefined
+                          ? p.z !== pagedZoom(p.prefix!)
+                          : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                              p.prefix!,
+                            ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -655,6 +671,24 @@ export function validateBlocks(
           (block.rawLength ?? block.length) > 1024 ** 2)
       )
         throw new Error("Invalid boundary block address or size");
+    }
+    if (block.key.startsWith("members/")) {
+      const a = spatialAddress(block.key),
+        member = manifest.composition?.members.find(
+          (m) => a?.prefix === `members/${m.id}`,
+        );
+      if (
+        !a ||
+        !member ||
+        a.z !== 26 ||
+        a.y !== 0 ||
+        a.x < 0 ||
+        a.x >= Math.ceil(member.bytes / MEMBER_CHUNK_BYTES) ||
+        block.codec ||
+        block.length !==
+          Math.min(MEMBER_CHUNK_BYTES, member.bytes - a.x * MEMBER_CHUNK_BYTES)
+      )
+        throw new Error("Invalid embedded member block");
     }
     if (block.key.startsWith("objects/") && block.key !== "objects/index") {
       const a = spatialAddress(block.key);

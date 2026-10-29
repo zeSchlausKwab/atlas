@@ -119,6 +119,7 @@ async function smoke(target: string, settings: Settings, id: string) {
         ATLAS_HOST_POLICY: join(data, "policy.json"),
         ATLAS_RELEASE: id,
         ATLAS_CVM_SECRET: "",
+        ATLAS_DISCOVERY_AUTO: "0",
       },
       stdout: "pipe",
       stderr: "pipe",

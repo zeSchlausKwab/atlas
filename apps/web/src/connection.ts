@@ -40,11 +40,12 @@ export async function clientConnection() {
   };
 }
 /** A foreign source opens in this client, never at the server's root. */
-export function sourceLink(source: string, api: string) {
-  const url = new URL(location.href);
-  for (const key of ["map", "maps"]) url.searchParams.delete(key);
-  url.searchParams.set("source", httpUrl(source));
-  url.searchParams.set("api", httpUrl(api));
-  url.hash = "";
-  return url.href;
+export function sourceLink(source: string, api: string, mapId?: string) {
+  const input = new URL(httpUrl(source));
+  const id =
+    mapId ?? input.pathname.match(/\/maps\/(demo|[a-f0-9-]{36})\.atlas$/)?.[1];
+  if (!id) throw new Error("Map link requires a hosted dataset identity");
+  return clientLink(location.href, new URL(httpUrl(api)).origin, {
+    maps: [id],
+  });
 }

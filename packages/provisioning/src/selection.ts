@@ -28,6 +28,8 @@ import {
 export interface PackageSelection {
   /** Optional, pinned server-configured assembled ocean source. */
   ocean?: { sha256: string };
+  /** Intersecting raster tiles; pixels remain unchanged. */
+  rasters?: string[];
   snapshot: string;
   name: string;
   polygon: Polygon;
@@ -103,6 +105,13 @@ export function validateSelection(
   value: unknown,
   m: Manifest,
 ): asserts value is PackageSelection {
+  const selected = value as PackageSelection;
+  if (
+    selected?.rasters &&
+    (!Array.isArray(selected.rasters) ||
+      selected.rasters.some((id) => !m.rasters?.some((r) => r.id === id)))
+  )
+    throw new Error("Selected raster is unavailable");
   validateSelectionScope(value, {
     snapshot: m.snapshot,
     bounds: m.bounds,
@@ -188,6 +197,7 @@ export function validateSelectionScope(
       "Enter an output budget of at least 1 MiB, with an exact whole-byte value.",
     );
   if (
+    !s.rasters?.length &&
     !s.layers.length &&
     !s.profiles.length &&
     !s.featureKinds.length &&
@@ -240,6 +250,15 @@ export async function planPreparation(
         ? ["tile"]
         : [])
       add(await spatial(prefix, z));
+  }
+  for (const id of s.rasters ?? []) {
+    const raster = m.rasters!.find((r) => r.id === id)!;
+    for (
+      let z = Math.max(s.minZoom, raster.minZoom);
+      z <= Math.min(s.maxZoom, raster.maxZoom);
+      z++
+    )
+      add(await spatial(`raster/${id}`, z));
   }
   for (const kind of s.featureKinds) {
     report(`Finding ${kind} source objects…`);

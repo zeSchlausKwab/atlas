@@ -370,10 +370,14 @@ export async function preparePackage(
     for (const mode of s.profiles)
       if (!profiles[mode]!.count) delete profiles[mode];
     if (Object.keys(profiles).length) caps.push("transport-routing");
+    const rasters = (m.rasters ?? []).filter((r) =>
+      writer.hasPrefix(`raster/${r.id}/`),
+    );
+    if (rasters.length) caps.push("raster-rendering");
     const manifest: Omit<Manifest, "snapshot"> = {
       ...m,
-      // This vector/semantic excerpt adapter does not copy imagery or unknown families.
-      rasters: undefined,
+      // Pixel tiles retain their native extent; the selection clips display coverage.
+      rasters: rasters.length ? rasters : undefined,
       families: m.families ? [] : undefined,
       name: s.name.trim(),
       bounds: bounds(s.polygon),
@@ -406,7 +410,7 @@ export async function preparePackage(
         polygon: s.polygon,
         parentSnapshot: m.snapshot,
         boundaryPolicy:
-          "intersecting-display-tiles; intersecting-source-objects; clipped-labels-and-search; padded-whole-routing-cells",
+          "intersecting-display-and-raster-tiles; intersecting-source-objects; clipped-labels-and-search; padded-whole-routing-cells",
         ...(caps.includes("transport-routing")
           ? { routingPaddingCells: s.paddingCells }
           : {}),

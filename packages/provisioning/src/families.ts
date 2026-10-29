@@ -69,6 +69,9 @@ export function familySelection(
 ): PackageSelection {
   const has = (id: string) => families.includes(id);
   return {
+    rasters: (m.rasters ?? [])
+      .filter((r) => has(`raster:${r.id}`))
+      .map((r) => r.id),
     snapshot: m.snapshot,
     name,
     maxBytes,

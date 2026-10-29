@@ -1,3 +1,5 @@
+import { packComposition } from "../../packages/provisioning/src/composition";
+import type { CompositionExport } from "./preparations";
 import { importArchive, type ArchiveImport } from "./archive-import";
 import {
   amendRasters,
@@ -49,6 +51,7 @@ process.on(
     cachedSource?: VerifiedBuildSource;
     imageImport?: ImageImport;
     archiveImport?: ArchiveImport;
+    compositionExport?: { request: CompositionExport; paths: string[] };
     rasterAmendment?: {
       request: RasterAmendment;
       target: string;
@@ -113,7 +116,43 @@ process.on(
     try {
       await checkDisk();
       abort.signal.throwIfAborted();
-      if (data.archiveImport) {
+      if (data.compositionExport) {
+        const files: PackageSource[] = [],
+          readers: AtlasReader[] = [];
+        try {
+          for (const [i, path] of data.compositionExport.paths.entries()) {
+            report({
+              phase: "verifying",
+              message: `Opening member ${i + 1} of ${data.compositionExport.paths.length}`,
+              completed: i,
+              total: data.compositionExport.paths.length,
+              unit: "stages",
+              readBytes: 0,
+              writtenBytes: 0,
+            });
+            const f = await PackageSource.open(path);
+            files.push(f);
+            const reader = await new AtlasReader(f).open();
+            readers.push(reader);
+            if (
+              reader.index.manifest.snapshot !==
+              data.compositionExport.request.inputs[i]!.snapshot
+            )
+              throw new Error("Composition source snapshot changed");
+          }
+          await packComposition(
+            readers,
+            data.selection.name,
+            output,
+            data.selection.maxBytes,
+            abort.signal,
+            report,
+          );
+        } finally {
+          readers.forEach((r) => r.dispose());
+          await Promise.all(files.map((f) => f.close()));
+        }
+      } else if (data.archiveImport) {
         await importArchive(
           join(work, `input.${data.archiveImport.format}`),
           output,

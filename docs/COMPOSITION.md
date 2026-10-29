@@ -4,16 +4,57 @@ Open `/` → **Client composer**, or select prepared maps in `/host` → **Your 
 
 Each card controls geometry layers and labels independently. Disabled sources are disposed, aborting in-flight reads and dropping their GPU meshes. Toggle one back on to reuse validated blocks in the shared persistent cache. Arrow buttons raise display priority. Coverage outlines show original advertised polygons; the actual visible coverage may be smaller after priority resolution. These controls change the consumer's subscription, not the files hosted on disk.
 
-**Copy view link** includes catalog URLs, selected sources, layer choices, order, tool source and camera. Recipients must be able to access those hosts; a localhost link remains local to its machine. Links resolve current catalog offers rather than pinning their snapshots forever.
+**Copy view link** includes catalog URLs, selected sources, layer choices, order, tool source and camera. Recipients must be able to access those hosts; a localhost link remains local to its machine. New view links pin the Hashtree root. If a host replaces that revision, the client reports it as unavailable instead of silently selecting different data.
 
-## Public delivery
+## Discovery and delivery
 
-- `GET /catalog` exposes ready map manifests, sizes, range URLs and per-map operation API URLs. It permits cross-origin browser reads.
-- `/maps/<id>.atlas` supports HTTP Range, strong ETags, conditional reads and CORS, including preflight for `If-Match`.
-- **Add another host’s catalog** reads another HTTP(S) catalog directly in the browser. Catalog-relative URLs resolve against that host. Identical map IDs on different hosts remain distinct offers.
-- No authentication, public deployment or Nostr publication is added. The local server retains its existing loopback binding. Prepared files were already exposed through these routes; the new view makes their composition usable.
+The normal network composer uses signed Nostr announcements and Hashtree reads.
+Connecting a host loads its `/discovery` bootstrap (publisher, relay and signed
+events), verifies the events, then subscribes to its relay. The former HTTP catalog
+form and per-map HTTP/Hashtree selector have been removed. A host automatically
+indexes each newly completed served file; publication progress is under Discovery
+& delivery. Failed indexing can be retried there. `ATLAS_PUBLIC_URL` controls the
+advertised LAN/public origin; `ATLAS_DISCOVERY_AUTO=0` disables automatic indexing.
 
-The catalog is a discovery hint. Before rendering, `AtlasReader` verifies package structure, block hashes and the snapshot advertised by the offer. Each reader retains its own snapshot identity, ETag and range source. GPU tile keys are namespaced by source session, so identical `tile/water/z/x/y` keys from different files cannot collide.
+`GET /catalog` and `/maps/<id>.atlas` remain interoperable metadata/download APIs.
+They are not an alternate composition transport in the UI. Local `.atlas` files
+still open directly, including the combined archives below. See [Hashtree](HASHTREE.md)
+for signature verification, mirrors and caching.
+
+## Pack a composition into one file
+
+Select maps under **Your map library**, enter a **Combined file name**, then click
+**Pack selected maps into one .atlas**. This queues a durable job with progress.
+It copies the complete selected archives, including routing, geometry, search,
+feature extraction, raster tiles and opaque custom blocks. The resulting file
+works after its input archives are removed. Live composition requires no export;
+packing makes that collection portable as a single self-contained file.
+
+The outer manifest has `map-composition` and a versioned member directory. Every
+member retains its original bytes, manifest, graph identity, indexes and hashes.
+Member data is stored in hashed 1 MiB chunks with a paged directory; readers expose
+ordinary Atlas byte ranges over those chunks. This avoids conflating unrelated
+OSM IDs, custom schemas or graph identities. The extra chunk layer can overfetch
+up to 1 MiB for small cold reads; optimize that after measuring real large exports.
+Hashtree's 64 KiB leaves are a separate transport layer.
+
+The viewer expands members into the normal compositor, with per-layer display
+ownership and scoped tools. HTTP server tools use
+`/maps/<bundle-id>/api/members/<member-id>/<operation>`. Cross-member routing still
+requires compatible shared graph identity; packaging cannot create connectivity
+between independently compiled graphs. A local file runs its tools on the device.
+
+This slice packs whole selected maps (1–64 members); it does not clip a composition
+to a new polygon, deduplicate overlapping archives, or recursively nest bundles.
+Input revisions are pinned and protected from deletion while queued/running. All
+stored blocks are checked before copying; publication is exclusive and atomic.
+Packing retries restart the copy, while original inputs remain intact. Allow
+roughly twice the combined input size as temporary/final workspace.
+
+The regional preparation API also accepts explicit raster layer IDs and retains
+intersecting raster tiles with their original bytes and attribution. It does not
+mask edge pixels. That existing single-map excerpt path only understands supported
+families; use whole-member packaging to preserve unknown custom data unchanged.
 
 ## Display ownership
 
@@ -25,17 +66,26 @@ An empty authoritative tile is empty coverage, not permission to mix in a lower 
 
 ## Scope and budgets
 
-The normal workspace is now a **2D display composition**, including camera rotation/tilt of the ground plane. Existing Route and isochrone controls run across compatible selected sources in a Web Worker. **Tool source** explicitly scopes search, reverse lookup, peak queries, feature extraction, offline export and server tools to one selected map. Extracted features remain selectable on the composed map. Those operations do not silently merge indexes. Building extrusion across clipped boundaries and merged offline export are not implemented; **Open this map only** retains single-map 3D and tools. No search index or routing graph is fetched merely to display the map.
+The normal workspace is now a **2D display composition**, including camera rotation/tilt of the ground plane. Existing Route and isochrone controls run across compatible selected sources in a Web Worker. **Tool source** explicitly scopes search, reverse lookup, peak queries, feature extraction, offline export and server tools to one selected map. Extracted features remain selectable on the composed map. Those operations do not silently merge indexes. Building extrusion across clipped boundaries and polygon-clipped composition export are not implemented. Whole-map packaging is available in the host library. No search index or routing graph is fetched merely to display the map.
 
 The composer lives in a normal sidebar tab, opened from **Client composer** in the header. `/compose` bookmarks redirect to `/`, preserving the selection query and shared-view fragment. The **Data** tab filters layers and individual label categories globally; each composer card further restricts its own source. Style dials, map picks, route/isochrone overlays, feature selection and polygon drawing share the same tool interface in both viewers. Byte and memory counters aggregate active sources.
 
-Independent snapshots can compose visually without sharing graph identities. Cross-package routing requires compatible partitions of one compiled graph; sharing an OSM date alone is insufficient. `transport.graphSnapshot` records that root identity through nested preparations. `RoutingComposition` resolves the worker’s frontier requests to covering packages, verifies overlapping cell hashes, and reports unavailable coverage as missing data. It never interprets a missing host or an excerpt boundary as an empty graph. HTTP catalogs are the current discovery adapter. Nostr announcements, hashtree mirrors and ContextVM federation remain separate work.
+Independent snapshots can compose visually without sharing graph identities. Cross-package routing requires compatible partitions of one compiled graph; sharing an OSM date alone is insufficient. `transport.graphSnapshot` records that root identity through nested preparations. `RoutingComposition` resolves the worker’s frontier requests to covering packages, verifies overlapping cell hashes, and reports unavailable coverage as missing data. It never interprets a missing host or an excerpt boundary as an empty graph. Signed Nostr announcements and Hashtree mirrors provide discovery and delivery. ContextVM tools retain their explicit member/source scope.
 
-Up to eight active sources are allowed in this UI. Per-source cache targets are 12 MiB GPU meshes, 8 MiB decoded geometry, 2 MiB decoded labels, 2 MiB parsed label data and 2 MiB directory descriptors. Active meshes can exceed the cache target while pinned. Persistent compressed blocks share the existing 128 MiB cache. Other allocations, directory roots, in-flight reads, places and GPU overhead are additional. The header’s **Purge caches** button and cross-tab purge signal release every source and pause the workspace. **Reopen map** restores the selected composition.
+Up to eight selected offers are allowed in this UI; a combined offer expands into its retained members. Per-source cache targets are 12 MiB GPU meshes, 8 MiB decoded geometry, 2 MiB decoded labels, 2 MiB parsed label data and 2 MiB directory descriptors. Active meshes can exceed the cache target while pinned. Persistent compressed blocks share the existing 128 MiB cache. Other allocations, directory roots, in-flight reads, places and GPU overhead are additional. The header’s **Purge caches** button and cross-tab purge signal release every source and pause the workspace. **Reopen map** restores the selected composition.
 
 Legacy combined-layer archives need regeneration/splitting before this demo can compose them. Polygon excerpts follow the existing non-antimeridian preparation constraints.
 
 ## Verification
+
+On 29 October, the complete Bun suite passed (351 tests). A visible browser check
+packed two real Liechtenstein archives (vector/tools plus satellite imagery),
+loaded both members over Hashtree with zero `.atlas` HTTP range requests, and
+opened the resulting file with its host blocked. Member-specific server tools and
+mobile layout were checked. Unit tests verify byte identity, custom data retention,
+routing without the originals, input deletion protection and raster excerpt bytes.
+
+Earlier composition checks:
 
 - Bun tests cover priority by channel, polygon holes, triangular coverage, disabled/below-minimum sources, overzoom, hidden tile filtering, identical keys in different snapshots and catalog URL validation.
 - Native Rust tests verify triangulated masks preserve holes, separate polygons and small-coordinate precision.
@@ -58,7 +108,7 @@ The recipe targets approximately 1 GiB per region, with a 2 GiB safety ceiling; 
 
 The script checks free disk space before expensive stages and resumes completed stages from `data/danube-build/`. It writes publication records only when all four packages are ready. Keep that directory’s recipe and source provenance together; changing geography or capabilities requires a new build directory (the byte ceiling can change on resume). Generated maps and build outputs are ignored by Git.
 
-## Prepared Danube set (2026-10-06 source snapshot)
+## Historical Danube measurements (2026-10-06 source snapshot)
 
 | Archive                          |      Size | Stored detail                     |
 | -------------------------------- | --------: | --------------------------------- |

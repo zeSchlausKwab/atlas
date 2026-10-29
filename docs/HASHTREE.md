@@ -8,14 +8,15 @@ Publishing does not require rebuilding geographic data.
 ## Try it locally
 
 1. Run `bun run setup` and `bun run demo` (see the README prerequisites).
-2. In `http://127.0.0.1:3100/host`, prepare an excerpt or publish the current map
-   under **Discovery & delivery**. Each library card has **Publish with Hashtree**.
-3. In the client **Composer**, use the relay URL and publisher key from the host
-   console, then **Listen for maps**. Select the discovered map.
-4. Its delivery selector switches between **Hashtree · verified blocks** and
-   **HTTP · byte ranges**. Read counters distinguish logical Atlas bytes from
-   actual Hashtree network bytes. Existing active HTTP readers stay HTTP when an
-   offer acquires Hashtree support; select the transport to reopen them.
+2. Prepare or import a file under `/host`. Finished served maps are indexed and
+   announced automatically; follow **Discovery & delivery** for progress. A
+   **Publish / retry Hashtree** action remains available on each library card.
+3. Open the client **Composer**. It bootstraps the host's signed announcements
+   from `/discovery` and subscribes to its relay. Additional publishers can be
+   selected with a relay URL and publisher key.
+4. Network subscriptions always use Hashtree. The HTTP transport selector and
+   unsigned catalog composition UI have been removed. Direct archive downloads
+   and opening local files remain supported.
 
 The host includes a read-only Nostr relay at `/nostr`. No account, public relay,
 remote server, or secret key entry is required. Its generated signing key lives in
@@ -38,8 +39,9 @@ remote server, or secret key entry is required. Its generated signing key lives 
   event ordering and seven-day expiration. Sessions remain pinned to their chosen
   snapshot. Same-root mirrors combine providers; different source revisions are
   not silently merged. Click **Listen for maps** again to reconnect after a drop.
-- The HTTP catalog also carries tree offers, so Nostr is optional for delivery.
-  Routing, search and task workspaces use the same AtlasReader interface.
+- The compatibility HTTP catalog also carries tree offers. The normal client
+  uses signed announcements and Hashtree. Routing, search and task workspaces use
+  the same AtlasReader interface, including embedded members of a combined file.
 - Browser blob cache shares the existing 128 MiB persistent LRU. Purge caches
   clears it too. Complete cached Atlas blocks remain usable without blob requests.
 
@@ -47,6 +49,7 @@ The relay serves this host's announcements only; it rejects third-party writes.
 Republishing or restarting the host renews announcements. A continuously running
 host currently needs republication before the seven-day expiration. Set
 `ATLAS_PUBLIC_URL` when the host's advertised URL differs from the request origin.
+`ATLAS_DISCOVERY_AUTO=0` disables automatic indexing (used for deployment smoke checks).
 `ATLAS_DISCOVERY_RELAYS` optionally publishes to an explicitly configured comma-
 separated relay list. Leave it unset for local/LAN demos. HTTP on an insecure LAN
 and `ws:` discovery require an HTTP client; HTTPS clients need HTTPS/WSS endpoints.
@@ -154,7 +157,7 @@ The 48 GiB per-file ceiling is a maximum, not an expected size. The source build
 must finish before the two final datasets are available. Cross-map acceptance
 checks still need to run on the completed large files.
 
-On 27 October the parent completed at 8,555,145,272 bytes. The two child preparations
+Historical run: on 27 October the parent completed at 8,555,145,272 bytes. The two child preparations
 are coordinated by the user service `atlas-central-pair-20261027` on the LAN server;
 its state is under `/home/nixuser/atlas/shared/central-pair-run-20261027/`.
 West/east are prepared sequentially through the normal host API, then Hashtree
@@ -162,3 +165,10 @@ indexed. This avoids another PBF download and keeps each final excerpt a complet
 standalone `.atlas` file. The running web server is not restarted by this coordinator.
 Use the saved state for final IDs; do not substitute the parent for a child in
 cross-map acceptance tests. No existing datasets are deleted by this process.
+
+## Current large demo reset (29 October)
+
+Legacy Western Europe/checkpoint jobs and the old Vienna/Central Europe library
+were removed before the current-format rebuild. The verified planet on the NAS
+and host signing identity were retained. Use the current `/host` jobs and new
+three-map queue receipt, not historical IDs above. See [Three-map demo](THREE-MAP-DEMO.md).

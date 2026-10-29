@@ -512,17 +512,37 @@
         <div class="host-composition-bar">
           <a id="prepare-compose" href="#library" target="_blank" rel="noopener"
             >Compose hosted maps ↗</a
-          ><a href="/catalog" target="_blank" rel="noopener"
-            >Public catalog ↗</a
+          ><a href="/discovery" target="_blank" rel="noopener"
+            >Signed announcements ↗</a
           ><span id="prepare-compose-count" class="quiet"
             >Choose maps below, or open the full library.</span
           >
         </div>
+        <form id="prepare-export-form" class="host-actions">
+          <label
+            >Combined file name
+            <input
+              id="prepare-export-name"
+              value="Map composition"
+              maxlength="80"
+              required
+          /></label>
+          <button id="prepare-export" disabled>
+            Pack selected maps into one .atlas
+          </button>
+        </form>
         <div class="host-composition-help">
           <p>
-            <strong>One view, separate files.</strong> Check “Compose” on the
-            maps you want, then open the selection in the client. Toggle layers
-            and adjust imagery opacity there.
+            <strong>One view, separate Hashtree sources.</strong> Check
+            “Compose” on the maps you want, then open the selection in the
+            client. Toggle layers and adjust imagery opacity there.
+          </p>
+          <p>
+            Pack the selected maps to preserve every member’s geometry, routing,
+            search, imagery and custom data in one downloadable file. Source
+            maps stay available. This copies complete selected maps; it does not
+            cut them to the preview area. Network maps are published with
+            Hashtree automatically.
           </p>
           <p>
             <strong>One file with embedded imagery.</strong> Choose “Manage

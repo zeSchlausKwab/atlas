@@ -35,6 +35,34 @@ export class MapDiscovery {
   private indexes = new Map<string, IndexedTree>();
   private peers = new Set<DiscoveryPeer>();
   private pending?: Promise<void>;
+  private automatic?: ReturnType<typeof setInterval>;
+  private automaticBusy = false;
+  /** Publish finished served files serially; no second copy of the archive is made. */
+  startAutomatic(origin: string) {
+    clearInterval(this.automatic);
+    const tick = async () => {
+      if (this.automaticBusy || this.pending || this.abort.signal.aborted)
+        return;
+      this.automaticBusy = true;
+      try {
+        const next = this.maps().find(
+          (m) =>
+            m.offer.manifest.capabilities.length > 0 && !this.jobs.has(m.id),
+        );
+        if (next) {
+          await this.publish(next.id, origin);
+          await this.settled();
+        }
+      } catch (error) {
+        console.error("Hashtree publication:", error);
+      } finally {
+        this.automaticBusy = false;
+      }
+    };
+    this.automatic = setInterval(() => void tick(), 5000);
+    this.automatic.unref();
+    void tick();
+  }
   private abort = new AbortController();
   private constructor(
     readonly directory: string,
@@ -343,6 +371,7 @@ export class MapDiscovery {
     },
   };
   async close() {
+    clearInterval(this.automatic);
     this.abort.abort();
     await this.pending;
     for (const p of this.peers) p.close();

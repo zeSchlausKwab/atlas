@@ -47,7 +47,16 @@
           <h1>Map workspace.</h1>
         </div>
         <div class="tool-tabs" role="tablist" aria-label="Map tools">
-          <button id="tab-chat" role="tab" data-tab="chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Chat</button>
+          <button
+            id="tab-chat"
+            role="tab"
+            data-tab="chat"
+            aria-controls="panel-chat"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Chat
+          </button>
           <button
             id="tab-composer"
             role="tab"
@@ -144,7 +153,15 @@
           </p>
         </div>
         <div class="sidebar-content">
-          <div id="panel-chat" role="tabpanel" data-panel="chat" aria-labelledby="tab-chat" hidden><div id="chat-root">Open a map to chat with it.</div></div>
+          <div
+            id="panel-chat"
+            role="tabpanel"
+            data-panel="chat"
+            aria-labelledby="tab-chat"
+            hidden
+          >
+            <div id="chat-root">Open a map to chat with it.</div>
+          </div>
           <div
             id="panel-composer"
             role="tabpanel"
@@ -193,7 +210,7 @@
                   ><button id="composition-share">Copy view link</button>
                 </div>
                 <p id="composition-message" role="status" class="quiet">
-                  Reading the host catalog…
+                  Reading signed Hashtree announcements…
                 </p>
                 <div class="composition-rule">
                   <p>
@@ -207,16 +224,6 @@
                   >
                 </div>
                 <div id="composition-sources"></div>
-                <form id="composition-catalog-form" class="composition-rule">
-                  <label for="composition-catalog"
-                    >Add another host’s catalog</label
-                  ><input
-                    id="composition-catalog"
-                    type="url"
-                    placeholder="https://host.example/catalog"
-                    required
-                  /><button type="submit">Discover maps</button>
-                </form>
                 <form id="composition-nostr-form" class="composition-rule">
                   <label for="composition-relay">Discover through Nostr</label>
                   <input
@@ -238,7 +245,7 @@
                 <p class="quiet">
                   Cross-map routing requires one shared compiled graph.
                   Independent snapshots can share a display. Composition uses 2D
-                  geometry; open a source on its own for building extrusion.
+                  geometry. The host library can pack selected maps into one file.
                 </p>
               </div>
             </section>
@@ -1314,7 +1321,10 @@
           <span class="eyebrow">UNDER THE SURFACE</span>
           <h2>Follow the bytes.</h2>
           <p id="read-scope">Reads across the selected map sources.</p>
-          <p class="chat-read-note">Includes map display and AI analysis reads. Cached reuse adds no package bytes.</p>
+          <p class="chat-read-note">
+            Includes map display and AI analysis reads. Cached reuse adds no
+            package bytes.
+          </p>
         </div>
         <div class="execution-ledger">
           <span class="tiny-note">LAST OPERATION</span>
@@ -1432,11 +1442,11 @@
         <details class="limitations">
           <summary>What this prototype includes</summary>
           <p>
-            Binary vector tiles, local-file and HTTP readers, peak queries and
-            walking routes, location search, nearest-street lookup and
-            selectable source geometry on this device or server. Data blocks are
-            fetched on demand. Terrain, imagery, graph partitioning and Hashtree
-            delivery are future experiments.
+            Vector and raster layers, Hashtree delivery, portable local files,
+            walking/cycling/driving routes, location and address search,
+            nearest-street lookup, retained boundaries and selectable source
+            geometry. Map tools and AI analysis can run on this device. Data
+            blocks are fetched on demand; capabilities depend on each package.
           </p>
         </details>
       </aside>

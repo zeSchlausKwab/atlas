@@ -64,11 +64,11 @@ test("interrupted host restores a delayed retry, but deliberate cancellation sta
   const id = crypto.randomUUID(),
     stopped = crypto.randomUUID();
   const record = {
+    ...job(),
     id,
     name: "Recovery fixture",
     createdAt: new Date().toISOString(),
-    selection: {},
-    ...job(),
+    selection: {} as PreparationJob["selection"],
   };
   await Bun.write(dir + "/hosted/" + id + ".json", JSON.stringify(record));
   await Bun.write(
@@ -92,6 +92,116 @@ test("interrupted host restores a delayed retry, but deliberate cancellation sta
     expect(saved.recovery.history).toHaveLength(1);
   } finally {
     await manager.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a persisted retry wakes the queue and completes without a browser or manual resume", async () => {
+  const f = await pluginFixture(),
+    dir = await mkdtemp("/tmp/atlas-retry-dispatch-");
+  await mkdir(dir + "/hosted");
+  const sourceId = crypto.randomUUID(),
+    retryId = crypto.randomUUID(),
+    manifest = f.reader.index.manifest;
+  await Bun.write(dir + "/source.atlas", f.bytes);
+  await Bun.write(dir + "/hosted/" + sourceId + ".atlas", f.bytes);
+  const selection = {
+    name: "Recovered export",
+    snapshot: manifest.snapshot,
+    polygon: [
+      [9, 47],
+      [9.2, 47],
+      [9.2, 47.2],
+      [9, 47.2],
+    ],
+    minZoom: 0,
+    maxZoom: 0,
+    layers: [],
+    profiles: [],
+    featureKinds: [],
+    placeNames: false,
+    streetNames: false,
+    pois: false,
+    search: false,
+    reverse: false,
+    peaks: false,
+    paddingCells: 0,
+    maxBytes: 1048576,
+  };
+  const record = {
+    id: sourceId,
+    name: "Source",
+    createdAt: new Date().toISOString(),
+    state: "ready",
+    selection,
+    manifest,
+    size: f.bytes.length,
+    progress: {
+      phase: "packing",
+      message: "ready",
+      completed: 1,
+      total: 1,
+      readBytes: 0,
+      writtenBytes: f.bytes.length,
+    },
+  };
+  await Bun.write(
+    dir + "/hosted/" + sourceId + ".json",
+    JSON.stringify(record),
+  );
+  await Bun.write(
+    dir + "/hosted/" + retryId + ".json",
+    JSON.stringify({
+      ...record,
+      id: retryId,
+      name: "Recovered export",
+      state: "queued",
+      manifest: undefined,
+      size: undefined,
+      allowStorageRisk: true,
+      resumeCheckpoint: true,
+      compositionExport: {
+        name: "Recovered export",
+        inputs: [{ id: sourceId, snapshot: manifest.snapshot }],
+      },
+      recovery: {
+        retries: 1,
+        nextAttemptAt: new Date(Date.now() + 150).toISOString(),
+        history: [
+          {
+            at: new Date().toISOString(),
+            error: "Server interrupted an active preparation",
+            action: "Retry from checkpoints",
+          },
+        ],
+      },
+    }),
+  );
+  const manager = await Preparations.open(
+    dir + "/hosted",
+    dir + "/source.atlas",
+    manifest,
+  );
+  try {
+    const j = manager.jobs.get(retryId)!;
+    await manager.startQueue();
+    expect(j.state).toBe("queued");
+    const deadline = Date.now() + 10000;
+    while (!["ready", "failed"].includes(j.state) && Date.now() < deadline)
+      await Bun.sleep(20);
+    expect(j.error).toBeUndefined();
+    expect(j.state).toBe("ready");
+    expect(j.recovery?.retries).toBe(1);
+    expect(j.recovery?.nextAttemptAt).toBeUndefined();
+    expect(j.recovery?.history).toHaveLength(1);
+    const persisted = await Bun.file(
+      dir + "/hosted/" + retryId + ".json",
+    ).json();
+    expect(persisted.state).toBe("ready");
+  } finally {
+    await manager.close();
+    f.engine.destroy();
+    f.reader.dispose();
     await rm(dir, { recursive: true, force: true });
   }
 });

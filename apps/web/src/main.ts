@@ -347,6 +347,10 @@ async function open(source: ByteSource) {
   try {
     await nextReader.open();
     if (session !== opening) return;
+    if (nextReader.index.manifest.composition) {
+      await openComposition(source);
+      return;
+    }
     el<HTMLInputElement>("offline").checked = reader.offline;
     if (reader.offline)
       el("connection-label").textContent = "Using cached blocks";
@@ -527,7 +531,7 @@ function bindTools() {
   }
   toolSignature = `${m.snapshot}|${compositionSources?.map((s) => s.id).join("|") ?? "single"}`;
 }
-async function openComposition() {
+async function openComposition(local?: ByteSource) {
   closeSession();
   const opening = session;
   const abort = (composerAbort = new AbortController());
@@ -575,6 +579,7 @@ async function openComposition() {
     next.setGrid(el<HTMLInputElement>("tile-grid").checked);
     const control = await createComposer(next, {
       catalog: connection.catalog,
+      local,
       store: blockStore,
       signal: abort.signal,
       telemetry,

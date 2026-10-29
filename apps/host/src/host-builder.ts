@@ -412,14 +412,37 @@ function updateComposition() {
   el("compose").textContent = composition.size
     ? `Compose ${composition.size} selected maps ↗`
     : "Compose hosted maps ↗";
+  el<HTMLButtonElement>("export").disabled = !composition.size;
   el("compose-count").textContent = composition.size
     ? "These sources will share one map view."
     : "Choose maps below, or open the full library.";
 }
+let exportJobs: PreparationJob[] = [];
+el<HTMLFormElement>("export-form").onsubmit = async (event) => {
+  event.preventDefault();
+  el<HTMLButtonElement>("export").disabled = true;
+  try {
+    await request("/admin/preparations/composition", {
+      name: el<HTMLInputElement>("export-name").value,
+      inputs: [...composition].map((id) => ({
+        id,
+        snapshot: exportJobs.find((j) => j.id === id)!.manifest!.snapshot,
+      })),
+    });
+    el("library-message").textContent =
+      "Combined file queued. Follow packing progress in Builds & checkpoints.";
+    await refresh();
+  } catch (error) {
+    el("library-message").textContent = String(error);
+  } finally {
+    updateComposition();
+  }
+};
 let lastJobs = "";
 let observations = new Map<string, CompilerObservation>();
 let nextObservationRead = 0;
 function jobs(values: PreparationJob[]) {
+  exportJobs = values;
   const views = new Map<string, CompilerObservation>();
   values = values.map((job) => {
     const view = currentObservation(observations.get(job.id), job);
@@ -475,7 +498,7 @@ function jobs(values: PreparationJob[]) {
       const links = document.createElement("div");
       links.className = "host-actions";
       for (const [label, url] of [
-        ["Open in client ↗", openClient({ map: job.id })],
+        ["Open in client ↗", openClient({ maps: [job.id] })],
         ["Download .atlas", `/maps/${job.id}.atlas`],
         ["Capabilities ↗", `/maps/${job.id}/api/capabilities`],
       ]) {
@@ -521,7 +544,7 @@ function jobs(values: PreparationJob[]) {
         card.append(report);
       }
       const publish = document.createElement("button");
-      publish.textContent = "Publish with Hashtree";
+      publish.textContent = "Publish / retry Hashtree";
       publish.onclick = () => void publishMap(job.id);
       links.append(publish);
       const details = document.createElement("details");
@@ -534,6 +557,11 @@ function jobs(values: PreparationJob[]) {
       select.className = "host-compose-select";
       check.type = "checkbox";
       check.checked = composition.has(job.id);
+      if (m.composition) {
+        check.disabled = true;
+        select.title =
+          "Already a combined file; compose its original members to export again";
+      }
       check.onchange = () => {
         if (check.checked) composition.add(job.id);
         else composition.delete(job.id);
@@ -573,6 +601,7 @@ function jobs(values: PreparationJob[]) {
           ],
           refresh,
         );
+      imagery.hidden = !!m.composition;
       actions.append(reuse, imagery, serve, deleteButton(job));
       if (job.served === false) {
         links.replaceChildren();
@@ -589,7 +618,9 @@ function jobs(values: PreparationJob[]) {
       }
       card.append(
         links,
-        capabilityPanel(job, cachedSources, refresh),
+        ...(m.composition
+          ? []
+          : [capabilityPanel(job, cachedSources, refresh)]),
         details,
         select,
         actions,

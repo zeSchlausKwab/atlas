@@ -1,19 +1,20 @@
+import { openMembers } from "../../../packages/format/src/composition";
+import type { ByteSource } from "../../../packages/format/src/reader";
 import type { RasterLayerViews } from "../../../packages/renderer/src/raster";
 import { HashtreeSource } from "../../../packages/hashtree/src/source";
-import { watchMaps } from "../../../packages/hashtree/src/discovery";
+import {
+  watchMaps,
+  parseAnnouncement,
+} from "../../../packages/hashtree/src/discovery";
 import { sourceLink } from "./connection";
 import {
   CompositionMap,
   type CompositionMapSource,
 } from "../../../packages/renderer/src/composition";
-import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
+import { AtlasReader } from "../../../packages/format/src/reader";
 import { type BlockStore } from "../../../packages/format/src/store";
 import { MAP_LAYERS, type MapLayer } from "../../../packages/format/src/index";
-import {
-  parseCatalog,
-  httpUrl,
-  type MapOffer,
-} from "../../../packages/format/src/catalog";
+import { httpUrl, type MapOffer } from "../../../packages/format/src/catalog";
 import type { ReadEvent } from "../../../packages/format/src/reader";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(`composition-${id}`) as T;
@@ -44,16 +45,18 @@ interface Entry {
   labels: boolean;
   rasterOpacity?: number;
   rasterLayers?: RasterLayerViews;
-  delivery?: "http" | "hashtree";
+  root?: string;
   color: string;
   reader?: AtlasReader;
+  members?: Awaited<ReturnType<typeof openMembers>>;
+  local?: ByteSource;
   opening?: Promise<void>;
   error?: string;
   card?: HTMLElement;
   status?: HTMLElement;
 }
 interface SavedSource {
-  delivery?: "http" | "hashtree";
+  root?: string;
   url: string;
   enabled: boolean;
   layers: MapLayer[];
@@ -77,29 +80,11 @@ interface Recipe {
   coverage?: boolean;
 }
 
-/** Preserve HttpSource identity/API discovery while gating even initial header reads. */
-class SubscriptionSource extends HttpSource {
-  constructor(
-    url: string,
-    private readonly cacheOnly: () => boolean,
-    api?: string,
-  ) {
-    super(url, api);
-  }
-  override read(start: number, end: number, signal?: AbortSignal) {
-    if (this.cacheOnly())
-      return Promise.reject(
-        new TypeError(
-          "Network disabled by Cache only; this source must already be cached.",
-        ),
-      );
-    return super.read(start, end, signal);
-  }
-}
 export async function createComposer(
   map: CompositionMap,
   options: {
     catalog: string;
+    local?: ByteSource;
     store?: BlockStore;
     signal: AbortSignal;
     telemetry: (event: ReadEvent) => void;
@@ -121,23 +106,58 @@ export async function createComposer(
     for (const e of entries)
       if (e.reader?.source instanceof HashtreeSource) e.reader.source.clear();
     paused = true;
-    entries.forEach((e) => e.reader?.dispose());
+    entries.forEach((e) => {
+      e.members?.forEach((m) => m.reader.dispose());
+      e.reader?.dispose();
+    });
   };
   options.signal.addEventListener("abort", stop, { once: true });
   const active = (): CompositionMapSource[] =>
     entries
       .filter((e) => e.enabled && e.reader && !e.opening)
-      .map((e) => ({
-        id: e.offer.url,
-        manifest: e.reader!.index.manifest,
-        reader: e.reader!,
-        enabled: true,
-        layers: e.layers,
-        labels: e.labels,
-        rasterOpacity: e.rasterOpacity,
-        rasterLayers: e.rasterLayers,
-        color: e.color,
-      }));
+      .flatMap((e) =>
+        (e.members?.length
+          ? e.members
+          : [{ id: "", reader: e.reader!, manifest: e.reader!.index.manifest }]
+        ).map((m) => ({
+          id: e.offer.url + (m.id ? `#member=${m.id}` : ""),
+          manifest: m.manifest,
+          reader: m.reader,
+          enabled: true,
+          layers: e.layers.filter((l) => m.manifest.tileLayers?.includes(l)),
+          labels: e.labels,
+          rasterOpacity: e.rasterOpacity,
+          rasterLayers: Object.fromEntries(
+            (m.manifest.rasters ?? []).map((r) => [
+              r.id,
+              e.rasterLayers?.[m.id ? `${m.id}:${r.id}` : r.id] ?? {
+                enabled: true,
+                opacity: 0.6,
+              },
+            ]),
+          ),
+          color: e.color,
+        })),
+      );
+  function displayManifest(e: Entry) {
+    if (!e.members?.length) return e.offer.manifest;
+    return {
+      ...e.offer.manifest,
+      tileLayers: [
+        ...new Set(e.members.flatMap((m) => m.manifest.tileLayers ?? [])),
+      ],
+      capabilities: [
+        ...new Set(e.members.flatMap((m) => m.manifest.capabilities)),
+      ],
+      rasters: e.members.flatMap((m) =>
+        (m.manifest.rasters ?? []).map((r) => ({
+          ...r,
+          id: `${m.id}:${r.id}`,
+          name: `${m.manifest.name} · ${r.name}`,
+        })),
+      ),
+    };
+  }
   const focused = () => active().find((s) => s.id === focusId)?.reader;
   function refreshScope() {
     const sources = active();
@@ -158,6 +178,7 @@ export async function createComposer(
     el("message").textContent = value;
   }
   function save(withCamera = false) {
+    if (options.local) return;
     const value: Recipe = {
       version: 1,
       toolSource: focusId,
@@ -170,7 +191,7 @@ export async function createComposer(
         labels: e.labels,
         rasterOpacity: e.rasterOpacity,
         rasterLayers: e.rasterLayers,
-        delivery: e.delivery,
+        root: e.offer.hashtree?.root,
       })),
       coverage: map.coverage,
     };
@@ -203,24 +224,7 @@ export async function createComposer(
   }
   function sync() {
     if (paused) return;
-    map.setSources(
-      entries
-        .filter((e) => e.enabled && e.reader && !e.opening)
-        .map(
-          (e) =>
-            ({
-              id: e.offer.url,
-              manifest: e.reader!.index.manifest,
-              reader: e.reader!,
-              enabled: true,
-              layers: e.layers,
-              labels: e.labels,
-              rasterOpacity: e.rasterOpacity,
-              rasterLayers: e.rasterLayers,
-              color: e.color,
-            }) satisfies CompositionMapSource,
-        ),
-    );
+    map.setSources(active());
     refreshScope();
     if (!starting) options.changed(active(), focused());
     const attributions = [
@@ -264,21 +268,18 @@ export async function createComposer(
     if (entry.reader || entry.opening) return entry.opening;
     entry.error = undefined;
     const reader = new AtlasReader(
-      entry.offer.hashtree && entry.delivery !== "http"
-        ? new HashtreeSource(
-            entry.offer.url,
-            entry.offer.hashtree,
-            entry.offer.api,
-            { store, offline: options.offline },
-          )
-        : new SubscriptionSource(
-            entry.offer.url,
-            options.offline,
-            entry.offer.api,
-          ),
+      entry.local ??
+        new HashtreeSource(
+          entry.offer.url,
+          entry.offer.hashtree!,
+          entry.offer.api,
+          { store, offline: options.offline },
+        ),
       options.telemetry,
       {
-        purposes: ["map", "labels"],
+        purposes: entry.offer.manifest.composition
+          ? undefined
+          : ["map", "labels"],
         store,
         sourceId: entry.offer.url,
         cacheBudgets: {
@@ -296,12 +297,34 @@ export async function createComposer(
         await reader.open();
         reader.offline = options.offline();
         if (reader.index.manifest.snapshot !== entry.offer.manifest.snapshot)
-          throw new Error("Catalog snapshot changed. Reload the catalog.");
+          throw new Error("Published snapshot changed. Reopen discovery.");
+        entry.members = await openMembers(reader);
+        if (entry.members.length) {
+          const m = displayManifest(entry);
+          const saved = recipe?.sources.find((s) => s.url === entry.offer.url);
+          entry.layers =
+            saved?.layers?.filter((l) => m.tileLayers?.includes(l)) ??
+            m.tileLayers ??
+            [];
+          entry.labels = saved?.labels ?? true;
+          for (const raster of m.rasters ?? []) {
+            const view = saved?.rasterLayers?.[raster.id];
+            entry.rasterLayers![raster.id] ??= {
+              enabled: view?.enabled !== false,
+              opacity: Number.isFinite(view?.opacity)
+                ? Math.max(0, Math.min(1, view!.opacity))
+                : (entry.rasterOpacity ?? 0.6),
+            };
+          }
+          buildCards();
+        }
         if (!reader.index.manifest.tileLayers)
           throw new Error(
             "This legacy map needs layer-separated tiles to compose.",
           );
       } catch (e) {
+        entry.members?.forEach((m) => m.reader.dispose());
+        entry.members = undefined;
         reader.dispose();
         if (entry.reader === reader) {
           entry.reader = undefined;
@@ -330,6 +353,8 @@ export async function createComposer(
     if (!on) {
       if (entry.reader?.source instanceof HashtreeSource)
         entry.reader.source.clear();
+      entry.members?.forEach((m) => m.reader.dispose());
+      entry.members = undefined;
       entry.reader?.dispose();
       entry.reader = undefined;
       entry.opening = undefined;
@@ -343,7 +368,7 @@ export async function createComposer(
   function buildCards() {
     el("sources").replaceChildren();
     entries.forEach((entry, index) => {
-      const m = entry.offer.manifest,
+      const m = displayManifest(entry),
         card = text("article", "", "composition-card"),
         heading = text("div", "", "composition-card-heading"),
         label = document.createElement("label"),
@@ -380,25 +405,15 @@ export async function createComposer(
         ),
         entry.status,
       );
-      if (entry.offer.hashtree) {
-        const row = document.createElement("label"),
-          select = document.createElement("select");
-        select.append(
-          new Option("Hashtree · verified blocks", "hashtree"),
-          new Option("HTTP · byte ranges", "http"),
-        );
-        select.value = entry.delivery ?? "hashtree";
-        select.setAttribute("aria-label", `Delivery for ${m.name}`);
-        select.onchange = async () => {
-          const enabled = entry.enabled;
-          await enable(entry, false);
-          entry.delivery = select.value as "http" | "hashtree";
-          if (enabled) await enable(entry, true);
-          save();
-        };
-        row.append(text("span", "Read data via "), select);
-        card.append(row);
-      }
+      card.append(
+        text(
+          "p",
+          entry.local
+            ? "Local file · self-contained"
+            : `Hashtree · ${entry.offer.hashtree!.root.slice(0, 16)}…`,
+          "quiet",
+        ),
+      );
       const layers = document.createElement("fieldset");
       layers.className = "composition-layers";
       layers.append(text("legend", "SUBSCRIBE TO DATA"));
@@ -475,14 +490,27 @@ export async function createComposer(
           check.checked = true;
         }
         await subscribe(entry);
-        map.fit([entry.offer.url]);
+        map.fit(
+          active()
+            .filter(
+              (s) =>
+                s.id === entry.offer.url ||
+                s.id.startsWith(`${entry.offer.url}#member=`),
+            )
+            .map((s) => s.id),
+        );
       };
       links.append(fit);
-      for (const [label, path] of [
-        ["Open this map only ↗", sourceLink(entry.offer.url, entry.offer.api)],
-        ["Atlas file ↗", entry.offer.url],
-        ["Capabilities ↗", `${entry.offer.api}/capabilities`],
-      ]) {
+      for (const [label, path] of entry.local
+        ? []
+        : [
+            [
+              "Open this map only ↗",
+              sourceLink(entry.offer.url, entry.offer.api, entry.offer.id),
+            ],
+            ["Atlas file ↗", entry.offer.url],
+            ["Capabilities ↗", `${entry.offer.api}/capabilities`],
+          ]) {
         const a = document.createElement("a");
         a.textContent = label!;
         a.href = path!;
@@ -506,6 +534,14 @@ export async function createComposer(
     });
   }
   function addOffer(offer: MapOffer, initial = false) {
+    if (!offer.hashtree) return;
+    const pinned = recipe?.sources.find((s) => s.url === offer.url);
+    if (pinned?.root && pinned.root !== offer.hashtree.root) {
+      message(
+        `Pinned revision of ${offer.manifest.name} is unavailable. Start a new composition to use its replacement.`,
+      );
+      return;
+    }
     const mirror =
       offer.hashtree &&
       entries.find(
@@ -531,11 +567,6 @@ export async function createComposer(
         offer.hashtree
       ) {
         existing.offer.hashtree = offer.hashtree;
-        if (
-          existing.reader &&
-          !(existing.reader.source instanceof HashtreeSource)
-        )
-          existing.delivery = "http";
       } else if (existing.offer.manifest.snapshot !== offer.manifest.snapshot)
         message(
           "A new map revision is available. Reload to select it; this session stays pinned.",
@@ -579,7 +610,7 @@ export async function createComposer(
           ];
         }),
       ),
-      delivery: saved?.delivery ?? "hashtree",
+      root: offer.hashtree.root,
       color: colors[entries.length % colors.length]!,
     });
   }
@@ -598,7 +629,7 @@ export async function createComposer(
       [author],
       (offer) => {
         if (paused) return;
-        addOffer(offer);
+        addOffer(offer, true);
         buildCards();
         if (!starting)
           void Promise.all(
@@ -611,17 +642,30 @@ export async function createComposer(
     watches.push({ relay, author, close });
   }
   async function discover(url: string, initial = false) {
-    url = httpUrl(url, location.href);
+    url = new URL("/discovery", httpUrl(url, location.href)).href;
     const response = await fetch(url, {
       cache: "no-store",
       signal: options.signal,
     });
     if (!response.ok)
-      throw new Error(`Catalog returned HTTP ${response.status}`);
-    const offers = parseCatalog(await response.json(), url);
+      throw new Error(`Discovery returned HTTP ${response.status}`);
+    const info = await response.json();
+    if (
+      !/^[a-f0-9]{64}$/.test(info.pubkey) ||
+      !Array.isArray(info.publications)
+    )
+      throw new Error("Invalid discovery identity");
     options.signal.throwIfAborted();
     catalogs.add(url);
-    for (const offer of offers) addOffer(offer, initial);
+    for (const event of info.publications) {
+      const parsed = parseAnnouncement(event);
+      if (parsed.event.pubkey !== info.pubkey)
+        throw new Error("Publisher identity mismatch");
+      addOffer(parsed.offer, initial);
+    }
+    el<HTMLInputElement>("relay").value = info.relay;
+    el<HTMLInputElement>("publisher").value = info.pubkey;
+    await listen(info.relay, info.pubkey);
   }
 
   const hash = new URLSearchParams(location.hash.slice(1)).get("view");
@@ -646,7 +690,34 @@ export async function createComposer(
     recipe = saved;
   }
   const failures: string[] = [];
-  for (const url of new Set([options.catalog, ...(recipe?.catalogs ?? [])])) {
+  if (options.local) {
+    recipe = undefined;
+    const reader = await new AtlasReader(
+      options.local,
+      options.telemetry,
+    ).open();
+    const manifest = reader.index.manifest;
+    reader.dispose();
+    entries.push({
+      offer: {
+        id: "local",
+        url: new URL("local.atlas", location.href).href,
+        api: "",
+        bytes: 0,
+        manifest,
+      },
+      enabled: true,
+      layers: manifest.tileLayers ?? [],
+      labels: true,
+      rasterLayers: {},
+      color: colors[0]!,
+      local: options.local,
+    });
+  }
+
+  for (const url of new Set(
+    options.local ? [] : [options.catalog, ...(recipe?.catalogs ?? [])],
+  )) {
     try {
       await discover(url, true);
     } catch (e) {
@@ -731,13 +802,6 @@ export async function createComposer(
       message(String(e));
     }
   };
-  void fetch(new URL("/discovery", options.catalog), { signal: options.signal })
-    .then((r) => r.json())
-    .then((d) => {
-      el<HTMLInputElement>("relay").value = d.relay ?? "";
-      el<HTMLInputElement>("publisher").value = d.pubkey ?? "";
-    })
-    .catch(() => {});
   el("fit").onclick = () => map.fit();
   el<HTMLInputElement>("coverage").onchange = (e) => {
     map.coverage = (e.target as HTMLInputElement).checked;
@@ -745,25 +809,16 @@ export async function createComposer(
     save();
   };
   el("share").onclick = async () => {
+    if (options.local) {
+      message("Share the .atlas file to reopen this local composition.");
+      return;
+    }
     save(true);
     try {
       await navigator.clipboard.writeText(location.href);
       message("View link copied: sources, layers, priority and camera.");
     } catch {
       message("Copy the address bar to share this composition.");
-    }
-  };
-  el<HTMLFormElement>("catalog-form").onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await discover(el<HTMLInputElement>("catalog").value);
-      buildCards();
-      save();
-      message("Catalog added. Select the maps you want to display.");
-    } catch (e) {
-      message(
-        `${e} — the host must expose an Atlas catalog and permit browser CORS reads.`,
-      );
     }
   };
   document.getElementById("tool-source")!.onchange = (e) => {

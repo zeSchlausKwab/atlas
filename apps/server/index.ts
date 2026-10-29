@@ -267,6 +267,12 @@ const server = Bun.serve<{
     });
   },
 });
+// Local deployments need no external relay or account. LAN deployments pin their advertised origin.
+if (process.env.ATLAS_DISCOVERY_AUTO !== "0")
+  discovery.startAutomatic(
+    process.env.ATLAS_PUBLIC_URL ??
+      `http://${process.env.HOST === "0.0.0.0" ? "127.0.0.1" : (process.env.HOST ?? "127.0.0.1")}:${server.port}`,
+  );
 console.log(
   `ATLAS server → ${server.url}\nPackage: ${mapPath} (${(snapshot.size / 1024 / 1024).toFixed(2)} MiB)\nServing a pinned file descriptor; restart to load a regenerated package.`,
 );
