@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { nativeDiagnostics } from "./native-diagnostics";
 import { fileURLToPath } from "node:url";
 import type { BlockWriter } from "./stream-writer";
 import {
@@ -41,26 +42,8 @@ export async function addPartitionedTransport(
   };
   signal.addEventListener("abort", kill, { once: true });
   if (signal.aborted) kill();
-  let tail = "";
-  const stderr = (async () => {
-    let pending = "";
-    for await (const c of child.stderr!) {
-      pending += c.toString();
-      const lines = pending.split(/[\r\n]/);
-      pending = lines.pop() ?? "";
-      for (const line of lines)
-        if (line) {
-          tail = line;
-          progress(line);
-        }
-    }
-  })();
-  const exited = new Promise<number | null>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", resolve);
-  });
-  // Attach a handler immediately even when a pipe fails before exit is awaited.
-  void exited.catch(() => {});
+  const diagnostics = nativeDiagnostics(child, progress);
+  const { exited, stderr } = diagnostics;
   const iterator = child.stdout![Symbol.asyncIterator]();
   let buffer = new Uint8Array(0),
     offset = 0;
@@ -73,6 +56,10 @@ export async function addPartitionedTransport(
         const v = await iterator.next();
         if (v.done) {
           if (eof && at === 0) return null;
+          const exit = await exited;
+          signal.throwIfAborted();
+          if (exit.code !== 0)
+            throw await diagnostics.failure("Partitioned graph compiler");
           throw new Error("Truncated native compiler frame");
         }
         buffer = v.value;
@@ -114,10 +101,10 @@ export async function addPartitionedTransport(
           features: new DataView(bytes.buffer).getUint32(24, true),
         });
     }
-    const [code] = await Promise.all([exited, stderr]);
+    const [{ code }] = await Promise.all([exited, stderr]);
     signal.throwIfAborted();
     if (code !== 0 || !metadata)
-      throw new Error(`Partitioned graph compiler failed (${code}): ${tail}`);
+      throw await diagnostics.failure("Partitioned graph compiler");
     return {
       version: 1,
       statistics: "cell-records",
