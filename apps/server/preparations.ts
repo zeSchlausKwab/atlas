@@ -1,3 +1,4 @@
+import type { ArchiveImport } from "./archive-import";
 import {
   planRasterAmendment,
   type RasterAmendment,
@@ -39,7 +40,7 @@ import {
 } from "../../packages/provisioning/src/cached-build";
 import { adminAccess, ADMIN_DENIED, type AdminAccess } from "./admin-access";
 import { readStorage } from "./storage";
-import { mkdir, readdir, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, link, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Manifest } from "../../packages/format/src/index";
 import {
@@ -78,6 +79,7 @@ export interface PreparationJob {
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
   imageImport?: ImageImport;
+  archiveImport?: ArchiveImport;
   rasterAmendment?: RasterAmendment;
   sourceAtlasId?: string;
   amendment?: HostedAmendment;
@@ -130,12 +132,17 @@ export class Preparations {
         job.state = "failed";
         job.error = job.rasterAmendment
           ? "Server stopped. Requeue to copy the imagery revision again; original files are retained."
-          : job.cachedSource || job.imageImport
-            ? "Server stopped. Resume to reuse completed compiler stages."
-            : "Server stopped during preparation. Create the excerpt again.";
+          : job.archiveImport
+            ? "Server stopped. Resume to verify or import the saved upload again."
+            : job.cachedSource || job.imageImport
+              ? "Server stopped. Resume to reuse completed compiler stages."
+              : "Server stopped during preparation. Create the excerpt again.";
         await manager.cleanup(
           job.id,
-          !!job.cachedSource || !!job.capabilityChange || !!job.imageImport,
+          !!job.cachedSource ||
+            !!job.capabilityChange ||
+            !!job.imageImport ||
+            !!job.archiveImport,
         );
         await manager.persist(job);
       }
@@ -548,6 +555,83 @@ export class Preparations {
     )
       throw new Error("An amendment for this map is already queued or running");
   }
+  async createArchive(
+    id: string,
+    input: string,
+    archive: ArchiveImport,
+    allowStorageRisk = false,
+  ) {
+    if (this.closing)
+      throw new Error("Server is stopping; try again after restart.");
+    this.path(id); // Validate generated identity before using a work directory.
+    const existing = this.jobs.get(id);
+    if (existing) return existing; // Retried finish request must not queue a duplicate.
+    const metadata: ArchiveImport = {
+      filename: archive.filename,
+      size: archive.size,
+      format: archive.format,
+    };
+    const work = resolve(this.directory, `${id}.work`),
+      staged = resolve(work, `input.${archive.format}`);
+    await mkdir(work, { recursive: true });
+    try {
+      try {
+        await link(input, staged);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const a = await stat(input),
+          b = await stat(staged);
+        if (a.ino !== b.ino || a.dev !== b.dev)
+          throw new Error("Import staging file already exists");
+      }
+      const job: PreparationJob = {
+        id,
+        name: archive.filename.replace(/\.(atlas|mbtiles)$/i, ""),
+        createdAt: new Date().toISOString(),
+        state: "queued",
+        archiveImport: metadata,
+        allowStorageRisk,
+        selection: {
+          snapshot: "0".repeat(64),
+          name: archive.filename,
+          polygon: [
+            [-180, -85],
+            [180, -85],
+            [180, 85],
+            [-180, 85],
+          ],
+          minZoom: 0,
+          maxZoom: 0,
+          layers: [],
+          placeNames: false,
+          streetNames: false,
+          pois: false,
+          profiles: [],
+          search: false,
+          reverse: false,
+          peaks: false,
+          featureKinds: [],
+          paddingCells: 0,
+          maxBytes: NO_SIZE_LIMIT,
+        },
+        progress: {
+          phase: "planning",
+          message: "File uploaded · queued for import",
+          completed: 0,
+          total: 0,
+          readBytes: 0,
+          writtenBytes: 0,
+        },
+      };
+      await this.persist(job);
+      this.jobs.set(id, job);
+      void this.startQueue().catch(console.error);
+      return job;
+    } catch (error) {
+      await rm(work, { recursive: true, force: true });
+      throw error;
+    }
+  }
   async createImage(
     bytes: Uint8Array,
     placement: unknown,
@@ -635,6 +719,7 @@ export class Preparations {
     const allowStorageRisk =
       extra?.allowStorageRisk ?? previous?.allowStorageRisk ?? false;
     const imageImport = previous?.imageImport;
+    const archiveImport = previous?.archiveImport;
     const rasterAmendment = previous?.rasterAmendment ?? extra?.rasterAmendment;
     const rasterPlan = rasterAmendment
       ? await this.planRasters(rasterAmendment)
@@ -733,6 +818,18 @@ export class Preparations {
     }
     if (rasterPlan) {
       // Raster inputs are pinned and validated independently of PBF capability selections.
+    } else if (archiveImport) {
+      if (
+        Bun.file(
+          resolve(
+            this.directory,
+            `${previous!.id}.work/input.${archiveImport.format}`,
+          ),
+        ).size !== archiveImport.size
+      )
+        throw new Error(
+          "Uploaded archive is missing or changed. Upload it again.",
+        );
     } else if (imageImport) {
       if (
         !(await Bun.file(
@@ -776,9 +873,10 @@ export class Preparations {
       });
       if (start) throw new Error("Waiting for the parent dataset to finish.");
     } else validateSelection(value, atlas?.manifest ?? this.source);
-    const selection = imageImport
-      ? previous!.selection
-      : (value as PackageSelection);
+    const selection =
+      imageImport || archiveImport
+        ? previous!.selection
+        : (value as PackageSelection);
     // Check the same estimate at submission and dispatch. Acceptance is scoped to the saved job.
     const partitioned = !!cached && !!planCachedBuild(selection).partitioned;
     const extractedBytes =
@@ -792,20 +890,23 @@ export class Preparations {
         : 0;
     const needed = rasterPlan
       ? rasterPlan.estimatedWorkspaceBytes
-      : imageImport
-        ? DISK_RESERVE + imageImport.estimatedBytes
-        : capabilityPlan
-          ? capabilityPlan.estimatedWorkspaceBytes
-          : amendment
-            ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-            : hostPreparationSpace(selection.maxBytes, {
-                cached: !!cached,
-                partitioned,
-                resume: !!previous?.resumeCheckpoint,
-                extractedBytes,
-                sourceBytes: plan?.bytes,
-                atlasBytes: Bun.file(inputPath).size,
-              });
+      : archiveImport
+        ? DISK_RESERVE +
+          (archiveImport.format === "mbtiles" ? archiveImport.size * 2.2 : 0)
+        : imageImport
+          ? DISK_RESERVE + imageImport.estimatedBytes
+          : capabilityPlan
+            ? capabilityPlan.estimatedWorkspaceBytes
+            : amendment
+              ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+              : hostPreparationSpace(selection.maxBytes, {
+                  cached: !!cached,
+                  partitioned,
+                  resume: !!previous?.resumeCheckpoint,
+                  extractedBytes,
+                  sourceBytes: plan?.bytes,
+                  atlasBytes: Bun.file(inputPath).size,
+                });
     const disk = await readStorage(this.directory);
     checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
     if (!start) {
@@ -818,6 +919,7 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,
+        archiveImport,
         rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
@@ -864,19 +966,22 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,
+        archiveImport,
         rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
         capabilityChange: capabilityPlan?.change,
         progress: {
           phase: "planning",
-          message: imageImport
-            ? "Opening uploaded image and saved tiles…"
-            : cached
-              ? "Opening verified cached PBF and saved compiler stages…"
-              : plan
-                ? `Preparing ${plan.region.name} from OSM PBF…`
-                : "Opening the source snapshot…",
+          message: archiveImport
+            ? "Opening uploaded archive…"
+            : imageImport
+              ? "Opening uploaded image and saved tiles…"
+              : cached
+                ? "Opening verified cached PBF and saved compiler stages…"
+                : plan
+                  ? `Preparing ${plan.region.name} from OSM PBF…`
+                  : "Opening the source snapshot…",
           completed: 0,
           total: 0,
           readBytes: 0,
@@ -907,6 +1012,16 @@ export class Preparations {
           if (finalState === "ready") {
             job.size = data.size;
             job.manifest = data.manifest;
+            if (archiveImport && data.manifest) {
+              job.name = data.manifest.name;
+              job.selection = familySelection(
+                data.manifest,
+                installedCapabilities(data.manifest),
+                data.manifest.name,
+                NO_SIZE_LIMIT,
+                data.manifest.selection?.routingPaddingCells ?? 0,
+              );
+            }
             job.progress.message = "Ready to serve and download.";
             job.progress.writtenBytes = data.size!;
             // Make the new revision durable before exposing it. Switch the in-memory
@@ -920,6 +1035,11 @@ export class Preparations {
               parent.served = false;
             }
             job.state = "ready";
+            if (archiveImport)
+              await rm(resolve(this.directory, `${id}.work`), {
+                recursive: true,
+                force: true,
+              });
             if (parent) {
               await this.persist(parent);
               await this.beforeDelete?.(parent.id);
@@ -928,7 +1048,10 @@ export class Preparations {
             job.state = finalState;
             await this.cleanup(
               id,
-              !!job.cachedSource || !!job.capabilityChange || !!job.imageImport,
+              !!job.cachedSource ||
+                !!job.capabilityChange ||
+                !!job.imageImport ||
+                !!job.archiveImport,
             );
           }
           await this.persist(job);
@@ -982,6 +1105,7 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,
+        archiveImport,
         rasterAmendment: rasterAmendment
           ? {
               request: rasterAmendment,

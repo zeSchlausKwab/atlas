@@ -1,3 +1,4 @@
+import { ArchiveUploads } from "./archive-uploads";
 import { IMAGE_MAX_BYTES } from "../../packages/raster/src/image-plan";
 import { limitedBody } from "./request-body";
 import { MapDiscovery } from "./discovery";
@@ -75,6 +76,11 @@ const preparations = await Preparations.open(
   engine.reader.index.manifest,
   access,
 );
+const archiveUploads = await ArchiveUploads.open(
+  resolve(dataDir, "imports"),
+  preparations,
+  access,
+);
 const sourceCache = new SourceCache(
   resolve(dataDir, "sources"),
   access,
@@ -145,7 +151,8 @@ const server = Bun.serve<{
     // The upload route authenticates before consuming its larger body. Other routes retain the old bound.
     if (
       request.body &&
-      new URL(request.url).pathname !== "/admin/preparations/image"
+      new URL(request.url).pathname !== "/admin/preparations/image" &&
+      !new URL(request.url).pathname.startsWith("/admin/imports")
     ) {
       try {
         request = new Request(request, {
@@ -176,6 +183,8 @@ const server = Bun.serve<{
         );
       const discovered = await discovery.handle(request, remoteAddress);
       if (discovered) return discovered;
+      if (path.startsWith("/admin/imports"))
+        return archiveUploads.handle(request, remoteAddress);
       if (path.startsWith("/admin/sources"))
         return sourceCache.handle(request, remoteAddress);
       if (path.startsWith("/admin/preparations"))
@@ -206,8 +215,7 @@ const server = Bun.serve<{
         );
       const hosted = await library.handle(request);
       if (hosted) return hosted;
-      if (path === "/admin/operations")
-        return policy(request, remoteAddress);
+      if (path === "/admin/operations") return policy(request, remoteAddress);
       if (path.startsWith("/api/") || path.startsWith("/maps/demo/api/"))
         return api(request);
       if (path === "/maps/demo.atlas") {

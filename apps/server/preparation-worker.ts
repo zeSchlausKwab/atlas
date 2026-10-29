@@ -1,3 +1,4 @@
+import { importArchive, type ArchiveImport } from "./archive-import";
 import {
   amendRasters,
   type RasterAmendment,
@@ -47,6 +48,7 @@ process.on(
     sourcePlan?: PbfPlan;
     cachedSource?: VerifiedBuildSource;
     imageImport?: ImageImport;
+    archiveImport?: ArchiveImport;
     rasterAmendment?: {
       request: RasterAmendment;
       target: string;
@@ -111,7 +113,15 @@ process.on(
     try {
       await checkDisk();
       abort.signal.throwIfAborted();
-      if (data.rasterAmendment) {
+      if (data.archiveImport) {
+        await importArchive(
+          join(work, `input.${data.archiveImport.format}`),
+          output,
+          data.archiveImport,
+          abort.signal,
+          report,
+        );
+      } else if (data.rasterAmendment) {
         const a = data.rasterAmendment,
           files: PackageSource[] = [],
           readers: AtlasReader[] = [];
@@ -359,8 +369,11 @@ process.on(
       await file?.close();
       await targetFile?.close();
       if (
-        (!data.cachedSource && !data.capabilityChange && !data.imageImport) ||
-        final!.type === "ready"
+        (!data.cachedSource &&
+          !data.capabilityChange &&
+          !data.imageImport &&
+          !data.archiveImport) ||
+        (final!.type === "ready" && !data.archiveImport)
       )
         await rm(work, { recursive: true, force: true });
     }

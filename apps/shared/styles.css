@@ -3363,3 +3363,82 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 .composer-raster-opacity input { width: 100%; min-width: 0; accent-color: var(--green); }
 .raster-amend-row { display: grid; gap: 12px; min-width: 0; margin: 0 0 16px; }
 .raster-amend-row select { min-width: 0; }
+
+/* File imports use the same quiet library surfaces as queued preparations. */
+.host-imports {
+  scroll-margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 36px;
+}
+.host-import-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+  margin: 28px 0;
+}
+.host-import-guide h3 {
+  font-size: 20px;
+}
+.host-import-guide p,
+.host-composition-help p {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.host-import-guide a,
+.host-import-actions a,
+.host-imports > p a {
+  color: var(--green);
+}
+.host-import-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+}
+.host-import-list {
+  display: grid;
+  gap: 16px;
+  margin: 24px 0;
+}
+.host-import-row {
+  border: 1px solid var(--line);
+  background: #faf9f2;
+  padding: 24px;
+  min-width: 0;
+}
+.host-import-row h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.host-import-row progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--green);
+}
+.host-import-row p {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.host-import-error {
+  color: var(--accent);
+}
+.host-composition-help {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+.host-composition-help strong {
+  color: var(--ink);
+}
+@media (max-width: 750px) {
+  .host-import-guide,
+  .host-composition-help {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .host-import-row {
+    padding: 16px;
+  }
+}

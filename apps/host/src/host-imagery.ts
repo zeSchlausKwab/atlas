@@ -114,8 +114,10 @@ export async function startImagery() {
   section.ontoggle = () => {
     if (section.open && !preview) void showPreview();
   };
-  document.querySelector<HTMLAnchorElement>('a[href="#imagery"]')!.onclick =
-    () => {
+  for (const link of document.querySelectorAll<HTMLAnchorElement>(
+    'a[href="#imagery"]',
+  ))
+    link.onclick = () => {
       section.open = true;
     };
   if (location.hash === "#imagery") section.open = true;

@@ -1,3 +1,4 @@
+import { startImports } from "./host-imports";
 import { startImagery } from "./host-imagery";
 import { startDiscovery } from "./host-discovery";
 import { startSources } from "./host-sources";
@@ -98,6 +99,7 @@ async function start() {
       load(),
       startBuilder(),
       startImagery(),
+      startImports(),
       startSources(),
       startDiscovery(),
     ]);

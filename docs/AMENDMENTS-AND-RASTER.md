@@ -112,6 +112,23 @@ no-data/mask values, resampling rules, acquisition time and vertical reference w
 applicable. Different family provenance is allowed; visual composition does not
 require shared routing identity. Coverage is family-specific.
 
+### Browser file imports — implemented locally
+
+`/host#imports` accepts multiple raster MBTiles or Atlas archives. Eight-MiB,
+offset-acknowledged upload chunks survive connection loss and page reloads. Finished
+uploads enter the shared preparation queue; Atlas blocks are checksum-verified and
+MBTiles pixels are preserved in a new standalone raster archive. Imported maps can
+be composed through library checkboxes or used as imagery amendment donors.
+See [file import API and recovery](FILE-IMPORTS.md).
+
+The browser rehearsal imported the supplied 582 MiB Alps MBTiles and a 21.64 MiB
+Liechtenstein Atlas, recovered an interrupted upload after its first chunk, and used
+the host controls to produce a 24.43 MiB revision with satellite tiles and all base
+capabilities. Client composition and raster toggles worked; the revision returned a
+walking route and eight Vaduz search matches. Desktop and 390-pixel mobile import
+views completed without browser exceptions. Validation: 344 tests, typecheck and
+host build passed; filename-provenance follow-up passed the focused import tests.
+
 ## Milestone 3 — visual raster delivery
 
 Status: delivery/composition, PNG/JPEG uploads and embedded raster amendments implemented locally.

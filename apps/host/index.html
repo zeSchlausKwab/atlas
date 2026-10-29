@@ -28,8 +28,9 @@
       </div>
       <nav class="host-section-nav" aria-label="Host console sections">
         <a href="#prepare">Prepare a map</a><a href="#builds">Builds</a
-        ><a href="#imagery">Upload imagery</a><a href="#library">Map library</a
-        ><a href="#sources">Source files</a><a href="#operations">Operations</a>
+        ><a href="#imports">Import files</a><a href="#imagery">Place an image</a
+        ><a href="#library">Map library</a><a href="#sources">Source files</a
+        ><a href="#operations">Operations</a>
       </nav>
       <p id="host-access" class="host-source-note" role="status">
         Checking administration access…
@@ -307,9 +308,71 @@
         </div>
         <div id="prepare-jobs" aria-live="polite"></div>
       </section>
+      <section
+        id="imports"
+        class="host-imports"
+        aria-labelledby="imports-title"
+      >
+        <div class="host-list-heading">
+          <h2 id="imports-title">Import files</h2>
+          <span class="eyebrow">YOUR FILES / ONE MAP LIBRARY</span>
+        </div>
+        <p>
+          Bring satellite tiles or an existing Atlas map to this server.
+          Imported maps keep their own coverage and become available for
+          composition as soon as preparation finishes.
+        </p>
+        <div class="host-import-guide">
+          <div>
+            <h3>Raster MBTiles</h3>
+            <p>
+              JPEG or PNG tiles, already positioned on Earth. We preserve their
+              pixels and credits in a standalone Atlas file.
+            </p>
+          </div>
+          <div>
+            <h3>Existing Atlas</h3>
+            <p>
+              Geometry, imagery, routing, search and custom data stay together.
+              We verify the archive before serving it.
+            </p>
+          </div>
+          <div>
+            <h3>A photograph or overlay?</h3>
+            <p>
+              <a href="#imagery">Place a PNG or JPEG on the map ↓</a> and
+              prepare its raster tiles below.
+            </p>
+          </div>
+        </div>
+        <label class="host-field" for="imports-files"
+          >Files to import
+          <input
+            id="imports-files"
+            type="file"
+            accept=".mbtiles,.atlas"
+            multiple
+          />
+        </label>
+        <div class="host-import-actions">
+          <button id="imports-start" type="button" disabled>
+            Upload selected files ↗</button
+          ><a href="#library">Compose maps in the library ↓</a>
+        </div>
+        <p id="imports-status" class="quiet" role="status">
+          Checking saved uploads…
+        </p>
+        <div id="imports-list" class="host-import-list"></div>
+        <p class="quiet">
+          Uploads can be paused and resumed by selecting the same file again.
+          After upload, follow conversion and verification in
+          <a href="#builds">Builds &amp; checkpoints</a>. Your original files
+          remain on your computer.
+        </p>
+      </section>
       <details id="imagery" class="host-imagery">
         <summary>
-          <h2>Upload imagery</h2>
+          <h2>Place an image</h2>
           <span class="quiet"
             >Position a PNG or JPEG · publish a standalone Atlas</span
           >
@@ -454,6 +517,18 @@
           ><span id="prepare-compose-count" class="quiet"
             >Choose maps below, or open the full library.</span
           >
+        </div>
+        <div class="host-composition-help">
+          <p>
+            <strong>One view, separate files.</strong> Check “Compose” on the
+            maps you want, then open the selection in the client. Toggle layers
+            and adjust imagery opacity there.
+          </p>
+          <p>
+            <strong>One file with embedded imagery.</strong> Choose “Manage
+            imagery” on a target map to add raster layers from your imported
+            maps and queue a new Atlas revision.
+          </p>
         </div>
         <p id="prepare-library-message" role="status"></p>
         <div id="prepare-library" class="host-library"></div>

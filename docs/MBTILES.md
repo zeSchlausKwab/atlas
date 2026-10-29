@@ -3,7 +3,9 @@
 `bun run raster:import` can ingest a local pre-tiled JPEG/PNG MBTiles database into
 one independent Atlas archive. It preserves image bytes: there is no resampling,
 JPEG recompression, temporary tile directory, or external tile service at runtime.
-This is a CLI import; the host's image-upload form still accepts individual images.
+Use **Host console → Import files** (`/host#imports`) to upload MBTiles or an existing
+Atlas file to the map library. The CLI is also available. Individual PNG/JPEG images
+use **Place an image**, where you supply their geographic placement.
 
 ## Inspect and import
 
@@ -67,9 +69,12 @@ Connect the existing client composer to `http://127.0.0.1:3183/` and add vector
 catalogs as needed. The imported archive is also a normal raster donor for
 `amendRasters`; only intersecting tiles are copied into a regional revision.
 Routing/search identity remains that of the target map, while imagery retains its
-own source fingerprint and attribution. UI registration of a CLI-produced archive
-in an already-running host library is not implemented yet; serving it as the
-server's configured `ATLAS_FILE` works now.
+own source fingerprint and attribution. To register a CLI-produced archive in an
+already-running library, upload it using **Import files**. Check its Compose box
+and another map’s box to open both in the client, or use **Manage imagery** on the
+target map to embed the imported raster layer in one new file.
+
+See [file upload API and recovery](FILE-IMPORTS.md).
 
 ## Alps rehearsal — 2026-10-29
 

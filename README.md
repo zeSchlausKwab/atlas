@@ -156,7 +156,7 @@ This first renderer uses a bounded Canvas image plane and the existing orthograp
 camera. It does not yet provide GPU raster textures, numeric terrain,
 arbitrary reprojection or raster region exports.
 
-To upload an image, open **Host console → Upload imagery** (`/host#imagery`). Choose
+To upload an image, open **Host console → Place an image** (`/host#imagery`). Choose
 PNG/JPEG, position it with a rectangle or numeric bounds, and provide attribution
 and licence. The image is stretched north-up in Web Mercator; preview it before
 uploading. A background job builds a self-contained raster Atlas for the normal
@@ -180,6 +180,13 @@ are saved in client compositions and shared view links.
 
 See [raster amendment API and guarantees](docs/RASTER-AMENDMENTS.md) for automation,
 coverage rules, descriptor metadata and the remaining physical-copy limitation.
+
+To import existing files through the browser, open **Host console → Import files**
+(`/host#imports`). Select multiple `.mbtiles` or `.atlas` files. Uploads use resumable
+8 MiB chunks; conversion and checksum verification join the normal build queue.
+Finished maps appear in the library. Select Compose on several maps for one client
+view, or use Manage imagery on a target to embed raster layers into one Atlas file.
+See [file imports, recovery and API](docs/FILE-IMPORTS.md).
 
 For your own pre-tiled imagery, use `bun run raster:import --help`. The importer takes
 a JPEG/PNG MBTiles file, or an XYZ directory and a JSON layer descriptor like

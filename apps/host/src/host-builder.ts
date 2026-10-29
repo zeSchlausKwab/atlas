@@ -599,7 +599,7 @@ function jobs(values: PreparationJob[]) {
       if (["failed", "cancelled"].includes(job.state)) {
         const resume = text(
           "button",
-          job.cachedSource || job.imageImport
+          job.cachedSource || job.imageImport || job.archiveImport
             ? "Resume saved build"
             : "Queue again",
         ) as HTMLButtonElement;
@@ -676,7 +676,7 @@ function jobs(values: PreparationJob[]) {
           "button",
           job.state === "cancelling"
             ? "Stopping…"
-            : job.cachedSource || job.imageImport
+            : job.cachedSource || job.imageImport || job.archiveImport
               ? "Stop & keep checkpoints"
               : "Cancel preparation",
         ) as HTMLButtonElement;

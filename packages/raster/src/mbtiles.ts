@@ -13,6 +13,8 @@ import {
 } from "../../format/src/raster";
 
 export interface MbtilesOptions {
+  /** Original upload name when the on-disk staging path is generated. */
+  sourceFilename?: string;
   id?: string;
   name?: string;
   attribution?: string;
@@ -122,6 +124,13 @@ function plan(
   const dimensions = rasterDimensions(sample.tile_data, encoding);
   if (dimensions[0] !== dimensions[1] || ![256, 512].includes(dimensions[0]))
     throw new Error("Raster tiles must be 256×256 or 512×512 pixels");
+  const sourceFilename = options.sourceFilename ?? basename(filename);
+  if (
+    !sourceFilename ||
+    sourceFilename.length > 255 ||
+    /[\\/\x00-\x1f]/.test(sourceFilename)
+  )
+    throw new Error("Invalid MBTiles source filename");
   const bounds = options.bounds ?? metadata.bounds?.split(",").map(Number);
   if (!bounds)
     throw new Error(
@@ -138,7 +147,10 @@ function plan(
     "Attribution not specified in source metadata";
   const layer: RasterLayer = {
     id: options.id ?? "imagery",
-    name: options.name ?? metadata.name ?? basename(filename, ".mbtiles"),
+    name:
+      options.name ??
+      metadata.name ??
+      sourceFilename.replace(/\.mbtiles$/i, ""),
     version: 1,
     kind: "imagery",
     crs: "EPSG:3857",
@@ -149,14 +161,14 @@ function plan(
     maxZoom: totals.max,
     bounds: bounds as RasterLayer["bounds"],
     source: {
-      url: `mbtiles:${basename(filename)}`,
+      url: `mbtiles:${sourceFilename}`,
       attribution,
       license:
         options.license ??
         metadata.license ??
         "Not specified in MBTiles metadata; original provider terms apply",
     },
-    mbtiles: { filename: basename(filename), scheme, metadata },
+    mbtiles: { filename: sourceFilename, scheme, metadata },
   };
   validateRasters([layer]);
   const warnings: string[] = [];
