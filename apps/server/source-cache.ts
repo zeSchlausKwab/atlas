@@ -1,3 +1,7 @@
+import {
+  checkStorageEstimate,
+  StorageWarning,
+} from "../../packages/provisioning/src/capacity";
 import { regionalSources, deleteRegionalSource } from "./regional-sources";
 import { rm } from "node:fs/promises";
 import { registerSourceLocation } from "./source-location";
@@ -187,7 +191,7 @@ export class SourceCache {
   private async running(id: string) {
     return (await this.workerStatus(id)).active;
   }
-  private async launch(source: CachedSource) {
+  private async launch(source: CachedSource & { allowStorageRisk?: boolean }) {
     if (this.busy) throw new Error("A source action is already in progress");
     this.busy = true;
     try {
@@ -203,6 +207,15 @@ export class SourceCache {
         (await Bun.file(join(this.directory, source.id + ".osm.pbf")).exists())
       )
         return existing;
+      const offset = await partialSize(
+        join(this.directory, source.id + ".osm.pbf.part"),
+      );
+      const disk = await readStorage(this.directory);
+      checkStorageEstimate(
+        Math.max(0, source.bytes - offset) + SOURCE_RESERVE,
+        disk.availableBytes,
+        source.allowStorageRisk ?? false,
+      );
       for (const j of jobs)
         if (await this.running(j.id)) {
           if (j.id === source.id) return j;
@@ -222,17 +235,6 @@ export class SourceCache {
           this.startQueue();
           return queued;
         }
-      const offset = await partialSize(
-        join(this.directory, source.id + ".osm.pbf.part"),
-      );
-      const disk = await readStorage(this.directory);
-      if (
-        disk.availableBytes <
-        Math.max(0, source.bytes - offset) + SOURCE_RESERVE
-      )
-        throw new Error(
-          `Not enough disk space for the remaining PBF plus a ${SOURCE_RESERVE / 1024 ** 3} GiB reserve`,
-        );
       const record = join(this.directory, source.id + ".json");
       const job: SourceJob = {
         ...source,
@@ -434,14 +436,26 @@ export class SourceCache {
         const source = this.plans.get(body.id);
         if (!source || Date.now() - Date.parse(source.inspectedAt) > 150000)
           throw new Error("Check the source again before starting");
-        return json(await this.launch(source), 202);
+        return json(
+          await this.launch({
+            ...source,
+            allowStorageRisk: body.allowStorageRisk ?? false,
+          }),
+          202,
+        );
       }
       if (!/^[a-f0-9]{32}$/.test(body.id ?? ""))
         throw new Error("Invalid source ID");
       const job = (await this.list()).find((j) => j.id === body.id);
       if (!job) throw new Error("Source not found");
       if (url.pathname === "/admin/sources/resume")
-        return json(await this.launch(job), 202);
+        return json(
+          await this.launch({
+            ...job,
+            allowStorageRisk: body.allowStorageRisk ?? false,
+          }),
+          202,
+        );
       if (url.pathname === "/admin/sources/pause") {
         if (this.busy)
           throw new Error(
@@ -476,6 +490,11 @@ export class SourceCache {
       }
       return json({ error: "Not found" }, 404);
     } catch (e) {
+      if (e instanceof StorageWarning)
+        return json(
+          { error: e.message, storageWarning: e.storageWarning },
+          409,
+        );
       return json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }
   }

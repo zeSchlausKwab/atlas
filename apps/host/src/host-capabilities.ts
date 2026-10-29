@@ -1,3 +1,5 @@
+import { storageRequest } from "./host-storage";
+import { NO_SIZE_LIMIT } from "../../../packages/provisioning/src/capacity";
 import {
   capabilityChoices,
   installedCapabilities,
@@ -12,16 +14,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, text = "") => {
   e.textContent = text;
   return e;
 };
-async function post(path: string, body: unknown) {
-  const r = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error);
-  return data;
-}
+const post = storageRequest;
 /** Keep form nodes across job polling: other builds must not erase uncommitted choices. */
 export function capabilityPanel(
   job: PreparationJob,
@@ -80,22 +73,6 @@ export function capabilityPanel(
     }
     panel.append(field);
   }
-  const budget = el("input"),
-    budgetLabel = el("label", "Maximum new file size (MiB)");
-  budget.type = "number";
-  budget.min = "1";
-  budget.step = "1";
-  budget.value = String(
-    Math.ceil(
-      Math.max((job.size ?? 0) * 3 + 128 * 1024 ** 2, 256 * 1024 ** 2) /
-        1024 ** 2,
-    ),
-  );
-  budgetLabel.append(budget);
-  const options = el("details"),
-    summary = el("summary", "Build options");
-  options.append(summary, budgetLabel);
-  panel.append(options);
   const status = el("p"),
     actions = el("div"),
     review = el("button", "Review changes"),
@@ -114,12 +91,7 @@ export function capabilityPanel(
       changed =
         chosen.length !== installed.length ||
         chosen.some((c) => !installed.includes(c));
-    review.disabled = apply.disabled =
-      busy ||
-      !changed ||
-      !chosen.length ||
-      !Number.isSafeInteger(Number(budget.value)) ||
-      Number(budget.value) < 1;
+    review.disabled = apply.disabled = busy || !changed || !chosen.length;
   };
   const reset = () => {
     version++;
@@ -127,14 +99,13 @@ export function capabilityPanel(
     sync();
   };
   for (const c of checks.values()) c.onchange = reset;
-  budget.oninput = reset;
   const request = (): CapabilityChange => ({
     targetId: job.id,
     targetSnapshot: m.snapshot,
     name: job.name,
     capabilities: selected(),
     paddingCells: m.selection?.routingPaddingCells ?? 1,
-    maxBytes: Number(budget.value) * 1024 ** 2,
+    maxBytes: NO_SIZE_LIMIT,
   });
   async function run(commit: boolean) {
     const current = ++version;
@@ -151,7 +122,6 @@ export function capabilityPanel(
       if (commit) {
         // Freeze the reviewed selection while committing; queued build pins both inputs.
         for (const c of checks.values()) c.disabled = true;
-        budget.disabled = true;
         const result = await post(
           "/admin/preparations/capabilities",
           plan.change,
@@ -169,7 +139,6 @@ export function capabilityPanel(
     } finally {
       busy = false;
       for (const c of checks.values()) c.disabled = false;
-      budget.disabled = false;
       sync();
     }
   }

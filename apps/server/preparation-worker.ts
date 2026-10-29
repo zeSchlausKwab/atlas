@@ -77,7 +77,28 @@ process.on(
         phase = p.phase;
       }
     };
+    let diskError: Error | undefined,
+      checkingDisk = false;
+    const checkDisk = async () => {
+      if (checkingDisk || abort.signal.aborted) return;
+      checkingDisk = true;
+      try {
+        const storage = await readStorage(dirname(output));
+        if (storage.availableBytes < DISK_RESERVE)
+          throw new Error(
+            `Preparation stopped to preserve ${DISK_RESERVE / 1024 ** 3} GiB free. Source files and reusable checkpoints are retained.`,
+          );
+      } catch (e) {
+        diskError = e instanceof Error ? e : new Error(String(e));
+        abort.abort(diskError);
+      } finally {
+        checkingDisk = false;
+      }
+    };
+    const diskTimer = setInterval(() => void checkDisk(), 1000);
     try {
+      await checkDisk();
+      abort.signal.throwIfAborted();
       if (data.capabilityChange) {
         const change = data.capabilityChange;
         targetFile = await PackageSource.open(change.target);
@@ -279,10 +300,15 @@ process.on(
       for (const path of [output, output + ".part", output + ".payload.part"])
         await rm(path, { force: true }).catch(() => {});
       final = {
-        type: abort.signal.aborted ? "cancelled" : "failed",
-        error: abort.signal.aborted ? "Preparation cancelled." : String(error),
+        type: abort.signal.aborted && !diskError ? "cancelled" : "failed",
+        error: diskError
+          ? diskError.message
+          : abort.signal.aborted
+            ? "Preparation cancelled."
+            : String(error),
       };
     } finally {
+      clearInterval(diskTimer);
       await result?.close();
       await file?.close();
       await targetFile?.close();

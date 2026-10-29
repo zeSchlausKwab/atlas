@@ -9,14 +9,11 @@ import {
 import { approximateDuration } from "../../../packages/provisioning/src/compiler-progress";
 import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
-import { budgetControl, storageSize } from "./host-budget";
+import { storageSize } from "./host-budget";
+import { storageRequest } from "./host-storage";
 import {
-  preparationSpace,
-  DISK_RESERVE,
-  BUILD_STOP_MARGIN,
-  cachedBuildSpace,
-  capacityBudget,
-  validBudget,
+  hostPreparationSpace,
+  NO_SIZE_LIMIT,
   type StorageInfo,
 } from "../../../packages/provisioning/src/capacity";
 import { createPreview, type HostPreview } from "./host-preview";
@@ -65,6 +62,7 @@ type AtlasChoice = {
   id: string;
   manifest: Manifest;
   available: SelectionScope["available"];
+  bytes?: number;
 };
 let oceanSource: { url: string; sha256: string } | undefined;
 let cachedSources: CachedChoice[] = [],
@@ -128,18 +126,13 @@ function largeSelection() {
     16
   );
 }
-let outputBudget: ReturnType<typeof budgetControl> | undefined,
-  sourceBudget: ReturnType<typeof budgetControl> | undefined;
-const outputBytes = () =>
-  el<HTMLInputElement>("budget").valueAsNumber * 1048576;
-const sourceBytes = () =>
-  el<HTMLInputElement>("source-budget").valueAsNumber * 1048576;
 function spaceNeeded() {
-  if (cached()) return cachedBuildSpace(outputBytes(), largeSelection());
-  return preparationSpace(
-    outputBytes(),
-    global() ? (sourcePlan?.bytes ?? sourceBytes()) : undefined,
-  );
+  return hostPreparationSpace(NO_SIZE_LIMIT, {
+    cached: cached(),
+    partitioned: largeSelection(),
+    sourceBytes: remotePbf() ? sourcePlan?.bytes : undefined,
+    atlasBytes: atlasSource()?.bytes ?? baseSourceBytes,
+  });
 }
 function renderStorage() {
   const available = storage?.availableBytes;
@@ -150,40 +143,19 @@ function renderStorage() {
     const meter = el<HTMLMeterElement>("storage-meter");
     meter.max = storage!.totalBytes || 1;
     meter.value = available;
-    outputBudget?.setCapacity(
-      cached()
-        ? Math.max(
-            1048576,
-            Math.floor(
-              (largeSelection()
-                ? available - cachedBuildSpace(0, true)
-                : (available - cachedBuildSpace(0)) / 6) / 1048576,
-            ) * 1048576,
-          )
-        : capacityBudget(available, "output", global()),
-    );
-    sourceBudget?.setCapacity(capacityBudget(available, "source", global()));
   }
   const estimate = el("storage-estimate");
-  if (
-    !validBudget(outputBytes()) ||
-    (remotePbf() && !validBudget(sourceBytes()))
-  ) {
-    estimate.textContent = "Enter valid budgets to estimate preparation space.";
-    estimate.dataset.insufficient = "false";
+  estimate.dataset.insufficient = "false";
+  if (!closed || (remotePbf() && !sourcePlan)) {
+    estimate.textContent = remotePbf()
+      ? "Choose an area and find its covering download to check the source size."
+      : "Choose an area and capabilities. The finished file size depends on the selected data.";
     return;
   }
-  if (!closed) {
-    estimate.textContent =
-      "Choose an area to calculate the workspace allowance. This is a safety budget, not a prediction of the final file size.";
-    estimate.dataset.insufficient = "false";
-    return;
-  }
-  const needed = spaceNeeded();
-  estimate.dataset.insufficient = String(
-    available !== undefined && needed > available,
-  );
-  estimate.textContent = `${storageSize(needed)} ${cached() ? `minimum workspace allowance including ${storageSize(DISK_RESERVE)} reserve; compilation stops ${storageSize(BUILD_STOP_MARGIN)} above it` : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
+  const needed = spaceNeeded(),
+    risk = available !== undefined && needed > available;
+  estimate.dataset.insufficient = String(risk);
+  estimate.textContent = `${remotePbf() ? `${storageSize(sourcePlan!.bytes)} source PBF · ` : ""}${storageSize(needed)} rough planning allowance for temporary files, output and free-space reserve. Actual use may be higher or lower.${risk ? " This might exceed free space. You can review the warning and start anyway." : ""}`;
 }
 let checking = false,
   submitting = false,
@@ -202,7 +174,7 @@ const sourceArea = () => ({
   polygon: points,
   paddingCells: Number(el<HTMLSelectElement>("padding").value),
   profiles: selection().profiles,
-  maxSourceBytes: Number(el<HTMLInputElement>("source-budget").value) * 1048576,
+  maxSourceBytes: NO_SIZE_LIMIT,
 });
 const sourceKey = () => {
   const a = sourceArea();
@@ -246,17 +218,9 @@ function update() {
     el("source-plan").textContent =
       "Selection changed or source plan expired. Check the PBF source again.";
   }
-  const valid =
-    validBudget(outputBytes()) && (!remotePbf() || validBudget(sourceBytes()));
-  el<HTMLButtonElement>("check-source").disabled =
-    !closed || checking || !validBudget(sourceBytes());
+  el<HTMLButtonElement>("check-source").disabled = !closed || checking;
   el<HTMLButtonElement>("submit").disabled =
-    !closed ||
-    submitting ||
-    !sourceReady() ||
-    !valid ||
-    (remotePbf() && !sourcePlan) ||
-    (storage !== undefined && spaceNeeded() > storage.availableBytes);
+    !closed || submitting || !sourceReady() || (remotePbf() && !sourcePlan);
   el("submit").textContent = submitting
     ? "Starting…"
     : activeBuild
@@ -435,19 +399,10 @@ function selection(): PackageSelection {
       "objects",
     ].filter((k) => checked(`feature-${k}`)) as FeatureKind[],
     paddingCells: Number(el<HTMLSelectElement>("padding").value),
-    maxBytes: Number(el<HTMLInputElement>("budget").value) * 1024 * 1024,
+    maxBytes: NO_SIZE_LIMIT,
   };
 }
-async function request(path: string, body: unknown) {
-  const r = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error ?? "Request failed");
-  return data;
-}
+const request = storageRequest;
 const composition = new Set<string>();
 function updateComposition() {
   el<HTMLAnchorElement>("compose").href = openClient(
@@ -921,8 +876,6 @@ function configureSource() {
       false,
     );
   el("global-controls").hidden = !remotePbf();
-  el<HTMLInputElement>("source-budget").disabled = !remotePbf();
-  el<HTMLInputElement>("source-budget").required = remotePbf();
   el("britain").hidden = !global();
   el("fit").textContent = global() ? "Fit world" : "Fit source";
   const local = el<HTMLSelectElement>(
@@ -999,8 +952,6 @@ function setupDeletion() {
 }
 export async function startBuilder() {
   updateComposition();
-  outputBudget = budgetControl("prepare-budget");
-  sourceBudget = budgetControl("prepare-source-budget");
   el("storage-refresh").onclick = async () => {
     const button = el<HTMLButtonElement>("storage-refresh");
     button.disabled = true;
@@ -1051,10 +1002,6 @@ export async function startBuilder() {
     closed = true;
     mode = null;
     el<HTMLInputElement>("name").value = "Britain area";
-    el<HTMLInputElement>("budget").value = "32768";
-    el<HTMLInputElement>("budget").dispatchEvent(
-      new Event("input", { bubbles: true }),
-    );
     preview?.fitArea([-8.5, 49.75, 2, 61]);
     el("message").textContent =
       "Britain starter rectangle: includes Ireland and nearby coasts. Refine the area or draw a polygon, choose capabilities, then start when ready.";

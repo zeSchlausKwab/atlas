@@ -8,6 +8,10 @@ import {
 import type { CapabilityChange } from "../../packages/provisioning/src/compose-capabilities";
 import {
   validBudget,
+  NO_SIZE_LIMIT,
+  hostPreparationSpace,
+  checkStorageEstimate,
+  StorageWarning,
   DISK_RESERVE,
 } from "../../packages/provisioning/src/capacity";
 import { AtlasReader } from "../../packages/format/src/reader";
@@ -20,15 +24,10 @@ import {
 import { configuredOcean } from "../../packages/provisioning/src/ocean-source";
 import { verifiedSource, verifiedSources } from "./verified-sources";
 import {
-  cachedBuildSpace,
   planCachedBuild,
   type VerifiedBuildSource,
 } from "../../packages/provisioning/src/cached-build";
 import { adminAccess, ADMIN_DENIED, type AdminAccess } from "./admin-access";
-import {
-  preparationSpace,
-  cachedResumeSpace,
-} from "../../packages/provisioning/src/capacity";
 import { readStorage } from "./storage";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -65,6 +64,7 @@ export interface PreparationJob {
     | "deleting";
   selection: PackageSelection;
   resumeCheckpoint?: boolean;
+  allowStorageRisk?: boolean;
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
   sourceAtlasId?: string;
@@ -203,11 +203,11 @@ export class Preparations {
     });
     return this.dispatching;
   }
-  async resume(id: string) {
+  async resume(id: string, allowStorageRisk = false) {
     const job = this.jobs.get(id);
     if (!job || !["failed", "cancelled"].includes(job.state))
       throw new Error("Only stopped preparations can be queued again.");
-    return this.create(job.selection, job);
+    return this.create({ ...job.selection, allowStorageRisk }, job);
   }
   private sourcePlanForMap(id: string): PbfPlan | undefined {
     const seen = new Set<string>();
@@ -365,6 +365,10 @@ export class Preparations {
         );
     }
     const size = Bun.file(target.path).size;
+    const estimatedOutput =
+      value.maxBytes === NO_SIZE_LIMIT
+        ? Math.max(size * (rebuild.length ? 3 : 1), 256 * 1024 ** 2)
+        : value.maxBytes;
     return {
       change,
       additions,
@@ -377,7 +381,7 @@ export class Preparations {
       estimatedWorkspaceBytes:
         DISK_RESERVE +
         size +
-        value.maxBytes * 2 +
+        estimatedOutput * 2 +
         512 * 1024 ** 2 +
         (download?.bytes ?? 0),
       sourceName:
@@ -418,6 +422,7 @@ export class Preparations {
         p.change.paddingCells,
       ),
       capabilityChange: p.change,
+      allowStorageRisk: value.allowStorageRisk,
     });
   }
   async setServed(id: string, served: boolean) {
@@ -478,7 +483,15 @@ export class Preparations {
       sourceAtlasId?: string;
       amendment?: HostedAmendment;
       capabilityChange?: CapabilityChange;
+      allowStorageRisk?: boolean;
     } | null;
+    if (
+      extra?.allowStorageRisk !== undefined &&
+      typeof extra.allowStorageRisk !== "boolean"
+    )
+      throw new Error("Invalid storage override");
+    const allowStorageRisk =
+      extra?.allowStorageRisk ?? previous?.allowStorageRisk ?? false;
     const capabilityChange =
       previous?.capabilityChange ?? extra?.capabilityChange;
     const capabilityPlan = capabilityChange
@@ -588,6 +601,31 @@ export class Preparations {
       });
       if (start) throw new Error("Waiting for the parent dataset to finish.");
     } else validateSelection(value, atlas?.manifest ?? this.source);
+    // Check the same estimate at submission and dispatch. Acceptance is scoped to the saved job.
+    const partitioned = !!cached && !!planCachedBuild(value).partitioned;
+    const extractedBytes =
+      previous?.resumeCheckpoint && cached
+        ? Bun.file(
+            resolve(
+              this.directory,
+              `${previous.id}.work/extraction/area.osm.pbf`,
+            ),
+          ).size
+        : 0;
+    const needed = capabilityPlan
+      ? capabilityPlan.estimatedWorkspaceBytes
+      : amendment
+        ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+        : hostPreparationSpace(value.maxBytes, {
+            cached: !!cached,
+            partitioned,
+            resume: !!previous?.resumeCheckpoint,
+            extractedBytes,
+            sourceBytes: plan?.bytes,
+            atlasBytes: Bun.file(inputPath).size,
+          });
+    const disk = await readStorage(this.directory);
+    checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
     if (!start) {
       const job: PreparationJob = {
         id: previous?.id ?? crypto.randomUUID(),
@@ -601,6 +639,7 @@ export class Preparations {
         amendment,
         capabilityChange: capabilityPlan?.change,
         resumeCheckpoint: !!previous?.cachedSource,
+        allowStorageRisk,
         progress: {
           phase: "planning",
           message:
@@ -626,29 +665,6 @@ export class Preparations {
     this.active = id;
     this.activeSource = atlas?.id;
     try {
-      const disk = await readStorage(this.directory);
-      const partitioned = !!cached && !!planCachedBuild(value).partitioned;
-      const extractedBytes =
-        previous?.resumeCheckpoint && cached
-          ? Bun.file(
-              resolve(this.directory, `${id}.work/extraction/area.osm.pbf`),
-            ).size
-          : 0;
-      const needed = capabilityPlan
-        ? capabilityPlan.estimatedWorkspaceBytes
-        : amendment
-          ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-          : cached
-            ? previous?.resumeCheckpoint
-              ? cachedResumeSpace(value.maxBytes, partitioned, extractedBytes)
-              : cachedBuildSpace(value.maxBytes, partitioned)
-            : preparationSpace(value.maxBytes, plan?.bytes);
-      if (disk.availableBytes < needed)
-        throw new Error(
-          previous
-            ? `Not enough server disk space to resume: ${(needed / 1073741824).toFixed(2)} GiB minimum restart allowance, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Free space and resume the saved build.`
-            : `Not enough server disk space: ${(needed / 1073741824).toFixed(2)} GiB estimated, ${(disk.availableBytes / 1073741824).toFixed(2)} GiB available. Lower the output budget or select a smaller source.`,
-        );
       if (previous && previous.state !== "queued") {
         this.active = undefined;
         this.activeSource = undefined;
@@ -659,6 +675,7 @@ export class Preparations {
         name: value.name.trim(),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
         state: "running",
+        allowStorageRisk,
         selection: structuredClone(value),
         sourcePlan: plan,
         cachedSource: cached,
@@ -886,6 +903,7 @@ export class Preparations {
           id: map.id,
           manifest: map.manifest,
           available: availability(map.manifest!),
+          bytes: map.bytes,
         })),
         globalSource: {
           ...WORLD_SOURCE,
@@ -917,7 +935,7 @@ export class Preparations {
       if (match)
         return json(
           await (match[2] === "resume"
-            ? this.resume(match[1]!)
+            ? this.resume(match[1]!, JSON.parse(raw).allowStorageRisk ?? false)
             : match[2] === "delete"
               ? this.delete(match[1]!)
               : this.cancel(match[1]!)),
@@ -943,6 +961,11 @@ export class Preparations {
         return json({ error: "Not found" }, 404);
       return json(await this.create(JSON.parse(raw)), 202);
     } catch (e) {
+      if (e instanceof StorageWarning)
+        return json(
+          { error: e.message, storageWarning: e.storageWarning },
+          409,
+        );
       return json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }
   }

@@ -244,66 +244,11 @@
                 display geometry.
               </p>
             </details>
-            <details class="host-limits">
-              <summary>Storage limits</summary>
-              <label class="host-field"
-                >Maximum output size (MiB)<input
-                  id="prepare-budget"
-                  type="number"
-                  step="any"
-                  value="2048"
-                  min="1"
-                  required
-              /></label>
-              <input
-                id="prepare-budget-slider"
-                class="host-budget-slider"
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                aria-label="Maximum output size slider"
-                aria-describedby="prepare-budget-value"
-              />
-              <output
-                id="prepare-budget-value"
-                class="host-budget-value"
-                for="prepare-budget prepare-budget-slider"
-              ></output>
-              <p class="quiet">
-                Tiles, source objects and routing cells touching the outline can
-                extend beyond it. Search and label geometry are clipped. The
-                output is checked against this size limit.
-              </p>
-            </details>
             <div id="prepare-global-controls" hidden>
-              <label class="host-field"
-                >Maximum source download (MiB)<input
-                  id="prepare-source-budget"
-                  type="number"
-                  step="any"
-                  min="1"
-                  value="2048"
-              /></label>
-              <input
-                id="prepare-source-budget-slider"
-                class="host-budget-slider"
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                aria-label="Maximum source download slider"
-                aria-describedby="prepare-source-budget-value"
-              />
-              <output
-                id="prepare-source-budget-value"
-                class="host-budget-value"
-                for="prepare-source-budget prepare-source-budget-slider"
-              ></output>
               <p class="quiet">
                 We download one covering regional PBF, then crop it locally.
-                This budget is separate from the finished Atlas file. Verified
-                PBF files stay on disk for reuse.
+                Verified PBF files stay on disk for reuse. Check the source to
+                see its download size.
               </p>
               <button id="prepare-check-source" type="button" disabled>
                 Find covering download
@@ -335,9 +280,10 @@
               ></meter>
               <p id="prepare-storage-estimate"></p>
               <p class="quiet">
-                Space on the server’s map storage volume. Preparation also needs
-                temporary files. This estimate is checked again before starting;
-                it does not reserve disk space or measure RAM.
+                No fixed download or output size cap. Preparation also needs
+                temporary files; the final size is not known yet. If the
+                planning allowance exceeds free space, you can choose Start
+                anyway. Runtime low-disk checks still apply.
               </p>
             </section>
             <p class="host-build-summary" id="prepare-summary"></p>

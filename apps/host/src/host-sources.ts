@@ -1,3 +1,4 @@
+import { storageRequest } from "./host-storage";
 import { storageSize } from "./host-budget";
 import type {
   CachedSource,
@@ -5,16 +6,8 @@ import type {
 } from "../../../packages/provisioning/src/source-cache";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(`source-${id}`) as T;
-async function post(action: string, body: unknown) {
-  const r = await fetch(`/admin/sources/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error);
-  return data;
-}
+const post = (action: string, body: unknown) =>
+  storageRequest(`/admin/sources/${action}`, body);
 export async function startSources() {
   let plan: CachedSource | undefined,
     available = 0,
@@ -22,8 +15,7 @@ export async function startSources() {
     loading = false,
     action = false;
   function canStart() {
-    el<HTMLButtonElement>("start").disabled =
-      action || !plan || available < plan.bytes + reserve;
+    el<HTMLButtonElement>("start").disabled = action || !plan;
   }
   function render(jobs: SourceJob[]) {
     const list = el("jobs");
@@ -185,7 +177,7 @@ export async function startSources() {
       if (kind !== el<HTMLSelectElement>("kind").value) return;
       plan = result;
       el("plan").textContent =
-        `${plan.name} · ${storageSize(plan.bytes)} (${plan.bytes.toLocaleString()} bytes) · published ${new Date(plan.lastModified).toLocaleDateString()}. ${available < plan.bytes + reserve ? "Not enough free space including the reserve." : "Ready to download; the final file is published only after checksum verification."}`;
+        `${plan.name} · ${storageSize(plan.bytes)} (${plan.bytes.toLocaleString()} bytes) · published ${new Date(plan.lastModified).toLocaleDateString()}. ${available < plan.bytes + reserve ? "This download might exceed available space. You can review the warning and start anyway." : "Ready to download; the final file is published only after checksum verification."}`;
     } catch (e) {
       el("plan").textContent = String(e);
     } finally {

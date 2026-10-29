@@ -93,7 +93,6 @@ reverse streets. HTTP tests found routes through Funchal in each mode, produced 
 walking isochrone, found Funchal by name and identified Avenida Arriaga from coordinates.
 The original remained served during construction and was retained locally afterward.
 
-
 ## Milestone 2 — extensible family catalog and build dependencies
 
 Status: planned.
@@ -135,7 +134,6 @@ It is not numeric elevation or a full high-resolution terrain import. The origin
 GeoTIFF pipeline, clipping/export of raster families, embedded raster amendments,
 GPU textured rendering and arbitrary image georeferencing remain below.
 
-
 Import the 24.01 MB Natural Earth shaded-relief source into a standalone
 `relief.atlas`; create tiled overviews and preserve attribution/provenance. Add
 selective raster reads and textured rendering with layer order, opacity and blend
@@ -147,6 +145,7 @@ The current OpenFreeMap Liberty preview already uses Natural Earth raster relief
 below z7. This is rendered imagery, not numeric elevation.
 
 Sources checked 2026-10-29:
+
 - https://tiles.openfreemap.org/styles/liberty
 - https://www.naturalearthdata.com/downloads/10m-raster-data/10m-shaded-relief/
 - https://www.naturalearthdata.com/about/terms-of-use/ (public domain)
@@ -201,3 +200,14 @@ Build and test host assets locally; activate a remote release only once safe.
 Do not modify published archives, running compiler checkpoints or the dirty local
 `.env.example`. Commit focused milestones. Large raster or PBF downloads are not
 needed for milestone 1.
+
+### Host storage warnings
+
+The host console no longer asks for output or source-download caps. It shows the
+inspected PBF size and a rough workspace allowance, independent of the final
+file size. Cached-source allowances are deliberately coarse until extraction;
+they are not predictions. A submission that exceeds available disk space returns
+a structured warning. **Start anyway** explicitly accepts that estimate for the
+saved job, including its queued dispatch; it does not disable runtime low-disk
+checks. Source downloads, map preparation and capability revisions share this
+flow. Explicit CLI/API byte ceilings remain supported for automated callers.

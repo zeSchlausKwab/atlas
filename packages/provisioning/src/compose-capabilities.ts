@@ -5,6 +5,8 @@ import { StreamWriter } from "../../cli/src/stream-writer";
 import { blockFamily, installedCapabilities } from "./families";
 import type { PreparationProgress } from "./selection";
 export interface CapabilityChange {
+  /** Consent for the host planning estimate, never disables runtime disk guards. */
+  allowStorageRisk?: boolean;
   targetId: string;
   targetSnapshot: string;
   name: string;

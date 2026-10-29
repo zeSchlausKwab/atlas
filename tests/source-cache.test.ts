@@ -481,3 +481,54 @@ test("source queue runs real workers sequentially and starts a persisted downloa
     await rm(directory, { recursive: true, force: true });
   }
 }, 20000);
+
+test("queued source downloads warn before admission and retain explicit storage override", async () => {
+  const dir = await mkdtemp("/tmp/atlas-source-space-");
+  const cache = new SourceCache(dir);
+  try {
+    // Keep one fixture download active so the accepted job is queued without making network requests.
+    await Bun.write(
+      dir + "/" + source.id + ".json",
+      JSON.stringify({
+        ...source,
+        state: "waiting",
+        completed: 0,
+        updatedAt: new Date().toISOString(),
+        message: "fixture",
+      }),
+    );
+    (cache as any).running = async () => true;
+    const large = {
+      ...source,
+      id: "b".repeat(32),
+      bytes: 10 ** 15,
+      inspectedAt: new Date().toISOString(),
+    };
+    (cache as any).plans.set(large.id, large);
+    const post = (body: unknown) =>
+      cache.handle(
+        new Request("http://localhost/admin/sources/start", {
+          method: "POST",
+          headers: {
+            Origin: "http://localhost",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }),
+        "127.0.0.1",
+      );
+    expect((await post({ id: large.id })).status).toBe(409);
+    expect(await Bun.file(dir + "/" + large.id + ".json").exists()).toBe(false);
+    const accepted = await post({ id: large.id, allowStorageRisk: true });
+    expect(accepted.status).toBe(202);
+    const job = await accepted.json();
+    expect(job.state).toBe("waiting");
+    expect(job.allowStorageRisk).toBe(true);
+    expect(
+      (await Bun.file(dir + "/" + large.id + ".json").json()).allowStorageRisk,
+    ).toBe(true);
+  } finally {
+    await cache.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -25,6 +25,7 @@ export interface CachedSource {
   inspectedAt: string;
 }
 export interface SourceJob extends CachedSource {
+  allowStorageRisk?: boolean;
   state:
     | "waiting"
     | "queued"
