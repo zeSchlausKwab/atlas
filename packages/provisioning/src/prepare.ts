@@ -372,6 +372,9 @@ export async function preparePackage(
     if (Object.keys(profiles).length) caps.push("transport-routing");
     const manifest: Omit<Manifest, "snapshot"> = {
       ...m,
+      // This vector/semantic excerpt adapter does not copy imagery or unknown families.
+      rasters: undefined,
+      families: m.families ? [] : undefined,
       name: s.name.trim(),
       bounds: bounds(s.polygon),
       minZoom: s.minZoom,

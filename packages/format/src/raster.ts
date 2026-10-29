@@ -12,6 +12,7 @@ export interface RasterLayer {
   maxZoom: number;
   bounds: [number, number, number, number];
   source: { url: string; attribution: string; license: string };
+  provenance?: { archiveSnapshot: string; layerId: string };
   registration?: {
     method: "north-up-mercator-bounds";
     width: number;
@@ -61,6 +62,13 @@ export function validateRasters(
       )
     )
       throw new Error("Invalid raster layer descriptor");
+    if (
+      r.provenance &&
+      (!/^[a-f0-9]{64}$/.test(r.provenance.archiveSnapshot) ||
+        typeof r.provenance.layerId !== "string" ||
+        !/^[a-z][a-z0-9_-]{0,63}$/.test(r.provenance.layerId))
+    )
+      throw new Error("Invalid raster provenance");
     if (r.registration) {
       const g = r.registration;
       if (

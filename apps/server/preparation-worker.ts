@@ -1,3 +1,7 @@
+import {
+  amendRasters,
+  type RasterAmendment,
+} from "../../packages/provisioning/src/raster-amend";
 import { importImage } from "../../packages/raster/src/image-import";
 import type { ImageImport } from "../../packages/raster/src/image-plan";
 import { buildCapabilities } from "../../packages/provisioning/src/build-capabilities";
@@ -43,6 +47,11 @@ process.on(
     sourcePlan?: PbfPlan;
     cachedSource?: VerifiedBuildSource;
     imageImport?: ImageImport;
+    rasterAmendment?: {
+      request: RasterAmendment;
+      target: string;
+      sources: Record<string, string>;
+    };
     amendment?: { request: RoutingAmendment; target: string };
     capabilityChange?: {
       request: CapabilityChange;
@@ -102,7 +111,39 @@ process.on(
     try {
       await checkDisk();
       abort.signal.throwIfAborted();
-      if (data.imageImport) {
+      if (data.rasterAmendment) {
+        const a = data.rasterAmendment,
+          files: PackageSource[] = [],
+          readers: AtlasReader[] = [];
+        const read = async (path: string) => {
+          const f = await PackageSource.open(path);
+          files.push(f);
+          const r = await new AtlasReader(f).open();
+          readers.push(r);
+          return r;
+        };
+        try {
+          const target = await read(a.target),
+            sources = new Map<string, AtlasReader>();
+          for (const [id, path] of Object.entries(a.sources))
+            sources.set(id, await read(path));
+          await amendRasters(
+            target,
+            sources,
+            a.request,
+            output,
+            abort.signal,
+            report,
+            async () => {
+              await checkDisk();
+              abort.signal.throwIfAborted();
+            },
+          );
+        } finally {
+          readers.forEach((r) => r.dispose());
+          await Promise.all(files.map((f) => f.close()));
+        }
+      } else if (data.imageImport) {
         await importImage(data.imageImport, work, output, abort.signal, report);
       } else if (data.capabilityChange) {
         const change = data.capabilityChange;
@@ -323,7 +364,14 @@ process.on(
       )
         await rm(work, { recursive: true, force: true });
     }
-    if (process.connected) process.send?.(final);
+    // A large manifest can still be buffered when send() returns. Do not exit
+    // until the IPC write completes, or the host can mistake success for failure.
+    if (process.connected)
+      await new Promise<void>((resolve, reject) => {
+        process.send!(final, (error: Error | null) =>
+          error ? reject(error) : resolve(),
+        );
+      });
     process.exit(0);
   },
 );

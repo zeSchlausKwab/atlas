@@ -1,3 +1,4 @@
+import { openRasterAmendment } from "./host-raster-amend";
 import { capabilityPanel } from "./host-capabilities";
 import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
 import { objectCatalog } from "../../../packages/objects/src/index";
@@ -541,7 +542,7 @@ function jobs(values: PreparationJob[]) {
       select.append(check, text("span", `Compose ${job.name}`));
       const actions = text("div", "", "host-actions host-card-actions");
       const reuse = text("button", "Use as source") as HTMLButtonElement;
-      reuse.hidden = !!job.imageImport;
+      reuse.hidden = !!job.imageImport || !job.manifest.tileLayers?.length;
       reuse.onclick = () => void chooseSource("atlas", `atlas:${job.id}`);
       const serve = text(
         "button",
@@ -560,7 +561,19 @@ function jobs(values: PreparationJob[]) {
           serve.textContent = String(e);
         }
       };
-      actions.append(reuse, serve, deleteButton(job));
+      const imagery = text("button", "Manage imagery") as HTMLButtonElement;
+      imagery.onclick = () =>
+        openRasterAmendment(
+          job,
+          [
+            { id: "demo", manifest: source! },
+            ...values
+              .filter((j) => j.state === "ready" && j.manifest)
+              .map((j) => ({ id: j.id, manifest: j.manifest! })),
+          ],
+          refresh,
+        );
+      actions.append(reuse, imagery, serve, deleteButton(job));
       if (job.served === false) {
         links.replaceChildren();
         card.append(

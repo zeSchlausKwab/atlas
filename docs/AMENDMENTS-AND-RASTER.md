@@ -69,7 +69,7 @@ Built-in choices include display layers, grouped labels, each transport mode, se
 reverse streets, peak queries, grouped feature extraction, boundaries and tagged source
 objects/relationships. Labels and standard feature pages remain grouped to avoid merging
 incompatible local page ordinals. This is a built-in family adapter, not yet the general
-plugin descriptor system below. Raster amendments remain a separate next milestone.
+plugin descriptor system below. Raster amendments now use the same queue through a separate imagery planner.
 
 ### Verification — 2026-10-29
 
@@ -95,9 +95,9 @@ The original remained served during construction and was retained locally afterw
 
 ## Milestone 2 — extensible family catalog and build dependencies
 
-Status: planned.
+Status: descriptor foundation implemented locally; general builder/plugin dependency planning remains planned.
 
-Introduce versioned family descriptors: ID, schema, encoding, spatial coverage,
+The optional `families` manifest field and capability discovery now expose versioned family descriptors: ID, schema, encoding, spatial coverage,
 resolution/zooms, source provenance, attribution/licence and dependency fingerprints.
 Keep existing archives readable through adapters for current built-in families.
 Unknown optional families remain copyable even when a consumer cannot use them.
@@ -114,7 +114,7 @@ require shared routing identity. Coverage is family-specific.
 
 ## Milestone 3 — visual raster delivery
 
-Status: delivery/composition and PNG/JPEG uploads implemented locally; embedded raster amendments remain planned.
+Status: delivery/composition, PNG/JPEG uploads and embedded raster amendments implemented locally.
 
 `demo:raster` retains 148 Natural Earth/OpenFreeMap PNG tiles around Europe at z0–6
 in an 18.6 MiB standalone Atlas. Raster families have validated versioned descriptors
@@ -131,7 +131,7 @@ without further requests. Existing vector archives and all 318 tests still pass.
 
 This proof uses the provider's already tiled imagery, so it needs no local GDAL.
 It is not numeric elevation or a full high-resolution terrain import. The original
-GeoTIFF pipeline, clipping/export of raster families, embedded raster amendments,
+GeoTIFF pipeline, clipping/export of raster families,
 GPU textured rendering and more advanced image registration remain below.
 
 Import the 24.01 MB Natural Earth shaded-relief source into a standalone
@@ -149,6 +149,27 @@ Sources checked 2026-10-29:
 - https://tiles.openfreemap.org/styles/liberty
 - https://www.naturalearthdata.com/downloads/10m-raster-data/10m-shaded-relief/
 - https://www.naturalearthdata.com/about/terms-of-use/ (public domain)
+
+### Embedded imagery revisions — implemented locally
+
+**Map library → Manage imagery** offers per-layer inclusion, names and pixel sources.
+A complete desired raster set supports adding, replacing and removing layers. Review
+shows copied/imported data, replacement/removal and workspace allowance. The persistent
+queue keeps all inputs pinned and protects them from deletion. A successful revision
+retires its predecessor from serving while retaining its file; publication to Hashtree
+remains an explicit action.
+
+The writer scans directory pages without collecting the entire block directory,
+verifies stored payload hashes, and preserves all non-raster bytes unchanged. Existing
+transport graph identity survives the new archive identity. Imported images retain
+independent attribution, licence and donor lineage. Family descriptors are optional;
+old archives get an adapter view, and unknown custom descriptors survive amendments.
+Descriptors describe data and never install or execute plugins.
+
+Client composition has independent raster visibility/opacity with persistent/shareable
+settings. Hidden imagery stops scheduling reads. This does not yet implement append-only
+physical updates, arbitrary polygon pixel masks or image-source rebuilding.
+See [the API and verification](RASTER-AMENDMENTS.md).
 
 ## Milestone 4 — georeferenced image uploads
 
@@ -189,7 +210,7 @@ pixel geography/alpha, cancellation/resume, changed-input rejection, immutable o
 request bounds and authenticated host publication/reopening/deletion.
 
 Next: GeoTIFF georeferencing, rotation/corner transforms, control-point alignment,
-embedded raster amendments and raster region exports. These require explicit resampling
+raster region exports. These require explicit resampling
 and accuracy contracts; they are not implied by the current rectangle registration.
 
 ## Milestone 5 — numeric terrain and portable operations

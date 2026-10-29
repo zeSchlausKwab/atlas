@@ -1,3 +1,4 @@
+import type { RasterLayerViews } from "../../../packages/renderer/src/raster";
 import { HashtreeSource } from "../../../packages/hashtree/src/source";
 import { watchMaps } from "../../../packages/hashtree/src/discovery";
 import { sourceLink } from "./connection";
@@ -42,6 +43,7 @@ interface Entry {
   layers: MapLayer[];
   labels: boolean;
   rasterOpacity?: number;
+  rasterLayers?: RasterLayerViews;
   delivery?: "http" | "hashtree";
   color: string;
   reader?: AtlasReader;
@@ -57,6 +59,7 @@ interface SavedSource {
   layers: MapLayer[];
   labels: boolean;
   rasterOpacity?: number;
+  rasterLayers?: RasterLayerViews;
 }
 interface Recipe {
   version: 1;
@@ -132,6 +135,7 @@ export async function createComposer(
         layers: e.layers,
         labels: e.labels,
         rasterOpacity: e.rasterOpacity,
+        rasterLayers: e.rasterLayers,
         color: e.color,
       }));
   const focused = () => active().find((s) => s.id === focusId)?.reader;
@@ -165,6 +169,7 @@ export async function createComposer(
         layers: e.layers,
         labels: e.labels,
         rasterOpacity: e.rasterOpacity,
+        rasterLayers: e.rasterLayers,
         delivery: e.delivery,
       })),
       coverage: map.coverage,
@@ -211,6 +216,7 @@ export async function createComposer(
               layers: e.layers,
               labels: e.labels,
               rasterOpacity: e.rasterOpacity,
+              rasterLayers: e.rasterLayers,
               color: e.color,
             }) satisfies CompositionMapSource,
         ),
@@ -428,24 +434,37 @@ export async function createComposer(
         row.append(input, text("span", "Labels"));
         layers.append(row);
       }
-      if (m.rasters?.length) {
-        const row = text("label", "Raster opacity"),
+      for (const raster of m.rasters ?? []) {
+        const state = entry.rasterLayers![raster.id]!,
+          row = text("div", "", "composer-raster"),
+          toggle = document.createElement("input"),
+          label = text("label", ""),
+          dialLabel = text("label", "Opacity", "composer-raster-opacity"),
           dial = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.checked = state.enabled;
+        label.append(toggle, document.createTextNode(raster.name));
+        dial.setAttribute("aria-label", `${raster.name} opacity`);
         dial.type = "range";
         dial.min = "0";
         dial.max = "1";
         dial.step = "0.05";
-        dial.value = String(entry.rasterOpacity ?? 0.6);
-        dial.oninput = () => {
-          entry.rasterOpacity = Number(dial.value);
+        dial.value = String(state.opacity);
+        dial.disabled = !state.enabled;
+        toggle.onchange = () => {
+          state.enabled = toggle.checked;
+          dial.disabled = !state.enabled;
           sync();
           save();
         };
-        row.append(dial);
-        layers.append(
-          row,
-          text("p", m.rasters.map((r) => r.name).join(" · "), "quiet"),
-        );
+        dial.oninput = () => {
+          state.opacity = Number(dial.value);
+          sync();
+          save();
+        };
+        dialLabel.append(dial);
+        row.append(label, dialLabel);
+        layers.append(row);
       }
       card.append(layers);
       const links = text("div", "", "host-actions"),
@@ -544,6 +563,22 @@ export async function createComposer(
       rasterOpacity: Number.isFinite(saved?.rasterOpacity)
         ? Math.max(0, Math.min(1, saved!.rasterOpacity!))
         : 0.6,
+      rasterLayers: Object.fromEntries(
+        (offer.manifest.rasters ?? []).map((r) => {
+          const v = saved?.rasterLayers?.[r.id];
+          return [
+            r.id,
+            {
+              enabled: v?.enabled !== false,
+              opacity: Number.isFinite(v?.opacity)
+                ? Math.max(0, Math.min(1, v!.opacity))
+                : Number.isFinite(saved?.rasterOpacity)
+                  ? Math.max(0, Math.min(1, saved!.rasterOpacity!))
+                  : 0.6,
+            },
+          ];
+        }),
+      ),
       delivery: saved?.delivery ?? "hashtree",
       color: colors[entries.length % colors.length]!,
     });

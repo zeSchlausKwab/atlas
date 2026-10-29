@@ -1,4 +1,4 @@
-import { RasterPlane } from "./raster";
+import { RasterPlane, type RasterLayerViews } from "./raster";
 import { PlacesView } from "../../labels/src/place-pages";
 import type { WorkspaceMap } from "./workspace-map";
 import { defaultOverlays, type OverlayFrame } from "./overlays";
@@ -51,6 +51,7 @@ export interface CompositionMapSource extends CompositionSource {
   reader: AtlasReader;
   color: string;
   rasterOpacity?: number;
+  rasterLayers?: RasterLayerViews;
 }
 interface Session {
   source: CompositionMapSource;
@@ -631,7 +632,12 @@ export class CompositionMap implements WorkspaceMap {
       };
     const frames: OverlayFrame[] = [];
     for (const s of this.sessions.values()) {
-      s.raster.draw(camera, ratio, s.source.rasterOpacity ?? 0.6);
+      s.raster.draw(
+        camera,
+        ratio,
+        s.source.rasterOpacity ?? 0.6,
+        s.source.rasterLayers,
+      );
       const b = coverageBounds(coverageOf(s.source.manifest));
       const w = Math.max(view[0], b[0]),
         north = Math.max(view[1], b[1]),

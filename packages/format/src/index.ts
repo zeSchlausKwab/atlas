@@ -1,3 +1,4 @@
+import { validateFamilies, type DataFamily } from "./families";
 import { validateRasters, type RasterLayer } from "./raster";
 import { pagedZoom } from "../../geocoding/src/paging";
 /** ATLAS v0.1: immutable single-file package with independently addressed blocks. */
@@ -134,6 +135,7 @@ export interface Manifest {
   )[];
   tileLayers?: MapLayer[];
   rasters?: RasterLayer[];
+  families?: DataFamily[];
   buildingHeights?: {
     tagged: number;
     estimated: number;
@@ -310,6 +312,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   )
     throw new Error("Invalid map layer catalog");
   validateRasters(manifest.rasters);
+  validateFamilies(manifest.families);
   if (
     manifest.capabilities.includes("raster-rendering") !==
     !!manifest.rasters?.length

@@ -1,3 +1,7 @@
+import {
+  planRasterAmendment,
+  type RasterAmendment,
+} from "../../packages/provisioning/src/raster-amend";
 import { limitedBody } from "./request-body";
 import {
   IMAGE_MAX_BYTES,
@@ -74,6 +78,7 @@ export interface PreparationJob {
   sourcePlan?: PbfPlan;
   cachedSource?: VerifiedBuildSource;
   imageImport?: ImageImport;
+  rasterAmendment?: RasterAmendment;
   sourceAtlasId?: string;
   amendment?: HostedAmendment;
   capabilityChange?: CapabilityChange;
@@ -123,8 +128,9 @@ export class Preparations {
       }
       if (job.state === "running" || job.state === "cancelling") {
         job.state = "failed";
-        job.error =
-          job.cachedSource || job.imageImport
+        job.error = job.rasterAmendment
+          ? "Server stopped. Requeue to copy the imagery revision again; original files are retained."
+          : job.cachedSource || job.imageImport
             ? "Server stopped. Resume to reuse completed compiler stages."
             : "Server stopped during preparation. Create the excerpt again.";
         await manager.cleanup(
@@ -229,6 +235,7 @@ export class Preparations {
       if (!j) return;
       if (j.sourcePlan) return j.sourcePlan;
       id =
+        j.rasterAmendment?.targetId ??
         j.capabilityChange?.targetId ??
         j.amendment?.targetId ??
         j.sourceAtlasId ??
@@ -413,16 +420,7 @@ export class Preparations {
     };
   }
   async createCapabilities(value: CapabilityChange) {
-    if (
-      [...this.jobs.values()].some(
-        (j) =>
-          j.capabilityChange?.targetId === value.targetId &&
-          ["queued", "running", "cancelling"].includes(j.state),
-      )
-    )
-      throw new Error(
-        "A capability change for this map is already queued or running",
-      );
+    this.assertNoAmendment(value?.targetId);
     const p = await this.planCapabilities(value),
       m = this.amendmentInput(value.targetId).manifest;
     return this.create({
@@ -474,6 +472,7 @@ export class Preparations {
     }
   }
   async createAmendment(value: HostedAmendment) {
+    this.assertNoAmendment(value?.targetId);
     const a = this.amendmentInput(value?.targetId),
       b = this.amendmentInput(value?.sourceId);
     const selection = routingAmendmentSelection(a.manifest, b.manifest, value);
@@ -484,6 +483,70 @@ export class Preparations {
       sourceAtlasId: value.sourceId === "demo" ? undefined : value.sourceId,
       amendment: value,
     });
+  }
+  private async rasterInputs(request: RasterAmendment) {
+    if (!request || !Array.isArray(request.layers))
+      throw new Error("Choose imagery layers");
+    const target = this.amendmentInput(request.targetId);
+    const sources = Object.fromEntries(
+      [
+        ...new Set(
+          request.layers
+            .map((r) => r?.sourceId)
+            .filter((id): id is string => typeof id === "string"),
+        ),
+      ].map((id) => [id, this.amendmentInput(id).path]),
+    );
+    return { target: target.path, sources };
+  }
+  async planRasters(request: RasterAmendment) {
+    const paths = await this.rasterInputs(request),
+      files: PackageSource[] = [],
+      readers: AtlasReader[] = [];
+    const read = async (path: string) => {
+      const f = await PackageSource.open(path);
+      files.push(f);
+      const r = await new AtlasReader(f).open();
+      readers.push(r);
+      return r;
+    };
+    try {
+      const target = await read(paths.target),
+        sources = new Map<string, AtlasReader>();
+      for (const [id, path] of Object.entries(paths.sources))
+        sources.set(id, await read(path));
+      return await planRasterAmendment(target, sources, request);
+    } finally {
+      readers.forEach((r) => r.dispose());
+      await Promise.all(files.map((f) => f.close()));
+    }
+  }
+  async createRasters(request: RasterAmendment) {
+    this.assertNoAmendment(request?.targetId);
+    const m = this.amendmentInput(request.targetId).manifest;
+    return this.create({
+      ...familySelection(
+        m,
+        installedCapabilities(m),
+        request.name,
+        request.maxBytes,
+        m.selection?.routingPaddingCells ?? 0,
+      ),
+      rasterAmendment: request,
+      allowStorageRisk: request.allowStorageRisk,
+    });
+  }
+  private assertNoAmendment(targetId: string) {
+    if (
+      [...this.jobs.values()].some(
+        (j) =>
+          (j.rasterAmendment?.targetId === targetId ||
+            j.capabilityChange?.targetId === targetId ||
+            j.amendment?.targetId === targetId) &&
+          ["queued", "running", "cancelling"].includes(j.state),
+      )
+    )
+      throw new Error("An amendment for this map is already queued or running");
   }
   async createImage(
     bytes: Uint8Array,
@@ -561,6 +624,7 @@ export class Preparations {
       sourceAtlasId?: string;
       amendment?: HostedAmendment;
       capabilityChange?: CapabilityChange;
+      rasterAmendment?: RasterAmendment;
       allowStorageRisk?: boolean;
     } | null;
     if (
@@ -571,6 +635,29 @@ export class Preparations {
     const allowStorageRisk =
       extra?.allowStorageRisk ?? previous?.allowStorageRisk ?? false;
     const imageImport = previous?.imageImport;
+    const rasterAmendment = previous?.rasterAmendment ?? extra?.rasterAmendment;
+    const rasterPlan = rasterAmendment
+      ? await this.planRasters(rasterAmendment)
+      : undefined;
+    if (
+      rasterAmendment &&
+      (extra?.cachedSourceId ||
+        extra?.sourcePlanId ||
+        extra?.sourceAtlasId ||
+        extra?.capabilityChange ||
+        extra?.amendment)
+    )
+      throw new Error("Choose one amendment type");
+    if (rasterAmendment) {
+      const m = this.amendmentInput(rasterAmendment.targetId).manifest;
+      value = familySelection(
+        m,
+        installedCapabilities(m),
+        rasterAmendment.name,
+        rasterAmendment.maxBytes,
+        m.selection?.routingPaddingCells ?? 0,
+      );
+    }
     const capabilityChange =
       previous?.capabilityChange ?? extra?.capabilityChange;
     const capabilityPlan = capabilityChange
@@ -644,7 +731,9 @@ export class Preparations {
           "Choose the configured ocean source with a cached PBF; GDAL must be installed",
         );
     }
-    if (imageImport) {
+    if (rasterPlan) {
+      // Raster inputs are pinned and validated independently of PBF capability selections.
+    } else if (imageImport) {
       if (
         !(await Bun.file(
           resolve(this.directory, `${previous!.id}.work/input.png`),
@@ -701,20 +790,22 @@ export class Preparations {
             ),
           ).size
         : 0;
-    const needed = imageImport
-      ? DISK_RESERVE + imageImport.estimatedBytes
-      : capabilityPlan
-        ? capabilityPlan.estimatedWorkspaceBytes
-        : amendment
-          ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-          : hostPreparationSpace(selection.maxBytes, {
-              cached: !!cached,
-              partitioned,
-              resume: !!previous?.resumeCheckpoint,
-              extractedBytes,
-              sourceBytes: plan?.bytes,
-              atlasBytes: Bun.file(inputPath).size,
-            });
+    const needed = rasterPlan
+      ? rasterPlan.estimatedWorkspaceBytes
+      : imageImport
+        ? DISK_RESERVE + imageImport.estimatedBytes
+        : capabilityPlan
+          ? capabilityPlan.estimatedWorkspaceBytes
+          : amendment
+            ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
+            : hostPreparationSpace(selection.maxBytes, {
+                cached: !!cached,
+                partitioned,
+                resume: !!previous?.resumeCheckpoint,
+                extractedBytes,
+                sourceBytes: plan?.bytes,
+                atlasBytes: Bun.file(inputPath).size,
+              });
     const disk = await readStorage(this.directory);
     checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
     if (!start) {
@@ -727,6 +818,7 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,
+        rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
         capabilityChange: capabilityPlan?.change,
@@ -772,6 +864,7 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,
+        rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
         capabilityChange: capabilityPlan?.change,
@@ -819,9 +912,9 @@ export class Preparations {
             // Make the new revision durable before exposing it. Switch the in-memory
             // catalog without an await, so "ready" never exposes both revisions.
             await this.persist({ ...job, state: "ready" });
-            const parent = job.capabilityChange
-              ? this.jobs.get(job.capabilityChange.targetId)
-              : undefined;
+            const parentId =
+              job.rasterAmendment?.targetId ?? job.capabilityChange?.targetId;
+            const parent = parentId ? this.jobs.get(parentId) : undefined;
             if (parent) {
               parent.supersededBy = job.id;
               parent.served = false;
@@ -889,6 +982,12 @@ export class Preparations {
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,
+        rasterAmendment: rasterAmendment
+          ? {
+              request: rasterAmendment,
+              ...(await this.rasterInputs(rasterAmendment)),
+            }
+          : undefined,
         capabilityChange: capabilityPlan
           ? {
               request: capabilityPlan.change,
@@ -957,6 +1056,8 @@ export class Preparations {
       [...this.jobs.values()].some(
         (j) =>
           (j.sourceAtlasId === id ||
+            j.rasterAmendment?.targetId === id ||
+            j.rasterAmendment?.layers.some((r) => r.sourceId === id) ||
             j.amendment?.targetId === id ||
             j.amendment?.sourceId === id ||
             j.capabilityChange?.targetId === id ||
@@ -1084,6 +1185,10 @@ export class Preparations {
               ? this.delete(match[1]!)
               : this.cancel(match[1]!)),
         );
+      if (url.pathname === "/admin/preparations/raster-plan")
+        return json(await this.planRasters(JSON.parse(raw)));
+      if (url.pathname === "/admin/preparations/raster")
+        return json(await this.createRasters(JSON.parse(raw)), 202);
       if (url.pathname === "/admin/preparations/capabilities-plan") {
         const { source, donor, download, ...plan } =
           await this.planCapabilities(JSON.parse(raw));

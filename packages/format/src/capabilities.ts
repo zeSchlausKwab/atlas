@@ -1,3 +1,4 @@
+import { familyCatalog } from "./families";
 import { TRANSPORT_MODES, type Manifest, type TransportMode } from "./index";
 export type RoutingCapability =
   | { storage: "cells"; prefix: string; codec: "rcl1" | "rcl2"; zoom: number }
@@ -137,6 +138,7 @@ export function operationCatalog(m: Manifest) {
   return {
     version: 1 as const,
     snapshot: m.snapshot,
+    families: familyCatalog(m),
     coverage: {
       bounds: m.bounds,
       polygon: m.selection?.polygon,

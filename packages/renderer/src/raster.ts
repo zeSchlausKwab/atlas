@@ -3,6 +3,11 @@ import { BudgetCache } from "../../format/src/cache";
 import { project } from "../../format/src/index";
 import { pngTile, type RasterLayer } from "../../format/src/raster";
 import { cameraBounds, worldToScreen, type Camera } from "./camera";
+export interface RasterLayerView {
+  enabled: boolean;
+  opacity: number;
+}
+export type RasterLayerViews = Record<string, RasterLayerView>;
 interface Tile {
   key: string;
   z: number;
@@ -31,6 +36,7 @@ export class RasterPlane {
     for (const layer of reader.index.manifest.rasters ?? []) {
       const canvas = document.createElement("canvas");
       canvas.className = "raster-plane";
+      canvas.dataset.layer = layer.id;
       canvas.setAttribute("aria-hidden", "true");
       canvas.style.mixBlendMode =
         layer.kind === "shaded-relief" ? "multiply" : "normal";
@@ -52,7 +58,12 @@ export class RasterPlane {
   retry() {
     this.failed.clear();
   }
-  draw(camera: Camera, ratio: number, opacity = 0.6) {
+  draw(
+    camera: Camera,
+    ratio: number,
+    opacity = 0.6,
+    layers: RasterLayerViews = {},
+  ) {
     this.wanted.clear();
     const view = cameraBounds(camera);
     for (const layer of this.reader.index.manifest.rasters ?? []) {
@@ -64,7 +75,15 @@ export class RasterPlane {
       const ctx = canvas.getContext("2d")!;
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, camera.width, camera.height);
-      if (opacity <= 0 || camera.zoom < layer.minZoom) continue;
+      const layerView = layers[layer.id];
+      const layerOpacity =
+        layerView?.enabled === false ? 0 : (layerView?.opacity ?? opacity);
+      if (
+        !Number.isFinite(layerOpacity) ||
+        layerOpacity <= 0 ||
+        camera.zoom < layer.minZoom
+      )
+        continue;
       const nw = project(layer.bounds[0], layer.bounds[3]),
         se = project(layer.bounds[2], layer.bounds[1]);
       const w = Math.max(view[0], nw[0]),
@@ -78,7 +97,7 @@ export class RasterPlane {
         ),
         scale = 2 ** z;
       ctx.save();
-      ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+      ctx.globalAlpha = Math.max(0, Math.min(1, layerOpacity));
       ctx.beginPath();
       [nw, [se[0], nw[1]], se, [nw[0], se[1]]].forEach((p, i) => {
         const q = worldToScreen(p as [number, number], camera);

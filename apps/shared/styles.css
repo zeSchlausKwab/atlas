@@ -3356,3 +3356,10 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 
 #discovery-identity { overflow-wrap: anywhere; }
 .map-attribution { max-width: calc(100% - 20px); overflow-wrap: anywhere; }
+
+/* Independent raster controls span the composition card rather than one geometry column. */
+.composer-raster { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); }
+.composition-layers .composer-raster-opacity { display: grid; grid-template-columns: 60px minmax(0, 1fr); margin-top: 8px; color: var(--muted); }
+.composer-raster-opacity input { width: 100%; min-width: 0; accent-color: var(--green); }
+.raster-amend-row { display: grid; gap: 12px; min-width: 0; margin: 0 0 16px; }
+.raster-amend-row select { min-width: 0; }

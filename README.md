@@ -149,12 +149,12 @@ ATLAS_FILE=data/raster-relief/relief.atlas ATLAS_DATA_DIR=data/raster-rehearsal 
 ```
 
 The client reads only visible raster tiles, blends relief beneath labels, and exposes
-**Raster opacity** per source. Zero opacity stops scheduling reads. Raster reads are
+a visibility checkbox and opacity dial per raster layer. Hidden layers and zero opacity stop scheduling reads. Raster reads are
 included in map-byte accounting and use the normal verified block cache. Natural
 Earth is coarse imagery; zooming beyond its z6 pyramid magnifies those pixels.
 This first renderer uses a bounded Canvas image plane and the existing orthographic
 camera. It does not yet provide GPU raster textures, numeric terrain,
-arbitrary reprojection, raster region exports, or a raster amendment UI.
+arbitrary reprojection or raster region exports.
 
 To upload an image, open **Host console → Upload imagery** (`/host#imagery`). Choose
 PNG/JPEG, position it with a rectangle or numeric bounds, and provide attribution
@@ -169,6 +169,17 @@ The authenticated `POST /admin/preparations/image` endpoint accepts multipart fi
 `attribution`, `license`). The host UI converts JPEG to PNG before upload. Registration
 records the normalized PNG hash; the finished archive contains the tiled pixels,
 not a copy of the original JPEG. See the [raster roadmap](docs/AMENDMENTS-AND-RASTER.md).
+
+To embed imagery in an existing map, use **Map library → Manage imagery**. Add a
+layer from another hosted raster map, replace its pixels, rename it or uncheck it
+to remove it. Review the plan, then queue a new revision. Routing, search, vector
+and custom payloads retain their bytes; the new file includes the pixels and needs
+no donor at runtime. The prior revision stays on disk and is retired from serving
+after success. Hashtree publication remains explicit. Independent raster settings
+are saved in client compositions and shared view links.
+
+See [raster amendment API and guarantees](docs/RASTER-AMENDMENTS.md) for automation,
+coverage rules, descriptor metadata and the remaining physical-copy limitation.
 
 For your own pre-tiled imagery, use `bun run raster:import --help`. The importer takes
 an XYZ PNG directory and a JSON layer descriptor like `data/raster-relief/layer.json`.

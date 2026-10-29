@@ -427,10 +427,15 @@ export class AtlasReader {
   }
 
   /** Explicit full-catalog operation for auditing, never needed to display a view. */
-  async *iterateBlocks(): AsyncGenerator<Block> {
-    for (const b of this.index.blocks) yield b;
-    for (const page of this.index.pages)
-      for (const b of await this.loadPage(page)) yield b;
+  async *iterateBlocks(prefix = ""): AsyncGenerator<Block> {
+    for (const b of this.index.blocks) if (b.key.startsWith(prefix)) yield b;
+    for (const page of this.index.pages) {
+      const family = `${page.prefix ?? "tile"}/`;
+      if (prefix && !family.startsWith(prefix) && !prefix.startsWith(family))
+        continue;
+      for (const b of await this.loadPage(page))
+        if (b.key.startsWith(prefix)) yield b;
+    }
   }
   async allBlocks() {
     const result = [...this.index.blocks];
