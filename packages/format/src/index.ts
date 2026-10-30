@@ -1,4 +1,8 @@
 import {
+  validateRoutingFederation,
+  type RoutingFederation,
+} from "./routing-contract";
+import {
   validateComposition,
   MEMBER_CHUNK_BYTES,
   type ArchiveComposition,
@@ -67,7 +71,7 @@ export interface TransportProfile {
   prefix: string;
   zoom: 14;
   count: number;
-  codec: "rcl2";
+  codec: "rcl2" | "rcl3";
   nodes: number;
   segments: number;
   turns: number;
@@ -79,6 +83,7 @@ export interface TransportMetadata {
   version: 1;
   /** Identity of the compiled graph whose cells are copied unchanged into excerpts. */
   graphSnapshot?: string;
+  federation?: RoutingFederation;
   profiles: Partial<Record<TransportMode, TransportProfile>>;
   statistics?: "cell-records";
 }
@@ -417,6 +422,8 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   )
     throw new Error("Invalid routing selection padding");
   if (manifest.transport) {
+    if (manifest.transport.federation)
+      validateRoutingFederation(manifest.transport.federation);
     if (
       manifest.transport.version !== 1 ||
       (manifest.transport.graphSnapshot !== undefined &&
@@ -434,7 +441,8 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       if (
         p.prefix !== `routing/${mode}/cells` ||
         p.zoom !== 14 ||
-        p.codec !== "rcl2" ||
+        !["rcl2", "rcl3"].includes(p.codec) ||
+        !!manifest.transport.federation !== (p.codec === "rcl3") ||
         ![
           p.count,
           p.nodes,
@@ -740,7 +748,14 @@ export function validateBlocks(
         a.x >= 2 ** a.z ||
         a.y >= 2 ** a.z ||
         block.key !== `${a.prefix}/${a.z}/${a.x}/${a.y}` ||
-        (block.rawLength ?? block.length) > 16 * 1024 * 1024
+        (block.rawLength ?? block.length) >
+          (manifest.transport?.profiles[
+            block.key.split("/")[1] as TransportMode
+          ]?.codec === "rcl3"
+            ? 20
+            : 16) *
+            1024 *
+            1024
       )
         throw new Error("Invalid routing cell address or size");
     }

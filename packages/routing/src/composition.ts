@@ -1,8 +1,12 @@
+import {
+  federationIdentity,
+  ownsRoutingCell,
+} from "../../format/src/routing-contract";
 import { AtlasReader } from "../../format/src/reader";
 import { type Manifest, type TransportMode } from "../../format/src/index";
 import { selectedCell } from "../../offline/src/geometry";
 import { profilePrefix, validateTransport } from "./index";
-import { readRoutingCell, type CellRead } from "./paged";
+import { checkRoutingCodec, readRoutingCell, type CellRead } from "./paged";
 export interface RoutingCellProvider {
   snapshot: string;
   prefix(mode: TransportMode): string;
@@ -17,25 +21,38 @@ export function singleRoutingSource(reader: AtlasReader): RoutingCellProvider {
 }
 export function graphIdentity(manifest: Manifest) {
   return (
+    (manifest.transport?.federation
+      ? federationIdentity(manifest.transport.federation)
+      : undefined) ??
     manifest.transport?.graphSnapshot ??
     (!manifest.selection && manifest.transport ? manifest.snapshot : undefined)
   );
 }
-/** Adjacent excerpts of one compiled graph. Never merges unrelated OSM snapshots.
- * Shared cell hashes are checked before choosing an owner; geometry priority is
- * intentionally independent from routing ownership. */
+/** RCL3: independently compiled extracts of one OSM authority revision and contract.
+ * RCL2: immutable excerpts of one compiled graph. Overlap is checked before
+ * choosing an owner; display priority never decides routing ownership. */
 export class RoutingComposition implements RoutingCellProvider {
   readonly snapshot: string;
+  readonly compatibility: "osm-source" | "shared-graph";
+  readonly sourceSnapshots: string[];
   readonly served = new Map<string, { source: string; bytes: number }>();
   constructor(readonly sources: { id: string; reader: AtlasReader }[]) {
     if (!sources.length)
       throw new Error("Select at least one map with transport data.");
+    this.compatibility = sources.every(
+      (s) => s.reader.index.manifest.transport?.federation,
+    )
+      ? "osm-source"
+      : "shared-graph";
+    this.sourceSnapshots = [
+      ...new Set(sources.map((s) => s.reader.index.manifest.snapshot)),
+    ].sort();
     const identities = sources.map((s) =>
       graphIdentity(s.reader.index.manifest),
     );
     if (!identities[0] || identities.some((id) => id !== identities[0]))
       throw new Error(
-        "Client routing needs excerpts from one shared compiled graph. These sources are not compatible.",
+        "Routing sources are not compatible: use independent RCL3 extracts of the same OSM source revision and routing contract, or legacy excerpts from one shared compiled graph.",
       );
     this.snapshot = identities[0];
   }
@@ -64,6 +81,11 @@ export class RoutingComposition implements RoutingCellProvider {
         throw new Error("Routing is disabled");
       const m = reader.index.manifest;
       if (!m.transport?.profiles[mode]) return false;
+      if (
+        m.transport.federation &&
+        !ownsRoutingCell(m.transport.federation, x, y)
+      )
+        return false;
       const [w, s, e, n] = m.bounds;
       return selectedCell(
         m.selection?.polygon ?? [
@@ -82,7 +104,7 @@ export class RoutingComposition implements RoutingCellProvider {
       return {
         missing: true,
         reason:
-          "The route needs routing cells outside the selected composition. Add covering excerpts from the same compiled graph.",
+          "The route needs complete routing cells outside the selected composition. Add a covering map with a compatible OSM source revision and routing contract (or the same legacy graph).",
         fetchedBytes: 0,
       };
     const candidates = [];
@@ -108,7 +130,9 @@ export class RoutingComposition implements RoutingCellProvider {
     }
     const hashes = new Set(candidates.map((c) => c.block?.hash ?? "empty"));
     if (hashes.size > 1)
-      throw new Error(`Conflicting cells in the shared graph: ${key}`);
+      throw new Error(
+        `Conflicting cells in the routing composition: ${key}. Source revision, topology, costs or restrictions disagree.`,
+      );
     if (candidates.length && !candidates[0]!.block)
       return { empty: true, fetchedBytes: 0 };
     candidates.sort(
@@ -120,6 +144,7 @@ export class RoutingComposition implements RoutingCellProvider {
       try {
         const bytes = await candidate.reader.block(key),
           fetchedBytes = candidate.reader.bytesByPurpose.routing - before;
+        checkRoutingCodec(candidate.reader, key, bytes);
         this.served.set(key, { source: candidate.id, bytes: fetchedBytes });
         return { bytes, fetchedBytes };
       } catch (e) {

@@ -190,7 +190,7 @@ Feature extraction is independent of display zoom and visibility toggles. In dev
 
 New files store `labels/places` as a separate compressed, hashed root block with `{schema: "places-v1", places: [{name, coordinates: [lon, lat]}]}` and an empty `manifest.places`. It is fetched only when `placeNames` is enabled. This small regional block is not spatially partitioned yet. Legacy inline names remain readable and can be hidden but have already arrived with the root. Street names, POIs and search remain independent. Offline exports omit the block when disabled, or retain only names inside the selection polygon.
 
-## Transport graphs and cells (RTE2 / RCL2)
+## Transport graphs and cells (RTE2 / RCL2 / RCL3)
 
 `transport-routing` requires `transport: {version: 1, profiles: {walking, cycling, driving}}`. Each profile declares `{prefix: "routing/<mode>/cells", zoom: 14, codec: "rcl2", count, nodes, segments, turns, skippedWays, unsupportedRestrictions, excludedRestrictionWays}`. Counts must match their spatial directory. Graph detail is independent of display zoom. Legacy walking metadata and RTE1/RCL1 remain readable; new archives keep the old reference graph only for legacy comparison and polygon export.
 
@@ -215,6 +215,14 @@ turn[turns]:
 Direction bits retain the RTE1 convention. Times are full-segment travel costs rounded upward to f32; partial snaps interpolate those costs. Invalid/nonfinite/negative costs and speeds beyond the heuristic's bound fail decoding. Kinds 0/1 mean prohibited/only turn; kinds 2/3 specialize same-way U-turns by matching the previous node. Different-way U-turns use normal way-pair restrictions. Multiple only-turn alternatives form a union; a prohibited turn still wins. Via-way restrictions and conditions are not evaluated by this prototype compiler: incoming ways are conservatively excluded and counted.
 
 RCL2 retains the RCL1 16-byte envelope (`magic`, z, x, y) followed by RTE2 and one original segment ordinal u32 per segment. Original OSM node IDs join cells; ordinals deduplicate overlapping cell copies. Every owner cell contains all incident segments and turn rules for retained nodes. A loaded cell must match the selected mode. Directory prefixes are `routing/<mode>/cells`; page keys are `index/routing/<mode>/cells/14/pageX/pageY`.
+
+RCL3 uses the same envelope and RTE2 payload, followed by a 16-byte little-endian
+OSM way/segment identity per edge. It requires `transport.federation` and profile
+`codec: "rcl3"`. Its raw cell limit is 20 MiB (RCL2 remains 16 MiB). Independent
+extracts of one exact upstream PBF revision may compose without a compiled parent.
+[The federation contract](ROUTING-FEDERATION.md) defines identity, complete coverage,
+validation, checkpoint compatibility and conservative rejection of mixed epochs.
+
 
 Per-cell limits: 200,000 nodes, 300,000 segments, 50,000 turn rules, and 16 MiB decoded payload. A search retains a bounded cell cache and returns explicit `missing-data` or `budget-exceeded` results. Routes return `seconds` as well as `meters`; isochrones return snapshot-scoped GeoJSON MultiPolygon bands with seconds, minutes, envelope area, approximation flag and contour resolution. See [routing contract](ROUTING.md).
 

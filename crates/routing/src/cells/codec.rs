@@ -18,13 +18,32 @@ pub fn key(c: (u32, u32)) -> String {
 pub struct Cell {
     pub address: (u32, u32),
     pub graph: Graph,
-    pub ids: Vec<u32>,
+    pub ids: Vec<u128>,
+    pub stable_ids: bool,
     pub(super) incoming: Vec<Vec<Arc>>,
     pub(super) by_id: HashMap<i64, usize>,
     pub(super) turns_by_node: HashMap<i64, Vec<Turn>>,
 }
 impl Cell {
     pub fn new(address: (u32, u32), graph: Graph, ids: Vec<u32>) -> Result<Self, String> {
+        Self::with_ids(
+            address,
+            graph,
+            ids.into_iter().map(u128::from).collect(),
+            false,
+        )
+    }
+    /// OSM way ID plus the segment's index in the complete original way.
+    /// Independent of extract extent, accepted-profile filtering and compiler order.
+    pub fn osm(address: (u32, u32), graph: Graph, ids: Vec<u128>) -> Result<Self, String> {
+        Self::with_ids(address, graph, ids, true)
+    }
+    fn with_ids(
+        address: (u32, u32),
+        graph: Graph,
+        ids: Vec<u128>,
+        stable_ids: bool,
+    ) -> Result<Self, String> {
         if address.0 >= 1 << CELL_ZOOM
             || address.1 >= 1 << CELL_ZOOM
             || graph.nodes.len() > 200_000
@@ -32,6 +51,12 @@ impl Cell {
             || graph.turns.len() > 50_000
             || ids.len() != graph.segments.len()
             || ids.windows(2).any(|v| v[0] >= v[1])
+            || (stable_ids
+                && (graph.profile.is_none()
+                    || ids
+                        .iter()
+                        .zip(&graph.segments)
+                        .any(|(id, segment)| segment.way <= 0 || *id >> 32 != segment.way as u128)))
         {
             return Err("Invalid routing cell".into());
         }
@@ -62,11 +87,14 @@ impl Cell {
             address,
             graph,
             ids,
+            stable_ids,
             by_id,
         })
     }
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = if self.graph.profile.is_some() {
+        let mut out = if self.stable_ids {
+            b"RCL3".to_vec()
+        } else if self.graph.profile.is_some() {
             b"RCL2".to_vec()
         } else {
             b"RCL1".to_vec()
@@ -76,12 +104,18 @@ impl Cell {
         }
         out.extend(self.graph.encode());
         for id in &self.ids {
-            out.extend(id.to_le_bytes());
+            if self.stable_ids {
+                out.extend(id.to_le_bytes());
+            } else {
+                out.extend((*id as u32).to_le_bytes());
+            }
         }
         out
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() < 28 || (&bytes[..4] != b"RCL1" && &bytes[..4] != b"RCL2") {
+        if bytes.len() < 28
+            || (&bytes[..4] != b"RCL1" && &bytes[..4] != b"RCL2" && &bytes[..4] != b"RCL3")
+        {
             return Err("Invalid routing cell header".into());
         }
         let u = |i| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap());
@@ -89,7 +123,11 @@ impl Cell {
             return Err("Unsupported routing cell zoom".into());
         }
         let (n, e) = (u(20) as usize, u(24) as usize);
-        let end = if &bytes[..4] == b"RCL2" {
+        if n > 200_000 || e > 300_000 {
+            return Err("Invalid routing cell size".into());
+        }
+        let stable_ids = &bytes[..4] == b"RCL3";
+        let end = if &bytes[..4] != b"RCL1" {
             if bytes.len() < 36 || &bytes[16..20] != b"RTE2" {
                 return Err("Invalid profiled cell".into());
             }
@@ -101,19 +139,25 @@ impl Cell {
         } else {
             28 + n * 24 + e * 20
         };
-        if n > 200_000 || e > 300_000 || bytes.len() != end + e * 4 {
+        if n > 200_000 || e > 300_000 || bytes.len() != end + e * if stable_ids { 16 } else { 4 } {
             return Err("Invalid routing cell size".into());
         }
         let graph = Graph::decode(&bytes[16..end])?;
         let ids = bytes[end..]
-            .chunks_exact(4)
-            .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+            .chunks_exact(if stable_ids { 16 } else { 4 })
+            .map(|v| {
+                if stable_ids {
+                    u128::from_le_bytes(v.try_into().unwrap())
+                } else {
+                    u32::from_le_bytes(v.try_into().unwrap()) as u128
+                }
+            })
             .collect();
-        Self::new((u(8), u(12)), graph, ids)
+        Self::with_ids((u(8), u(12)), graph, ids, stable_ids)
     }
     pub(super) fn memory(&self) -> usize {
         self.graph.nodes.len() * 128
-            + self.graph.segments.len() * 256
+            + self.graph.segments.len() * 272
             + self.graph.turns.len() * 96
             + 256
     }

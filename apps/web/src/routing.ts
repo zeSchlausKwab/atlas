@@ -222,7 +222,7 @@ export class RouteControls {
       this.operations.mode === "server"
         ? `Server routes use ${this.reader.index.manifest.name}. Choose This device to route across compatible maps.`
         : (this.operations.compositionError ??
-          `${this.operations.composition?.sources.length ?? 0} transport maps · shared graph ${this.operations.composition?.snapshot.slice(0, 12)}… · cells fetched on demand.`);
+          `${this.operations.composition?.sources.length ?? 0} transport maps · ${this.operations.composition?.compatibility === "osm-source" ? "independent OSM builds" : "shared graph"} · cells fetched on demand.`);
     if (!this.supported) this.map.setRoute(null);
     this.update();
   }

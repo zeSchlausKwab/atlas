@@ -1,3 +1,4 @@
+import { sameRoutingFederation } from "../../format/src/routing-contract";
 import { link, open, rm } from "node:fs/promises";
 import { AtlasReader, FileSource } from "../../format/src/reader";
 import { sha256, type Manifest, type Block } from "../../format/src/index";
@@ -128,6 +129,24 @@ export async function composeCapabilities(
         ]),
     );
     const routingOwner = present.find((f) => f.startsWith("routing:"));
+    if (routingOwner) {
+      const base = owner(routingOwner);
+      for (const family of present.filter((f) => f.startsWith("routing:"))) {
+        const other = owner(family);
+        if (
+          !sameRoutingFederation(
+            base.transport!.federation,
+            other.transport!.federation,
+          ) ||
+          (!base.transport!.federation &&
+            (base.transport!.graphSnapshot ?? base.snapshot) !==
+              (other.transport!.graphSnapshot ?? other.snapshot))
+        )
+          throw new Error(
+            "Routing profiles must share an identity contract and complete coverage. Rebuild them together to change authority.",
+          );
+      }
+    }
     const known = new Set([
       "vector-rendering",
       "raster-rendering",

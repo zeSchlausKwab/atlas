@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 const root = await mkdtemp("/tmp/atlas-graph-resume-");
 const input = process.argv[2] ?? "data/liechtenstein.osm.pbf";
+const stable = process.env.ATLAS_ROUTING_IDS === "osm-way-segment-v1";
 const binary = "target/release/transport-partitioned";
 async function run(
   work: string,
@@ -63,9 +64,12 @@ try {
     "routing-driving-cells",
   ]) {
     await run(work, stage);
-    const db = new Database(join(work, "routing-v2.sqlite"), {
-      readonly: true,
-    });
+    const db = new Database(
+      join(work, stable ? "routing-v3.sqlite" : "routing-v2.sqlite"),
+      {
+        readonly: true,
+      },
+    );
     const state = JSON.parse(
       (db.query("SELECT state FROM checkpoint").get() as { state: string })
         .state,
@@ -78,7 +82,10 @@ try {
     if (stage === "routing-coordinates") {
       // Simulate writes after the last durable coordinate count: resume must truncate them.
       await appendFile(
-        join(work, "routing-coordinates.bin"),
+        join(
+          work,
+          stable ? "routing-v3-coordinates.bin" : "routing-coordinates.bin",
+        ),
         Buffer.alloc(300),
       );
     }

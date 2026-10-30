@@ -41,8 +41,8 @@ Hashtree's 64 KiB leaves are a separate transport layer.
 The viewer expands members into the normal compositor, with per-layer display
 ownership and scoped tools. HTTP server tools use
 `/maps/<bundle-id>/api/members/<member-id>/<operation>`. Cross-member routing still
-requires compatible shared graph identity; packaging cannot create connectivity
-between independently compiled graphs. A local file runs its tools on the device.
+requires the same OSM authority revision and routing contract for RCL3, or the
+same compiled graph for legacy RCL2. Packaging alone cannot establish compatibility. A local file runs its tools on the device.
 
 This slice packs whole selected maps (1–64 members); it does not clip a composition
 to a new polygon, deduplicate overlapping archives, or recursively nest bundles.
@@ -70,7 +70,7 @@ The normal workspace is now a **2D display composition**, including camera rotat
 
 The composer lives in a normal sidebar tab, opened from **Client composer** in the header. `/compose` bookmarks redirect to `/`, preserving the selection query and shared-view fragment. The **Data** tab filters layers and individual label categories globally; each composer card further restricts its own source. Style dials, map picks, route/isochrone overlays, feature selection and polygon drawing share the same tool interface in both viewers. Byte and memory counters aggregate active sources.
 
-Independent snapshots can compose visually without sharing graph identities. Cross-package routing requires compatible partitions of one compiled graph; sharing an OSM date alone is insufficient. `transport.graphSnapshot` records that root identity through nested preparations. `RoutingComposition` resolves the worker’s frontier requests to covering packages, verifies overlapping cell hashes, and reports unavailable coverage as missing data. It never interprets a missing host or an excerpt boundary as an empty graph. Signed Nostr announcements and Hashtree mirrors provide discovery and delivery. ContextVM tools retain their explicit member/source scope.
+Independent snapshots can compose visually without sharing graph identities. Cross-package routing supports independently compiled RCL3 extracts of the same upstream OSM PBF revision and routing contract. Legacy RCL2 excerpts still require `transport.graphSnapshot` from one compiled graph. A shared date alone is insufficient. `RoutingComposition` selects complete covering cells, verifies overlap hashes and reports unavailable coverage as missing data. See [OSM routing federation](ROUTING-FEDERATION.md) for the contract, evidence and mixed-revision limitations. Signed Nostr announcements and Hashtree mirrors provide discovery and delivery. ContextVM tools retain explicit member/source scope.
 
 Up to eight selected offers are allowed in this UI; a combined offer expands into its retained members. Per-source cache targets are 12 MiB GPU meshes, 8 MiB decoded geometry, 2 MiB decoded labels, 2 MiB parsed label data and 2 MiB directory descriptors. Active meshes can exceed the cache target while pinned. Persistent compressed blocks share the existing 128 MiB cache. Other allocations, directory roots, in-flight reads, places and GPU overhead are additional. The header’s **Purge caches** button and cross-tab purge signal release every source and pause the workspace. **Reopen map** restores the selected composition.
 

@@ -149,13 +149,15 @@ export function familyCatalog(m: Omit<Manifest, "snapshot">): DataFamily[] {
     add("routing:legacy-walking", "routing/", m.routing.cells?.codec ?? "rte1");
   if (!m.featureKinds && m.featureZoom !== undefined)
     add("features", "features/", "atlas-feature-pages", m.featureSchema ?? 1);
-  for (const [mode] of Object.entries(m.transport?.profiles ?? {}))
+  for (const [mode, profile] of Object.entries(m.transport?.profiles ?? {}))
     add(
       `routing:${mode}`,
       `routing/${mode}/`,
-      "rcl2",
-      2,
-      m.transport?.graphSnapshot ?? m.source.sha256,
+      profile.codec,
+      profile.codec === "rcl3" ? 3 : 2,
+      m.transport?.federation?.sourceRevision ??
+        m.transport?.graphSnapshot ??
+        m.source.sha256,
     );
   for (const r of m.rasters ?? [])
     result.push({

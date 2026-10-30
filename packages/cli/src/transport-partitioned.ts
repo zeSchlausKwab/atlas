@@ -1,3 +1,7 @@
+import {
+  validateRoutingFederation,
+  type RoutingFederation,
+} from "../../format/src/routing-contract";
 import { spawn } from "node:child_process";
 import { nativeDiagnostics } from "./native-diagnostics";
 import { fileURLToPath } from "node:url";
@@ -17,8 +21,10 @@ export async function addPartitionedTransport(
   signal = new AbortController().signal,
   progress: (message: string) => void = console.log,
   sourceHash = "",
+  federation?: RoutingFederation,
 ): Promise<TransportMetadata> {
   signal.throwIfAborted();
+  if (federation) validateRoutingFederation(federation);
   const child = spawn(
     `${ROOT}/target/release/transport-partitioned`,
     [input, work],
@@ -28,6 +34,7 @@ export async function addPartitionedTransport(
         ...process.env,
         TMPDIR: work,
         ATLAS_GRAPH_SOURCE_HASH: sourceHash,
+        ATLAS_ROUTING_IDS: federation?.segmentIdentity ?? "legacy",
       },
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
@@ -94,6 +101,13 @@ export async function addPartitionedTransport(
           key,
         );
       if (!match || metadata) throw new Error("Invalid native compiler frame");
+      if (
+        new TextDecoder().decode(bytes.subarray(0, 4)) !==
+        (federation ? "RCL3" : "RCL2")
+      )
+        throw new Error(
+          "Native routing codec does not match the requested contract",
+        );
       if (modes.includes(match[1] as TransportMode))
         await writer.add({
           key,
@@ -105,9 +119,14 @@ export async function addPartitionedTransport(
     signal.throwIfAborted();
     if (code !== 0 || !metadata)
       throw await diagnostics.failure("Partitioned graph compiler");
+    if (federation && modes.some((mode) => metadata[mode].skippedWays))
+      throw new Error(
+        "Incomplete routing source: missing way coordinates prevent federation",
+      );
     return {
       version: 1,
       statistics: "cell-records",
+      ...(federation ? { federation } : {}),
       profiles: Object.fromEntries(
         modes.map((mode) => [
           mode,
@@ -115,7 +134,7 @@ export async function addPartitionedTransport(
             ...metadata[mode],
             prefix: `routing/${mode}/cells`,
             zoom: 14,
-            codec: "rcl2",
+            codec: federation ? "rcl3" : "rcl2",
           },
         ]),
       ),

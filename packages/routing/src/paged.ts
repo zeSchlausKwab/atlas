@@ -1,3 +1,4 @@
+import { ownsRoutingCell } from "../../format/src/routing-contract";
 import { selectedCell } from "../../offline/src/geometry";
 import init, { CellWalkingRouter } from "../pkg/atlas_routing_wasm";
 import type { AtlasReader } from "../../format/src/reader";
@@ -35,6 +36,22 @@ export interface RoutingProgress {
   computeMs: number;
   visited: number;
 }
+/** The manifest must not advertise OSM identity while serving legacy ordinals. */
+export function checkRoutingCodec(
+  reader: AtlasReader,
+  key: string,
+  bytes: Uint8Array,
+) {
+  const mode = key.split("/")[1] as TransportMode;
+  const codec = reader.index.manifest.transport?.profiles[mode]?.codec;
+  if (
+    codec &&
+    new TextDecoder().decode(bytes.subarray(0, 4)) !== codec.toUpperCase()
+  )
+    throw new Error(
+      "Routing payload does not match its advertised identity codec",
+    );
+}
 export async function readRoutingCell(
   reader: AtlasReader,
   key: string,
@@ -47,6 +64,13 @@ export async function readRoutingCell(
     );
   if (!m || +m[2]! >= 16384 || +m[3]! >= 16384)
     throw new Error("Invalid cell request");
+  const federation = reader.index.manifest.transport?.federation;
+  if (federation && !ownsRoutingCell(federation, +m[2]!, +m[3]!))
+    return {
+      missing: true,
+      reason: "This cell lies outside the source's complete routing coverage.",
+      fetchedBytes: 0,
+    };
   const before = reader.bytesByPurpose.routing;
   try {
     const blocks = await reader.spatial(
@@ -77,8 +101,10 @@ export async function readRoutingCell(
         };
       return { empty: true, fetchedBytes: 0 };
     }
+    const bytes = await reader.block(key);
+    checkRoutingCodec(reader, key, bytes);
     return {
-      bytes: await reader.block(key),
+      bytes,
       fetchedBytes: reader.bytesByPurpose.routing - before,
     };
   } catch (e) {

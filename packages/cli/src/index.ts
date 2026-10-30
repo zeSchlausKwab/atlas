@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { routingAuthority } from "./routing-authority";
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 import { writeSourceObjects } from "../../objects/src/source-build";
@@ -487,6 +488,11 @@ async function main() {
           await Bun.file(`${importedPath}.routing.bin`).arrayBuffer(),
         ),
       });
+    const sourceFile = Bun.file(`${input}.source.json`);
+    const source = (await sourceFile.exists())
+      ? await sourceFile.json()
+      : { url: "local OSM PBF" };
+    const hash = await fileHash(input);
     const transport =
       !selected || selected.profiles.length
         ? flags["transport-from"]
@@ -495,7 +501,13 @@ async function main() {
               resolve(text(flags, "transport-from", "")),
               selected!,
             )
-          : await addTransport(writer, input, selected?.profiles)
+          : await addTransport(
+              writer,
+              input,
+              selected?.profiles,
+              routingAuthority(source),
+              hash,
+            )
         : undefined;
     console.log("Building search and street indexes…");
     const geocoding =
@@ -600,11 +612,6 @@ async function main() {
         cells.delete(key);
       }
     }
-    const sourceFile = Bun.file(`${input}.source.json`);
-    const source = (await sourceFile.exists())
-      ? await sourceFile.json()
-      : { url: "local OSM PBF" };
-    const hash = await fileHash(input);
     const size = await writer.finish({
       format: "atlas",
       version: 1,

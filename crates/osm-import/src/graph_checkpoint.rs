@@ -30,7 +30,11 @@ impl State {
     pub fn open(db: &Connection, source: &str) -> Result<Self, Error> {
         let meta = std::fs::metadata(source)?;
         let identity = serde_json::to_string(&(
-            2,
+            if std::env::var("ATLAS_ROUTING_IDS").as_deref() == Ok("osm-way-segment-v1") {
+                3
+            } else {
+                2
+            },
             std::fs::canonicalize(source)?,
             meta.len(),
             meta.modified()?.duration_since(UNIX_EPOCH)?.as_nanos(),

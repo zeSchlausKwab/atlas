@@ -312,8 +312,11 @@ export async function preparePackage(
         )!;
         const profile = profiles[mode]!,
           v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        if (new TextDecoder().decode(bytes.subarray(0, 4)) !== "RCL2")
-          throw new Error("Expected RCL2 transport cells");
+        if (
+          new TextDecoder().decode(bytes.subarray(0, 4)) !==
+          profile.codec.toUpperCase()
+        )
+          throw new Error("Expected RCL2/RCL3 transport cells");
         profile.count++;
         profile.nodes += v.getUint32(20, true);
         profile.segments += v.getUint32(24, true);
@@ -399,6 +402,7 @@ export async function preparePackage(
       transport: caps.includes("transport-routing")
         ? {
             version: 1,
+            federation: m.transport!.federation,
             profiles,
             statistics: "cell-records",
             graphSnapshot: m.transport!.graphSnapshot ?? m.snapshot,

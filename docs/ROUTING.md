@@ -57,7 +57,7 @@ bun run cli transport --input data/region.atlas --pbf data/region.osm.pbf --outp
 
 The compiler checks the PBF digest against the manifest, copies and verifies existing non-cell payloads, writes profile-specific cells, checks the complete file budget, then publishes by atomic rename. Source preprocessing/import remains regional and memory-based.
 
-New cells use RCL2/RTE2 with directional seconds and turn relations. Old RCL1 walking cells and RTE1 reference graphs remain readable. There is no whole-graph fallback from a failed paged search. The legacy `routing-cells` command remains for adding RCL1 cells to older walking packages. The old whole-graph distance-only method rejects RTE2 so it cannot accidentally bypass travel-time/turn semantics.
+Cells use RCL2/RTE2 or OSM-authoritative RCL3 with directional seconds and turn relations. New complete PBF extractions support [independent routing federation](ROUTING-FEDERATION.md); legacy shared-graph composition remains supported. Old RCL1 walking cells and RTE1 reference graphs remain readable. There is no whole-graph fallback from a failed paged search. The legacy `routing-cells` command remains for adding RCL1 cells to older walking packages. The old whole-graph distance-only method rejects RTE2 so it cannot accidentally bypass travel-time/turn semantics.
 
 Polygon-exported `.atlas` children still carry a clipped **walking-only RTE1** graph and omit transport/cell capabilities. They do not promise cycling/driving or isochrones. Whole-archive downloads and persistent cell caching retain those capabilities. Cell-aware portable offline extraction is a separate next step.
 

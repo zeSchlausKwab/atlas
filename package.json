@@ -29,6 +29,7 @@
     "client": "bun apps/web/server.ts",
     "build:client": "bun scripts/build-web.ts client",
     "build:host": "bun scripts/build-web.ts host",
+    "verify:routing-federation": "cargo build --release -p atlas-osm-import --bin transport-partitioned && wasm-pack build crates/routing-wasm --target web --out-dir ../../packages/routing/pkg --release && bun test tests/routing-federation.test.ts",
     "verify:partitioned-graph": "bun scripts/verify-partitioned-graph.ts",
     "verify:source-store": "bun scripts/verify-source-store.ts",
     "verify:partitioned-build": "bun scripts/verify-partitioned-build.ts",

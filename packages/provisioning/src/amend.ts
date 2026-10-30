@@ -1,3 +1,7 @@
+import {
+  federationIdentity,
+  sameRoutingFederation,
+} from "../../format/src/routing-contract";
 import difference from "@turf/difference";
 import type { Feature, Polygon } from "geojson";
 import { link, open, rm } from "node:fs/promises";
@@ -87,7 +91,15 @@ export function routingAmendmentSelection(
     a.profiles.some((p) => !TRANSPORT_MODES.includes(p))
   )
     throw new Error("Choose one or more distinct transport profiles.");
-  if (!target.source.sha256 || target.source.sha256 !== source.source.sha256)
+  const sameAuthority =
+    target.transport?.federation &&
+    source.transport?.federation &&
+    federationIdentity(target.transport.federation) ===
+      federationIdentity(source.transport.federation);
+  if (
+    !sameAuthority &&
+    (!target.source.sha256 || target.source.sha256 !== source.source.sha256)
+  )
     throw new Error(
       "Routing must come from the exact same source PBF snapshot.",
     );
@@ -98,10 +110,21 @@ export function routingAmendmentSelection(
   const graph = source.transport?.graphSnapshot ?? source.snapshot;
   if (
     target.transport &&
+    !target.transport.federation &&
     (target.transport.graphSnapshot ?? target.snapshot) !== graph
   )
     throw new Error(
       "The existing and added profiles must share the same compiled graph identity.",
+    );
+  if (
+    target.transport &&
+    !sameRoutingFederation(
+      target.transport.federation,
+      source.transport?.federation,
+    )
+  )
+    throw new Error(
+      "Existing and added routing profiles must use the same identity contract and complete coverage.",
     );
   for (const p of a.profiles) {
     if (target.transport?.profiles[p])
@@ -294,7 +317,8 @@ export async function amendRouting(
             : bytes;
         if (
           raw.length < 36 ||
-          new TextDecoder().decode(raw.subarray(0, 4)) !== "RCL2"
+          new TextDecoder().decode(raw.subarray(0, 4)) !==
+            profiles[mode]!.codec.toUpperCase()
         )
           throw new Error(`Invalid routing cell ${b.key}`);
         const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength),
@@ -333,6 +357,7 @@ export async function amendRouting(
       transport: {
         version: 1,
         graphSnapshot: plan.graphSnapshot,
+        federation: source.index.manifest.transport!.federation,
         statistics: "cell-records",
         profiles,
       },

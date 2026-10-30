@@ -1,3 +1,4 @@
+import { routingAuthority } from "./routing-authority";
 import type { PreparedOcean } from "../../provisioning/src/ocean-source";
 import { oceanObjects } from "../../objects/src/ocean";
 import { appendOcean } from "./ocean-spool";
@@ -274,6 +275,12 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 await w.add(b);
               },
             };
+            // A resumed RCL2 spool remains RCL2. Never relabel its ordinals as OSM IDs.
+            const federation = (await Bun.file(
+              join(o.work, "routing-v2.sqlite"),
+            ).exists())
+              ? undefined
+              : routingAuthority(base.source);
             const transport = await addPartitionedTransport(
               filtered,
               o.input,
@@ -282,6 +289,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
               signal,
               progress,
               inputHash,
+              federation,
             );
             for (const mode of s.profiles)
               Object.assign(transport.profiles[mode]!, counts[mode]);
@@ -292,6 +300,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
       );
     if (state.completed["transport.atlas"]) {
       for (const name of [
+        "routing-v3-needed.bits",
+        "routing-v3-coordinates.bin",
+        "routing-v3.sqlite",
+        "routing-v3.sqlite-wal",
+        "routing-v3.sqlite-shm",
         "routing-v2.sqlite",
         "routing-v2.sqlite-wal",
         "routing-v2.sqlite-shm",

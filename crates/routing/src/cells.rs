@@ -50,7 +50,7 @@ struct Search {
     finish: Option<Key>,
     direct: bool,
     visited: usize,
-    pieces: HashMap<(u32, u8), crate::contours::Piece>,
+    pieces: HashMap<(u128, u8), crate::contours::Piece>,
 }
 impl Search {
     fn heuristic(&self, p: [f64; 2], speed: f64) -> f64 {
@@ -906,6 +906,30 @@ mod tests {
         let n = bytes.len();
         bytes[n - 4..].copy_from_slice(&0u32.to_le_bytes());
         assert!(Cell::decode(&bytes).is_err());
+    }
+    #[test]
+    fn osm_cell_identity_roundtrip_and_contract_validation() {
+        let make = || transport_graph(vec![]);
+        let ids = make()
+            .segments
+            .iter()
+            .map(|s| (s.way as u128) << 32)
+            .collect::<Vec<_>>();
+        let c = Cell::osm(cell([16., 48.]), make(), ids.clone()).unwrap();
+        let mut bytes = c.encode();
+        assert_eq!(&bytes[..4], b"RCL3");
+        assert_eq!(Cell::decode(&bytes).unwrap().ids, ids);
+        assert_eq!(Cell::decode(&bytes).unwrap().encode(), bytes);
+        assert!(Cell::decode(&bytes[..bytes.len() - 1]).is_err());
+        let n = bytes.len();
+        bytes[n - 16..].copy_from_slice(&ids[0].to_le_bytes());
+        assert!(Cell::decode(&bytes).is_err());
+        assert!(Cell::osm(cell([16., 48.]), make(), vec![0, 1, 2, 3]).is_err());
+        let mut router = PagedRouter::new(1_000_000, 1000);
+        let legacy = Cell::new(cell([16., 48.]), make(), vec![0, 1, 2, 3]).unwrap();
+        router.set_profile(2).unwrap();
+        router.load(&c.encode()).unwrap();
+        assert!(router.load(&legacy.encode()).is_err());
     }
     fn transport_graph(turns: Vec<Turn>) -> Graph {
         let points = [[16., 48.], [16.001, 48.], [16.001, 48.001], [16.002, 48.]];

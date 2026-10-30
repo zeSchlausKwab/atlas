@@ -1,4 +1,4 @@
-//! Construct RCL2 directly, one cell at a time. The complete graph never exists in RAM.
+//! Construct RCL2/RCL3 directly, one cell at a time. The complete graph never exists in RAM.
 //! Segment IDs follow the canonical source-way order, exactly like the regional importer.
 use crate::{
     graph_checkpoint::{next_block, seek, Needed, Progress, State},
@@ -31,7 +31,12 @@ fn frame(out: &mut impl Write, key: &str, bytes: &[u8]) -> Result<(), Error> {
 pub fn import(source: &str, work: &str) -> Result<(), Error> {
     std::fs::create_dir_all(work)?;
     let work = Path::new(work);
-    let path = work.join("routing-v2.sqlite");
+    let stable_ids = std::env::var("ATLAS_ROUTING_IDS").as_deref() == Ok("osm-way-segment-v1");
+    let path = work.join(if stable_ids {
+        "routing-v3.sqlite"
+    } else {
+        "routing-v2.sqlite"
+    });
     // The old spool has no durable cursor and cannot safely be resumed.
     let legacy = work.join("routing-spool.sqlite");
     if legacy.exists() {
@@ -44,12 +49,31 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
         CREATE TABLE IF NOT EXISTS turns(mode INTEGER,via INTEGER,f INTEGER,t INTEGER,kind INTEGER,PRIMARY KEY(mode,via,f,t,kind)) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS edges(mode INTEGER,cell INTEGER,id INTEGER,a INTEGER,b INTEGER,way INTEGER,flags INTEGER,ax REAL,ay REAL,bx REAL,by REAL,c0 REAL,c1 REAL,PRIMARY KEY(mode,cell,id)) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS cells(mode INTEGER,cell INTEGER,data BLOB,PRIMARY KEY(mode,cell)) WITHOUT ROWID;")?;
+    if stable_ids {
+        let has_ordinal: bool = db
+            .prepare("PRAGMA table_info(edges)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|c| c == "ordinal");
+        if !has_ordinal {
+            db.execute_batch("ALTER TABLE edges ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0")?;
+        }
+    }
     let mut state = State::open(&db, source)?;
     db.execute_batch("BEGIN IMMEDIATE")?;
     state.commit(&db)?;
     let source_bytes = std::fs::metadata(source)?.len();
-    let needed_path = work.join("routing-needed.bits");
-    let node_path = work.join("routing-coordinates.bin");
+    let needed_path = work.join(if stable_ids {
+        "routing-v3-needed.bits"
+    } else {
+        "routing-needed.bits"
+    });
+    let node_path = work.join(if stable_ids {
+        "routing-v3-coordinates.bin"
+    } else {
+        "routing-coordinates.bin"
+    });
     if state.stage == 0 {
         let mut reader = seek(source, state.offset)?;
         let mut needed = if state.first_way.is_some() {
@@ -333,8 +357,10 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                                 if pair[0] == pair[1] || a.1[mode] || b.1[mode] {
                                     continue;
                                 }
-                                let id = u32::try_from(state.ids[mode])
-                                    .map_err(|_| "RCL2 segment identity space exhausted")?;
+                                let id = i64::try_from(state.ids[mode])?;
+                                if !stable_ids && id > u32::MAX as i64 {
+                                    return Err("RCL2 segment identity space exhausted".into());
+                                }
                                 state.ids[mode] += 1;
                                 let (ca, cb) = (cell(a.0), cell(b.0));
                                 let (xmin, xmax, ymin, ymax) = (
@@ -350,24 +376,21 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                                 for x in xmin..=xmax {
                                     for y in ymin..=ymax {
                                         db.prepare_cached(
-                                            "INSERT INTO edges VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                            if stable_ids { "INSERT INTO edges(mode,cell,id,a,b,way,flags,ax,ay,bx,by,c0,c1,ordinal) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)" }
+                                            else { "INSERT INTO edges VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)" },
                                         )?
                                         .execute(
-                                            params![
-                                                mode as u32,
-                                                (x as u64) * 16384 + y as u64,
-                                                id,
-                                                pair[0].0,
-                                                pair[1].0,
-                                                w.id.0,
-                                                directions,
-                                                a.0[0],
-                                                a.0[1],
-                                                b.0[0],
-                                                b.0[1],
-                                                meters / speeds[0],
-                                                meters / speeds[1]
-                                            ],
+                                            rusqlite::params_from_iter({
+                                                let values: [rusqlite::types::Value; 13] = [
+                                                (mode as i64).into(),
+                                                ((x as i64) * 16384 + y as i64).into(),
+                                                (id as i64).into(), pair[0].0.into(), pair[1].0.into(),
+                                                w.id.0.into(), (directions as i64).into(),
+                                                a.0[0].into(), a.0[1].into(), b.0[0].into(), b.0[1].into(),
+                                                (meters / speeds[0]).into(), (meters / speeds[1]).into(),
+                                                ];
+                                                values.into_iter().chain(if stable_ids { Some(i64::try_from(i)?.into()) } else { None })
+                                            }),
                                         )?;
                                     }
                                 }
@@ -422,7 +445,10 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                 let mut segments = Vec::new();
                 let mut costs = Vec::new();
                 let mut cell_ids = Vec::new();
-                let mut stmt=db.prepare("SELECT id,a,b,way,flags,ax,ay,bx,by,c0,c1 FROM edges WHERE mode=? AND cell=? ORDER BY id")?;
+                let mut osm_ids = Vec::new();
+                let mut stmt=db.prepare(if stable_ids {
+                    "SELECT id,a,b,way,flags,ax,ay,bx,by,c0,c1,ordinal FROM edges WHERE mode=? AND cell=? ORDER BY way,ordinal"
+                } else { "SELECT id,a,b,way,flags,ax,ay,bx,by,c0,c1 FROM edges WHERE mode=? AND cell=? ORDER BY id" })?;
                 let mut rows = stmt.query(params![mode as u32, address])?;
                 while let Some(r) = rows.next()? {
                     if segments.len() >= 300_000 {
@@ -445,7 +471,16 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                     });
                     // Preserve f64 until RTE2 encoding, which rounds costs upward.
                     costs.push([r.get::<_, f64>(9)?, r.get::<_, f64>(10)?]);
-                    cell_ids.push(r.get::<_, u32>(0)?);
+                    if !stable_ids {
+                        cell_ids.push(r.get::<_, u32>(0)?);
+                    }
+                    if stable_ids {
+                        let way = r.get::<_, i64>(3)?;
+                        if way <= 0 {
+                            return Err("Federated routing requires positive OSM way IDs".into());
+                        }
+                        osm_ids.push(((way as u128) << 32) | r.get::<_, u32>(11)? as u128);
+                    }
                 }
                 let mut turns = Vec::new();
                 for n in &graph_nodes {
@@ -473,7 +508,11 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                 let graph =
                     Graph::new(graph_nodes, segments)?.with_costs(mode as u32, costs, turns)?;
                 let (x, y) = ((address / 16384) as u32, (address % 16384) as u32);
-                let cell = Cell::new((x, y), graph, cell_ids)?;
+                let cell = if stable_ids {
+                    Cell::osm((x, y), graph, osm_ids)?
+                } else {
+                    Cell::new((x, y), graph, cell_ids)?
+                };
                 let mut zipped =
                     flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
                 zipped.write_all(&cell.encode())?;

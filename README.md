@@ -203,7 +203,7 @@ ATLAS_FILE=data/satellite.atlas ATLAS_DATA_DIR=data/satellite-host PORT=3183 bun
 Use the normal client composer to combine this server's catalog with vector maps.
 See [MBTiles ingestion and the Alps rehearsal](docs/MBTILES.md).
 It refuses to overwrite existing archives. Different raster and vector provenance
-can coexist in a client composition; shared graph identity is only needed for routing.
+can coexist in a client composition. Routing uses an explicit [OSM authority contract](docs/ROUTING-FEDERATION.md) for new independent builds, or shared graph identity for legacy excerpts.
 
 ## Vienna Plus and offline drawing
 
