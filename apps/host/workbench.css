@@ -1,6 +1,25 @@
-/* Atlas host workbench: paper canvas, ink navigation, a permanent operations ledger. */
+/* Cartographic workbench, inspired by OpenFreeMap Liberty:
+   land #f8f4f0, water #9ebdff, parks #d8e8c8, roads #ffdaa6 / #e9ac77.
+   Scope tokens to the host: the client map keeps its own user-selected style. */
 .host-page {
+  --paper: #f8f4f0;
+  --ink: #303c46;
+  --muted: #66737c;
+  --line: #d6dcd9;
+  --green: #35664e;
+  --accent: #ad5833;
+  --water: #9ebdff;
+  --water-ink: #305e88;
+  --park: #d8e8c8;
+  --road: #ffdaa6;
+  --road-edge: #e9ac77;
   margin: 0;
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(#7f96aa09 1px, transparent 1px),
+    linear-gradient(90deg, #7f96aa09 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 .host-workbench {
   max-width: none;
@@ -9,29 +28,36 @@
 .host-page .masthead {
   padding: 0 32px;
   height: 68px;
+  background: #fffefa;
+  border-bottom: 1px solid #ccd6df;
 }
 .workbench-tabs {
   display: flex;
   gap: 8px;
   border-bottom: 1px solid var(--line);
-  padding-top: 14px;
+  padding: 12px 0;
   position: sticky;
   top: 0;
   background: var(--paper);
   z-index: 20;
 }
 .host-page .workbench-tabs button {
-  border: 0;
-  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  color: var(--muted);
-  padding: 16px 24px;
-  border-bottom: 3px solid transparent;
+  color: #536573;
+  padding: 12px 20px;
   font-size: 15px;
 }
-.host-page .workbench-tabs button[aria-selected="true"] {
-  color: var(--green);
-  border-color: var(--green);
+.host-page .workbench-tabs button[aria-selected="true"],
+.host-page .workbench-tabs button[aria-selected="true"]:hover {
+  color: #5c432a;
+  border-color: var(--road-edge);
+  background: #fff0d3;
+  box-shadow: inset 0 0 0 2px #fff9ed;
   font-weight: 700;
 }
 .workbench-tabs button:focus-visible,
@@ -41,7 +67,7 @@
 }
 #host-access {
   margin: 0;
-  padding: 9px 0;
+  padding: 12px 0;
   font: 10px var(--mono);
   color: var(--muted);
 }
@@ -56,19 +82,30 @@
   padding-bottom: 60px;
 }
 .workbench-intro {
-  padding: 30px 0 24px;
-  max-width: 800px;
+  position: relative;
+  padding: 26px 28px;
+  margin: 8px 0 28px;
+  min-height: 210px;
+  overflow: hidden;
+  border: 1px solid #d3dcd6;
+  border-radius: 10px;
+  background: #fffefa;
+}
+.workbench-intro > :not(.workbench-cartography) {
+  position: relative;
+  z-index: 1;
+  max-width: calc(100% - 270px);
 }
 .workbench-intro h1 {
   font:
-    clamp(32px, 3.1vw, 52px) / 1.1 Georgia,
-    serif;
-  letter-spacing: -1.7px;
+    650 clamp(30px, 2.6vw, 44px) / 1.12 "Avenir Next",
+    "Segoe UI",
+    sans-serif;
+  letter-spacing: -1.6px;
   margin: 12px 0 16px;
 }
-.workbench-intro > p:last-child {
-  color: #697769;
-  max-width: 650px;
+.workbench-intro > p:not(.eyebrow) {
+  color: var(--muted);
   line-height: 1.7;
   font-size: 14px;
 }
@@ -90,8 +127,11 @@
   max-height: calc(100dvh - 90px);
   overflow: auto;
   border: 1px solid var(--line);
-  border-top: 3px solid var(--green);
-  background: #eceee3;
+  border-color: #bdcfe2;
+  border-top: 3px solid #678dbd;
+  border-radius: 8px;
+  background: #edf3fc;
+  box-shadow: 0 4px 20px #345c7a08;
   scrollbar-width: thin;
 }
 .host-page .activity-toggle {
@@ -108,18 +148,19 @@
 }
 .activity-toggle > span:first-child {
   font:
-    28px Georgia,
-    serif;
-  letter-spacing: -0.7px;
+    650 24px "Avenir Next",
+    "Segoe UI",
+    sans-serif;
+  letter-spacing: -0.8px;
 }
 #activity-count {
   font: 10px var(--mono);
-  color: var(--green);
+  color: var(--water-ink);
 }
 .activity-caption {
   font-size: 12px;
   line-height: 1.7;
-  color: #687565;
+  color: #536d81;
   margin: 0;
   padding: 0 20px 20px;
 }
@@ -170,7 +211,7 @@
   border: 0;
   border-top: 1px solid var(--line);
   padding: 20px;
-  background: transparent;
+  background: #ffffff70;
   overflow-wrap: anywhere;
 }
 .workbench-activity .preparation-card-heading {
@@ -285,7 +326,8 @@
     max-height: 70dvh;
     z-index: 30;
     border: 0;
-    border-top: 2px solid var(--green);
+    border-top: 2px solid #678dbd;
+    border-radius: 10px 10px 0 0;
     box-shadow: 0 -8px 28px #263c3210;
   }
   .host-page .activity-toggle {
@@ -348,4 +390,288 @@
 .library-bundle .host-composition-help p {
   margin: 10px 0;
   font-size: 12px;
+}
+
+/* Map furniture: road-cased tabs, survey markers and a water-blue activity rail. */
+.workbench-tab-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.workbench-cartography {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 270px;
+  pointer-events: none;
+  border-left: 1px solid #d3dcd6;
+  background: var(--paper);
+  mask-image: linear-gradient(90deg, transparent, #000 18%);
+}
+.workbench-cartography svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.host-page .eyebrow {
+  color: var(--water-ink);
+  letter-spacing: 1.8px;
+}
+.host-page .masthead-note {
+  color: #5b7180;
+}
+.host-page .brand {
+  color: #365d79;
+}
+.host-page #open-client {
+  border: 1px solid #becddd;
+  border-radius: 5px;
+  padding: 9px 13px;
+  color: var(--water-ink);
+  font-size: 12px;
+}
+.host-page .quiet,
+.host-page .preparation-card summary {
+  color: var(--muted);
+}
+.host-page button {
+  background: #fffefa;
+  border-color: #c5d0d8;
+  color: #365e79;
+}
+.host-page button:not(:disabled):hover {
+  border-color: #7f9cb7;
+  background: #edf3fc;
+}
+.host-page button:disabled {
+  cursor: not-allowed;
+}
+.host-page .host-primary {
+  background: #386d96;
+  color: #fff;
+  border-color: #386d96;
+  padding: 13px 16px;
+}
+.host-page .host-primary:not(:disabled):hover {
+  background: #2b587b;
+}
+.host-page .host-danger:not(:disabled):hover {
+  background: #fff0e8;
+}
+.host-page :is(input, select, textarea):focus-visible {
+  outline: 2px solid #4e80aa;
+  outline-offset: 2px;
+}
+.host-page :is(input[type="checkbox"], input[type="radio"]) {
+  accent-color: #41749b;
+}
+.host-page .host-field :is(input, select),
+.host-page .library-bundle input {
+  background: #fffefa;
+  color: var(--ink);
+  border-color: #c9d2d9;
+}
+.host-page .host-prepare-form,
+.host-page .host-import-row {
+  background: #fffefa;
+  border: 1px solid #d2dcd6;
+  border-radius: 8px;
+}
+.host-page .host-source-choice {
+  background: #fffefa;
+  border-color: #d1dbd2;
+  border-radius: 6px;
+}
+.host-page .host-source-choice:has(input:checked) {
+  border-color: #9ab583;
+  background: #eaf2df;
+  box-shadow: inset 0 3px #9fbd83;
+}
+.host-page .host-source-choice small {
+  color: #576851;
+}
+.host-page .host-step-heading h2 {
+  font:
+    650 22px/1.25 "Avenir Next",
+    "Segoe UI",
+    sans-serif;
+  letter-spacing: -0.6px;
+}
+.host-page .host-step-number {
+  background: #fffefa;
+  border: 2px solid #769abd;
+  color: #365e79;
+  box-shadow: 0 0 0 4px #e9eff6;
+  font-size: 11px;
+}
+.host-page .host-preview {
+  border: 1px solid #b5c9dc;
+  border-radius: 8px;
+  background: #e7efff;
+}
+.host-page .host-draw-toolbar button[aria-pressed="true"] {
+  color: #5c432a;
+  background: #fff0d3;
+  border-color: var(--road-edge);
+}
+.host-page .host-build-summary {
+  background: #fff2da;
+  border-color: var(--road-edge);
+}
+.host-page .host-package {
+  background: #e6eedb;
+  border-top-color: #97b681;
+  border-radius: 6px;
+}
+.host-page .workbench-content .preparation-card {
+  background: #fffefa;
+  border: 1px solid #d0d9d4;
+  border-top: 3px solid #abc496;
+  border-radius: 8px;
+  box-shadow: 0 3px 12px #40574b06;
+}
+.host-page .state-badge {
+  background: #e6efd9;
+  color: #456335;
+  border-radius: 4px;
+  font-family: var(--mono);
+}
+.host-page
+  :is(.preparation-card, .activity-card)[data-state="queued"]
+  .state-badge {
+  background: #f9e9cb;
+  color: #775a2d;
+}
+.host-page
+  :is(.preparation-card, .activity-card)[data-state="running"]
+  .state-badge {
+  background: #dae8fb;
+  color: #315d88;
+}
+.host-page
+  :is(.preparation-card, .activity-card):is(
+    [data-state="failed"],
+    [data-state="paused"]
+  )
+  .state-badge {
+  background: #f8e0d8;
+  color: #9e452f;
+}
+.host-page .preparation-card[data-state="retained"] .state-badge {
+  background: #e9e7e3;
+  color: #615d57;
+}
+.workbench-activity .preparation-card[data-state="running"] {
+  border-left: 3px solid #678dbd;
+  padding-left: 17px;
+}
+.workbench-activity .preparation-card[data-state="failed"] {
+  border-left: 3px solid #bc684f;
+  padding-left: 17px;
+}
+.workbench-activity .activity-builds > summary {
+  color: #496b87;
+  background: #dfeafa;
+}
+.workbench-activity .activity-toggle {
+  color: #315d7a;
+  background: transparent;
+}
+.host-page .activity-toggle > span:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  margin: 0 12px 2px 2px;
+  background: #678dbd;
+  box-shadow: 0 0 0 1px #678dbd;
+}
+.host-page progress {
+  accent-color: #6389b6;
+}
+.host-page progress::-webkit-progress-bar {
+  background: #dce5ef;
+  border-radius: 8px;
+}
+.host-page progress::-webkit-progress-value {
+  background: #6389b6;
+  border-radius: 8px;
+}
+.host-page progress::-moz-progress-bar {
+  background: #6389b6;
+  border-radius: 8px;
+}
+.workbench-shortcuts a {
+  color: #3e698c;
+  border-bottom: 1px dashed #92aac0;
+}
+.workbench-shortcuts a:hover {
+  border-bottom-style: solid;
+}
+.host-page .host-actions a {
+  color: #35678c;
+}
+.host-page .host-import-guide {
+  gap: 16px;
+}
+.host-page .host-import-guide > div {
+  padding: 16px;
+  border: 1px solid #d6ddd3;
+  border-radius: 6px;
+  background: #f1f4e9;
+}
+.host-page .host-tool {
+  border-top-style: dashed;
+}
+@media (max-width: 1250px) {
+  .workbench-intro > :not(.workbench-cartography) {
+    max-width: calc(100% - 160px);
+  }
+  .workbench-cartography {
+    width: 170px;
+  }
+}
+@media (max-width: 1100px) {
+  .workbench-cartography {
+    display: none;
+  }
+  .workbench-intro > :not(.workbench-cartography) {
+    max-width: none;
+  }
+}
+@media (max-width: 700px) {
+  .host-page .masthead {
+    gap: 14px;
+  }
+  .host-page #open-client {
+    padding: 8px;
+    font-size: 11px;
+  }
+  .workbench-intro {
+    padding: 22px;
+    min-height: 0;
+  }
+  .workbench-intro h1 {
+    font-size: 32px;
+  }
+  .host-page .workbench-tabs button {
+    padding: 11px 13px;
+    gap: 7px;
+    font-size: 13px;
+  }
+  .workbench-tab-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+  .host-page .host-source-selection {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+.workbench-activity #prepare-jobs > p {
+  margin: 0;
+  padding: 16px 20px;
 }

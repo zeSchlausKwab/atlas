@@ -476,6 +476,8 @@ function jobs(values: PreparationJob[]) {
   for (const job of values) {
     const card = text("article", "", "preparation-card"),
       heading = text("div", "", "preparation-card-heading");
+    card.dataset.state =
+      job.state === "ready" && job.served === false ? "retained" : job.state;
     heading.append(
       text("h3", job.name),
       text(

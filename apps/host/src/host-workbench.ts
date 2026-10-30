@@ -1,3 +1,4 @@
+import { cartography, workbenchIcon } from "./host-cartography";
 /** Navigation and activity are independent of the long-running host controllers. */
 type Activity = {
   id: string;
@@ -96,7 +97,11 @@ export function startWorkbench() {
     button.type = "button";
     button.setAttribute("role", "tab");
     button.setAttribute("aria-controls", `host-panel-${tab.id}`);
-    button.textContent = tab.title;
+    const symbol = document.createElement("span");
+    symbol.className = "workbench-tab-icon";
+    symbol.setAttribute("aria-hidden", "true");
+    symbol.innerHTML = workbenchIcon(tab.id);
+    button.append(symbol, document.createTextNode(tab.title));
     button.onclick = () => showHostSection(tab.id);
     nav.append(button);
     const panel = document.createElement("section");
@@ -114,6 +119,7 @@ export function startWorkbench() {
     const p = document.createElement("p");
     p.textContent = tab.note;
     header.append(eyebrow, h, p);
+    header.insertAdjacentHTML("beforeend", cartography);
     panel.append(header);
     if (
       tab.id === "prepare" ||
