@@ -264,3 +264,61 @@ test("portable composition coverage uses member areas rather than the parent env
     await s.close();
   }
 });
+
+test("area API requires partial-coverage review and imports a portable file that survives cache deletion", async () => {
+  const s = await setup();
+  try {
+    await s.call("/peer", { url: s.host.origin });
+    await s.federation.settled();
+    const source = s.federation.view().sources[0]!;
+    const body = {
+      name: "Selected offline data",
+      polygon,
+      families: ["features", "addresses"],
+      minZoom: 0,
+      maxZoom: 0,
+      paddingCells: 0,
+      sourceIds: [source.id],
+    };
+    expect((await s.call("/area-plan", body, "http://evil.test")).status).toBe(
+      403,
+    );
+    const created = await s.call("/area-plan", body);
+    expect(created.status).toBe(202);
+    const { id } = await created.json();
+    await until(() => s.federation.view().acquisitions[0]?.state === "review");
+    expect(s.federation.view().acquisitions[0]!.plan!.incomplete).toBe(true);
+    await s.restart();
+    const denied = await s.call("/area-resume", { id });
+    expect(denied.status).toBe(400);
+    expect((await denied.json()).error).toContain("Coverage has gaps");
+    expect(
+      (await s.call("/area-resume", { id, acceptPartial: true })).status,
+    ).toBe(202);
+    await until(() =>
+      ["ready", "failed"].includes(s.federation.view().acquisitions[0]!.state),
+    );
+    expect(s.federation.view().acquisitions[0]!.error).toBeUndefined();
+    await s.restart();
+    s.host.unavailable();
+    const download = await s.call(`/area-file/${id}`);
+    expect(download.status).toBe(200);
+    expect(download.headers.get("Content-Disposition")).toContain("attachment");
+    const exported = new Uint8Array(await download.arrayBuffer());
+    expect((await s.call("/area-publish", { id })).status).toBe(202);
+    await until(() =>
+      ["ready", "failed"].includes(s.manager.jobs.get(id)?.state ?? ""),
+    );
+    expect(s.manager.jobs.get(id)!.error).toBeUndefined();
+    expect((await s.call("/area-publish", { id })).status).toBe(202);
+    expect(s.manager.jobs.size).toBe(1);
+    expect((await s.call("/area-delete", { id })).status).toBe(200);
+    expect(s.federation.view().acquisitions).toHaveLength(0);
+    expect(
+      new Uint8Array(await Bun.file(s.manager.path(id)).arrayBuffer()),
+    ).toEqual(exported);
+    expect(s.host.stats().rawRequests).toBe(0);
+  } finally {
+    await s.close();
+  }
+}, 30000);

@@ -655,6 +655,57 @@
           This is not a claim of real-world completeness or a guarantee that
           every payload is reachable. Empty routing cells are valid coverage.
         </p>
+        <section id="acquisition" aria-labelledby="area-acquisition-title">
+          <h3 id="area-acquisition-title">Complete this area</h3>
+          <p>
+            Use the area and sources selected above. Review several capabilities
+            together, acquire their data through Hashtree, and export one
+            self-contained Atlas file.
+          </p>
+          <label
+            >Area file name<input
+              id="area-name"
+              value="My offline area"
+              maxlength="80"
+          /></label>
+          <fieldset id="area-families">
+            <legend>Include these capabilities</legend>
+          </fieldset>
+          <div class="host-inline">
+            <label
+              >Minimum display zoom<input
+                id="area-min-zoom"
+                type="number"
+                min="0"
+                max="24"
+                value="0"
+            /></label>
+            <label
+              >Maximum display zoom<input
+                id="area-max-zoom"
+                type="number"
+                min="0"
+                max="24"
+                value="16"
+            /></label>
+            <label
+              >Routing padding cells<input
+                id="area-padding"
+                type="number"
+                min="0"
+                max="4"
+                value="1"
+            /></label>
+          </div>
+          <p class="quiet">
+            Planning reads directories and catalogs. Transfer estimates count
+            stored blocks; Hashtree chunk overhead is additional. Search and
+            routing are independent of display zoom.
+          </p>
+          <button id="area-review">Review area acquisition</button>
+          <p id="area-status" role="status" aria-live="polite"></p>
+          <div id="area-jobs" class="host-library"></div>
+        </section>
         <h3>Mirror downloads</h3>
         <p class="quiet">
           Full files are downloaded by the server through Hashtree. Transfers

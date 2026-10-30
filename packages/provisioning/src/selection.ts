@@ -1,3 +1,4 @@
+import { readSearchCell } from "../../geocoding/src/cell-pages";
 import { objectRecords } from "../../objects/src/index";
 import {
   boundaryCatalog,
@@ -225,7 +226,12 @@ export async function planPreparation(
   const add = (blocks: Block[]) => {
     for (const b of blocks) chosen.set(b.key, b);
   };
-  async function spatial(prefix: string, z: number, padding = 0) {
+  async function spatial(
+    prefix: string,
+    z: number,
+    padding = 0,
+    rectangle = false,
+  ) {
     signal.throwIfAborted();
     const n = 2 ** z;
     return (
@@ -239,7 +245,7 @@ export async function planPreparation(
       )
     ).filter((b) => {
       const a = spatialAddress(b.key)!;
-      return selectedCell(s.polygon, z, a.x, a.y, padding);
+      return rectangle || selectedCell(s.polygon, z, a.x, a.y, padding);
     });
   }
   for (let z = s.minZoom; z <= s.maxZoom; z++) {
@@ -351,9 +357,51 @@ export async function planPreparation(
     )
       add([b]);
   }
+  // Dependency closure for the excerpt builders. Search needs spatial records,
+  // not the source's global term/posting indexes: those are rebuilt in the output.
+  for (const kind of ["locations", "streets"] as const) {
+    if (kind === "locations" ? !s.search : !s.reverse) continue;
+    const key = `search/${kind}`;
+    const root = JSON.parse(new TextDecoder().decode(await reader.block(key)));
+    if (root.schema !== `${kind}-paged-v1`) continue;
+    const cells = await spatial(`search/${kind}-data`, 14, 0, true);
+    for (const cell of cells) {
+      report(`Planning ${cell.key} and its record pages…`);
+      for await (const _ of readSearchCell(
+        reader,
+        cell.key,
+        kind,
+        box,
+        signal,
+        async (key) => {
+          const block = await featureBlock(reader, key);
+          if (!block) throw Error(`Missing search dependency ${key}`);
+          add([block]);
+        },
+        true,
+      )) {
+        /* validation and dependency discovery share the reader's schema checks */
+      }
+    }
+  }
+  if (s.placeNames && chosen.has("labels/places")) {
+    const root = JSON.parse(
+      new TextDecoder().decode(await reader.block("labels/places")),
+    );
+    if (root.schema === "places-paged-v1")
+      add(await spatial("labels/settlements", 8, 0, true));
+  }
+  if (s.peaks && chosen.has("query/peaks")) {
+    const root = JSON.parse(
+      new TextDecoder().decode(await reader.block("query/peaks")),
+    );
+    if (root.schema === "peaks-paged-v1")
+      add(await spatial("query/peaks-data", 8, 0, true));
+  }
   signal.throwIfAborted();
   const blocks = [...chosen.values()].sort((a, b) => a.offset - b.offset);
-  if (!blocks.length) throw new Error("No selected data intersects this area.");
+  if (!blocks.length && !s.profiles.length)
+    throw new Error("No selected data intersects this area.");
   const families: Record<string, { blocks: number; bytes: number }> = {};
   for (const b of blocks) {
     const key = b.key.startsWith("tile/")

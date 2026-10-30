@@ -65,6 +65,15 @@ export class ArchiveUploads {
     }
     return uploads;
   }
+  async importPrepared(id: string, path: string, name: string, force = false) {
+    const file = Bun.file(path);
+    await this.preparations.createArchive(
+      id,
+      path,
+      { filename: name + ".atlas", size: file.size, format: "atlas" },
+      force,
+    );
+  }
   private path(id: string) {
     return resolve(this.directory, `${id}.upload`);
   }

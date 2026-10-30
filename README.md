@@ -461,3 +461,8 @@ coverage planner. See [coverage evidence, mirroring and the API](docs/COVERAGE-A
 To upload an update while preparations are running, use
 `bun run deploy --stage-only`. This stages code without remote compilation or a
 service restart; activate it later with the printed `--resume` command.
+
+
+### Acquire an offline area from multiple publishers
+
+**Host console → Coverage & peers → Complete this area** uses your selected polygon and sources. Select multiple capabilities, review local/remote/missing coverage and block sizes, then acquire via Hashtree. Pause/resume keeps verified blocks; export one self-contained `.atlas` or add it to the local map library. Independently compiled, compatible OSM routing sources retain their native identities. [Workflow, API, verification and current limits](docs/AREA-ACQUISITION.md).

@@ -301,6 +301,40 @@ test("conflicting costs in an overlapping cell are rejected before choosing a ho
         { id: "e", reader: bad },
       ]).read(key),
     ).rejects.toThrow("Conflicting cells");
+    const { planAcquisition } = await import(
+      "../packages/acquisition/src/plan"
+    );
+    const plan = await planAcquisition(
+      {
+        name: "Conflict review",
+        polygon: polygon(box(0, 13)),
+        families: ["routing:driving"],
+        minZoom: 0,
+        maxZoom: 0,
+        paddingCells: 1,
+        sourceIds: ["w", "e"],
+      },
+      [
+        {
+          id: "w",
+          manifest: west.reader.index.manifest,
+          reader: west.reader,
+          location: "remote",
+          verified: true,
+          bytes: 0,
+        },
+        {
+          id: "e",
+          manifest: bad.index.manifest,
+          reader: bad,
+          location: "remote",
+          verified: true,
+          bytes: 0,
+        },
+      ],
+      new AbortController().signal,
+    );
+    expect(plan.conflicts).toContain(key);
   } finally {
     bad.dispose();
   }
@@ -590,3 +624,186 @@ test("independent publishers discover and route through Hashtree; a new router r
     await Promise.all(hosts.map((h) => h.close()));
   }
 }, 30000);
+
+test("area acquisition from independent Hashtree publishers survives interruption and routes offline from one portable file", async () => {
+  const { Acquisitions } = await import("../apps/server/acquisitions");
+  const { publishedHost } = await import("./helpers/published-host");
+  const { openMembers } = await import("../packages/format/src/composition");
+  const { AtlasGeocoder } = await import("../packages/geocoding/src/index");
+  const { randomBytes } = await import("node:crypto");
+  const hosts: Awaited<ReturnType<typeof publishedHost>>[] = [];
+  let manager: Awaited<ReturnType<typeof Acquisitions.open>> | undefined;
+  const opened: AtlasReader[] = [];
+  const folder = `${work}/area-rehearsal`;
+  const wait = async () => {
+    const end = Date.now() + 20000;
+    while (
+      manager!
+        .view()
+        .some((j) => ["planning", "fetching", "packing"].includes(j.state))
+    ) {
+      if (Date.now() > end) throw Error(JSON.stringify(manager!.view()));
+      await Bun.sleep(5);
+    }
+    await Bun.sleep(10);
+  };
+  try {
+    for (const [i, p] of packages.slice(1).entries()) {
+      const bytes = await encodePackage(
+        {
+          ...p.manifest,
+          capabilities: [
+            "transport-routing",
+            "location-search",
+            "address-search",
+          ],
+          semantics: {
+            version: 1,
+            addresses: "osm-explicit",
+            poiTags: true,
+            administrativeHierarchy: false,
+          },
+        },
+        [
+          {
+            key: "custom/not-requested-before",
+            bytes: randomBytes(256 * 1024),
+          },
+          ...p.inputs,
+          {
+            key: "custom/not-requested-middle",
+            bytes: randomBytes(256 * 1024),
+          },
+          {
+            key: "search/locations",
+            bytes: new TextEncoder().encode(
+              JSON.stringify({
+                schema: "locations-v1",
+                records: [
+                  {
+                    id: `node/${900 + i}`,
+                    name: i ? "East Street 12" : "West Street 1",
+                    aliases: [],
+                    kind: "address",
+                    category: "address",
+                    coordinates: point(i ? 12 : 0),
+                    address: {
+                      source: "osm-explicit",
+                      street: i ? "East Street" : "West Street",
+                      houseNumber: i ? "12" : "1",
+                    },
+                  },
+                ],
+              }),
+            ),
+          },
+          { key: "custom/not-requested-after", bytes: randomBytes(256 * 1024) },
+        ],
+        { paged: true },
+      );
+      const path = `${folder}/publisher-${i}.atlas`;
+      await Bun.write(path, bytes);
+      hosts.push(await publishedHost(path, `${folder}/publisher-${i}`));
+    }
+    manager = await Acquisitions.open(`${folder}/jobs`, async () => {});
+    const b = box(0, 13); // keep requested cells strictly inside each authority's bounds
+    const id = await manager.create(
+      {
+        name: "Independent offline journey",
+        polygon: polygon(b),
+        families: [
+          "routing:walking",
+          "routing:cycling",
+          "routing:driving",
+          "addresses",
+        ],
+        minZoom: 0,
+        maxZoom: 0,
+        paddingCells: 1,
+        sourceIds: ["west", "east"],
+      },
+      hosts.map((h, i) => ({
+        id: i ? "east" : "west",
+        manifest: h.offer.manifest,
+        offer: h.offer,
+        location: "remote",
+        verified: true,
+        root: h.offer.hashtree!.root,
+        bytes: h.offer.bytes,
+      })),
+    );
+    await wait();
+    const plan = manager.view()[0]!;
+    expect(plan.error).toBeUndefined();
+    expect(plan.state).toBe("review");
+    expect(plan.plan!.members).toBe(2);
+    expect(plan.plan!.conflicts).toEqual([]);
+    // Network loss after planning retains pinned metadata and acquired blocks.
+    hosts.forEach((h) => h.unavailable());
+    await manager.resume(id, false, true);
+    await wait();
+    expect(manager.view()[0]!.state).toBe("failed");
+    await manager.close();
+    manager = await Acquisitions.open(`${folder}/jobs`, async () => {});
+    hosts.forEach((h) => h.unavailable(false));
+    await manager.resume(id, false, true);
+    await wait();
+    expect(manager.view()[0]!.error).toBeUndefined();
+    expect(manager.view()[0]!.state).toBe("ready");
+    expect(manager.view()[0]!.reusedBytes).toBeGreaterThan(0);
+    hosts.forEach((h) => h.unavailable());
+    const parent = await new AtlasReader(
+      new FileSource(manager.file(id)),
+    ).open();
+    opened.push(parent);
+    const members = await openMembers(parent);
+    opened.push(...members.map((m) => m.reader));
+    expect(members.length).toBe(2);
+    const combined = new RoutingComposition(
+        members.map((m) => ({ id: m.id, reader: m.reader })),
+      ),
+      engine = router(combined);
+    const reference = new RoutingComposition([
+        { id: "whole", reader: packages[0]!.reader },
+      ]),
+      expectedEngine = router(reference);
+    try {
+      for (const mode of TRANSPORT_MODES) {
+        const expected = await expectedEngine.route(
+          point(0),
+          point(12),
+          mode,
+          reference.prefix(mode),
+        );
+        const result = await engine.route(
+          point(0),
+          point(12),
+          mode,
+          combined.prefix(mode),
+        );
+        expect(result.status).toBe("found");
+        expect(expected.status).toBe("found");
+        if (result.status === "found" && expected.status === "found")
+          expect(result.seconds).toBeCloseTo(expected.seconds!, 5);
+      }
+      const hits = [];
+      for (const m of members)
+        hits.push(
+          ...(await new AtlasGeocoder(m.reader).search("East Street 12"))
+            .matches,
+        );
+      expect(hits.some((h) => h.id === "node/901")).toBe(true);
+    } finally {
+      engine.destroy();
+      expectedEngine.destroy();
+    }
+    expect(hosts.every((h) => h.stats().rawRequests === 0)).toBe(true);
+    for (const m of members)
+      for await (const b of m.reader.iterateBlocks())
+        expect(b.key.startsWith("custom/")).toBe(false);
+  } finally {
+    await manager?.close();
+    opened.forEach((r) => r.dispose());
+    for (const h of hosts) await h.close();
+  }
+}, 60000);

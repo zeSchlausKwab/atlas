@@ -12,7 +12,6 @@ import {
 } from "../../boundaries/src/index";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
 import { selectedPeaks } from "../../format/src/peaks";
-import { selectedPlaces } from "../../labels/src/place-pages";
 import { rm } from "node:fs/promises";
 import { PagedSearchBuilder } from "../../geocoding/src/paged-build";
 import { STREET_ZOOM } from "../../geocoding/src/paging";
@@ -215,6 +214,16 @@ export async function preparePackage(
       await boundaries.finish();
     }
     for (const b of plan.blocks) {
+      // Included in the acquisition plan as dependencies, consumed by their root builder.
+      if (
+        (b.key.startsWith("search/") &&
+          !["search/locations", "search/streets"].includes(b.key)) ||
+        b.key.startsWith("labels/settlements/") ||
+        b.key.startsWith("query/peaks-data/")
+      ) {
+        p.completed++;
+        continue;
+      }
       if (b.key.startsWith("boundaries/") || b.key.startsWith("objects/")) {
         p.completed++;
         continue;
@@ -261,10 +270,44 @@ export async function preparePackage(
           keep = false;
         }
       } else if (b.key === "labels/places") {
-        const values = await selectedPlaces(reader, s.polygon);
-        outputBytes = encodePlaces(values);
-        features = values.length;
-        keep = !!features;
+        const root = JSON.parse(new TextDecoder().decode(bytes));
+        if (root.schema === "places-paged-v1") {
+          if (root.zoom !== 8) throw Error("Invalid settlement page grid");
+          const overview = decodePlaces(encodePlaces(root.overview)).filter(
+            (v) => inside(v.coordinates, s.polygon),
+          );
+          features = 0;
+          for (const page of plan.blocks.filter((b) =>
+            b.key.startsWith("labels/settlements/"),
+          )) {
+            signal.throwIfAborted();
+            const values = decodePlaces(await reader.block(page.key)).filter(
+              (v) => inside(v.coordinates, s.polygon),
+            );
+            if (values.length)
+              await writer.add({
+                key: page.key,
+                bytes: encodePlaces(values),
+                features: values.length,
+              });
+            features += values.length;
+            reader.cache.delete(page.key);
+            emit(`Selecting ${page.key}`);
+          }
+          outputBytes = encode({
+            schema: "places-paged-v1",
+            zoom: 8,
+            overview,
+          });
+          keep = features > 0 || overview.length > 0;
+        } else {
+          const values = decodePlaces(bytes).filter((v) =>
+            inside(v.coordinates, s.polygon),
+          );
+          outputBytes = encodePlaces(values);
+          features = values.length;
+          keep = !!features;
+        }
       } else if (b.key.startsWith("labels/")) {
         const data = decodeLabels(bytes);
         data.pois = s.pois
@@ -371,7 +414,8 @@ export async function preparePackage(
     if (featureKinds.includes("boundaries"))
       caps.push("administrative-boundaries");
     for (const mode of s.profiles)
-      if (!profiles[mode]!.count) delete profiles[mode];
+      if (!profiles[mode]!.count && !m.transport?.federation)
+        delete profiles[mode];
     if (Object.keys(profiles).length) caps.push("transport-routing");
     const rasters = (m.rasters ?? []).filter((r) =>
       writer.hasPrefix(`raster/${r.id}/`),
@@ -425,6 +469,11 @@ export async function preparePackage(
       ],
     };
     delete (manifest as Partial<Manifest>).snapshot;
+    if (!writer.blockCount && caps.includes("transport-routing"))
+      await writer.add({
+        key: "acquisition/coverage",
+        bytes: encode({ version: 1, empty: true }),
+      });
     if (!writer.blockCount)
       throw new Error("No objects remain inside this selection.");
     p.phase = "indexing";

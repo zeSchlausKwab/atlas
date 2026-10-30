@@ -1,3 +1,4 @@
+import { createAreaAcquisitions } from "./host-acquisitions";
 import { unproject } from "../../../packages/format/src/index";
 import type { inspectRouting } from "../../../packages/coverage/src/routing-inspection";
 import { createPreview, type HostPreview } from "./host-preview";
@@ -62,6 +63,10 @@ export async function startFederation() {
     known = new Set<string>();
   let routingInspection: Awaited<ReturnType<typeof inspectRouting>> | undefined;
   const selected = new Set<string>();
+  const acquisitions = createAreaAcquisitions(
+    () => request(),
+    () => refresh(),
+  );
   const status = (value: string) => {
     el("status").textContent = value;
   };
@@ -308,13 +313,17 @@ export async function startFederation() {
       state = s;
       renderSources(s);
       renderMirrors(s);
+      acquisitions.render(s);
       status(s.status);
       el<HTMLButtonElement>("refresh").disabled = s.refreshing;
     } finally {
       timer = setTimeout(
         () => run(refresh),
         state?.refreshing ||
-          state?.mirrors.some((m) => m.state === "downloading")
+          state?.mirrors.some((m) => m.state === "downloading") ||
+          state?.acquisitions.some((j) =>
+            ["planning", "fetching", "packing"].includes(j.state),
+          )
           ? 2000
           : 10000,
       );

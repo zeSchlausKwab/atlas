@@ -1,3 +1,5 @@
+import { Acquisitions, type AcquisitionPin } from "./acquisitions";
+import { StorageWarning } from "../../packages/provisioning/src/capacity";
 import { mkdir, rename, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseAnnouncement } from "../../packages/hashtree/src/discovery";
@@ -35,13 +37,14 @@ interface Mirror {
   error?: string;
   jobId?: string;
 }
-type Entry = CoverageSource & { offer?: MapOffer };
+type Entry = AcquisitionPin;
 const json = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 /** An operator-selected consumer. It reads signed offers and verified Hashtree bytes;
  * it does not accept unsigned catalogs or change the publisher's archived data. */
 export class Federation {
   private peers: Peer[] = [];
+  private acquisitions!: Acquisitions;
   private entries = new Map<string, Entry>();
   private readers = new Map<string, AtlasReader>();
   private mirrors = new Map<string, Mirror>();
@@ -77,6 +80,10 @@ export class Federation {
         if (m.state === "downloading") m.state = "paused";
         f.mirrors.set(m.id, m);
       }
+    f.acquisitions = await Acquisitions.open(
+      join(directory, "areas"),
+      (id, path, name, force) => uploads.importPrepared(id, path, name, force),
+    );
     return f;
   }
   private async save(name: string, value: unknown) {
@@ -152,7 +159,12 @@ export class Federation {
     }
     for (const member of members) {
       const id = entry.id + "/" + member.id;
-      this.entries.set(id, { ...entry, id, manifest: member.manifest });
+      this.entries.set(id, {
+        ...entry,
+        id,
+        memberId: member.id,
+        manifest: member.manifest,
+      });
       this.readers.set(id, member.reader);
     }
   }
@@ -165,6 +177,7 @@ export class Federation {
       if (this.closing) return;
       const entry: Entry = {
         id: `local:${m.id}`,
+        path: m.path,
         manifest: m.offer.manifest,
         location: "local",
         verified: false,
@@ -262,10 +275,12 @@ export class Federation {
   view() {
     return {
       peers: this.peers,
-      sources: [...this.entries.values()].map(({ offer, ...s }) => ({
-        ...s,
-        canMirror: !!offer && s.verified,
-      })),
+      sources: [...this.entries.values()].map(
+        ({ offer, path, memberId, ...s }) => ({
+          ...s,
+          canMirror: !!offer && s.verified,
+        }),
+      ),
       families: [
         ...new Set(
           [...this.entries.values()].flatMap((s) =>
@@ -282,6 +297,7 @@ export class Federation {
         bytes: offer.bytes,
         root: offer.hashtree!.root,
       })),
+      acquisitions: this.acquisitions.view(),
       refreshing: !!this.work,
       status: this.status,
     };
@@ -458,11 +474,46 @@ export class Federation {
         "/admin/federation".length,
       );
       if (request.method === "GET" && action === "") return json(this.view());
+      const file = /^\/area-file\/([a-f0-9-]{36})$/.exec(action);
+      if (request.method === "GET" && file)
+        return new Response(this.acquisitions.file(file[1]!), {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": `attachment; filename="atlas-area-${file[1]}.atlas"`,
+          },
+        });
       if (request.method !== "POST")
         return json({ error: "Method not allowed" }, 405);
       const body = JSON.parse(
         new TextDecoder().decode(await limitedBody(request, 16384)),
       );
+      if (action === "/area-plan") {
+        if (this.work) throw Error("Wait for source verification to finish.");
+        const id = await this.acquisitions.create(body, [
+          ...this.entries.values(),
+        ]);
+        return json({ id }, 202);
+      }
+      if (action === "/area-resume") {
+        await this.acquisitions.resume(
+          body.id,
+          body.allowStorageRisk,
+          body.acceptPartial,
+        );
+        return json(this.view(), 202);
+      }
+      if (action === "/area-pause") {
+        await this.acquisitions.pause(body.id);
+        return json(this.view());
+      }
+      if (action === "/area-delete") {
+        await this.acquisitions.remove(body.id);
+        return json(this.view());
+      }
+      if (action === "/area-publish") {
+        await this.acquisitions.publishFile(body.id, body.allowStorageRisk);
+        return json(this.view(), 202);
+      }
       if (action === "/peer") {
         await this.addPeer(body.url);
         return json(this.view());
@@ -522,11 +573,17 @@ export class Federation {
       }
       return json({ error: "Unknown federation action" }, 404);
     } catch (e) {
-      return json({ error: e instanceof Error ? e.message : String(e) }, 400);
+      return json(
+        e instanceof StorageWarning
+          ? { error: e.message, storageWarning: e.storageWarning }
+          : { error: e instanceof Error ? e.message : String(e) },
+        e instanceof StorageWarning ? 409 : 400,
+      );
     }
   }
   async close() {
     this.closing = true;
+    await this.acquisitions.close();
     this.download?.abort.abort();
     for (const r of this.readers.values()) r.dispose();
     await Promise.all([this.work, this.download?.done]);

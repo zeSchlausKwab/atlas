@@ -12,7 +12,8 @@ Open **Coverage & peers** in `/host#federation`:
 4. For a smaller area, **Inspect routing cells** reads directory hashes without loading graph payloads. It draws present, empty, missing, unknown, incompatible and conflicting cells. The exported report includes the inspection.
 5. **Mirror whole .atlas** downloads a pinned Hashtree root into the existing durable upload/import pipeline. Pause and resume survive server restart. Completed downloads enter the normal import queue, where archive contents are verified before publication in the library. The original bytes are preserved.
 6. **Prepare this area** copies the selected area and capability into the existing preparation form. It prefers a cached planet PBF, otherwise Geofabrik. Review the source, options and snapshot compatibility before starting. This does not start a build automatically or promise that a newly selected snapshot will stitch with an existing routing graph.
-7. Use the library's composition/export controls to combine local archives into one self-contained Atlas. This reuses the existing assembly implementation; remote composition does not require flattening or rewriting the source files.
+7. **Complete this area** reviews multiple capabilities, fetches their selected blocks through Hashtree, and exports a portable `.atlas`. Acquisition checkpoints survive restart; missing coverage requires explicit acceptance. See [area acquisition](AREA-ACQUISITION.md).
+8. Use the library's composition/export controls to combine local archives into one self-contained Atlas. This reuses the existing assembly implementation; remote composition does not require flattening or rewriting the source files.
 
 The browser's **Composer → Capability coverage → Check current view** uses the same polygon planner against the selected, opened archives. The viewport is used only when that button is explicitly pressed.
 
