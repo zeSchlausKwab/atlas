@@ -86,13 +86,16 @@ Run `bun run verify:routing-federation`; it builds the native compiler and routi
 WASM before executing the tests. The full Bun suite also checks the legacy path.
 
 A real Liechtenstein rehearsal independently extracted a north and south PBF and
-compiled a third whole-area reference. Two loopback HTTP range servers supplied
-100 distinct routing cells in 110 requests. Walking/cycling routes (18.0 km) and
+compiled a third whole-area reference. Two independent publisher keys announced their maps over separate loopback
+Nostr relays. Hashtree supplied 100 distinct routing cells in 170 blob requests;
+direct Atlas range delivery was disabled (zero raw-file requests). Walking/cycling routes (18.0 km) and
 driving (19.4 km) matched the reference costs, coordinates and OSM way sequences.
 After both servers stopped, the cached driving route still completed. Run
 `bun scripts/verify-routing-federation-real.ts` with `data/liechtenstein.osm.pbf`
-present (or supply the path to that dataset). These are local delivery tests;
-they do not claim a live public Nostr federation has been deployed.
+present (or supply the path to that dataset). The synthetic suite also starts a fresh reader and engine from the persistent
+cache after both hosts stop, and verifies missing-data/retry when a host is
+unavailable. These are isolated local publication tests; they do not claim public
+relay deployment.
 
 Checkpoint recovery can be tested in either codec with `bun run verify:graph-resume`;
 set `ATLAS_ROUTING_IDS=osm-way-segment-v1` for RCL3. Mode-specific spool and coordinate
@@ -105,7 +108,23 @@ extraction is insufficient for this claim. Bump the routing contract when changi
 costs, access/barrier policy or restriction interpretation. Old checkpoints retain
 the contract they were built with; a code update must never relabel them.
 
-Next stages: independent hosts in the discovery demo; explicit replication/object
+## Publishing and preparing independent maps
+
+The client validates transport metadata in signed discovery offers, then checks
+routing claims, scope, size and snapshot against the Hashtree-pinned archive before
+using it. Composer shows the routing compatibility of the opened selected maps.
+This confirms a common authority/contract; actual cell availability and overlap
+agreement are still checked during routing, not inferred from bounding boxes.
+
+`recipes/europe-three-map-demo.json` and `scripts/queue-europe-demo.ts` now create
+three independent cached-PBF preparations. All retain the same verified upstream
+planet revision, including the two smaller maps. They can be built on separate
+hosts; a single host still schedules one compiler at a time. Their durable receipt
+pins the recipe, source revision and server, and refuses legacy mother-map receipts.
+Use `--only=rhine-alps,alps-danube` to queue the pair without the large map.
+The old shared-graph path remains supported for existing files and excerpts.
+
+Next stages: explicit replication/object
 versions; seam-local dependency summaries; conflict-aware mixed revisions; custom
 source namespaces and explicit multimodal connectors. Each needs reference-route,
 restriction, missing-data and provenance tests before being advertised.

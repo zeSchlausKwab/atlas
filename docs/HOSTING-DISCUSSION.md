@@ -2,7 +2,7 @@
 
 Discussion draft — 2026-10-09. Cache controls and the first single-package host console, operation registry and ContextVM adapter are implemented; see [PLUGIN-DEMO.md](PLUGIN-DEMO.md). Multi-package provisioning, announcements and federation below remain proposals.
 
-Decision from this discussion: the first Vienna–Bratislava federation demo uses slices of **one shared source snapshot**. Compile once and partition the canonical output; independent compilation of different extracts is not yet a compatibility guarantee.
+Historical decision (superseded for new RCL3 routing by [OSM-authoritative federation](ROUTING-FEDERATION.md)) from this discussion: the first Vienna–Bratislava federation demo uses slices of **one shared source snapshot**. Compile once and partition the canonical output; independent compilation of different extracts is not yet a compatibility guarantee.
 
 ## The model
 

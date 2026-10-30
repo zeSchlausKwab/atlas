@@ -1,3 +1,4 @@
+import { OSM_ROUTING_CONTRACT } from "../../packages/format/src/routing-contract";
 import { recoverBuild, type BuildRecovery } from "./preparation-recovery";
 import type { ArchiveImport } from "./archive-import";
 import {
@@ -1370,6 +1371,11 @@ export class Preparations {
             v && Bun.which("ogr2ogr") ? { url: v.url, sha256: v.sha256 } : null,
           )
           .catch(() => null),
+        routingCompiler: {
+          authority: "osm-pbf-sha256",
+          contract: OSM_ROUTING_CONTRACT,
+          codec: "rcl3",
+        },
         cachedSources: await verifiedSources(this.sourceDirectory),
         jobs: [...this.jobs.values()].sort((a, b) =>
           b.createdAt.localeCompare(a.createdAt),

@@ -1,3 +1,5 @@
+import { verifyPublishedMap } from "../../../packages/hashtree/src/published-map";
+import { routingCompatibility } from "../../../packages/routing/src/composition";
 import { openMembers } from "../../../packages/format/src/composition";
 import type { ByteSource } from "../../../packages/format/src/reader";
 import type { RasterLayerViews } from "../../../packages/renderer/src/raster";
@@ -229,6 +231,8 @@ export async function createComposer(
   function sync() {
     if (paused) return;
     map.setSources(active());
+    const compatibility = routingCompatibility(active().map((s) => s.manifest));
+    el("routing").textContent = compatibility.message;
     refreshScope();
     if (!starting) options.changed(active(), focused());
     const attributions = [
@@ -302,6 +306,8 @@ export async function createComposer(
         reader.offline = options.offline();
         if (reader.index.manifest.snapshot !== entry.offer.manifest.snapshot)
           throw new Error("Published snapshot changed. Reopen discovery.");
+        if (!entry.local) verifyPublishedMap(entry.offer, reader);
+        entry.offer = { ...entry.offer, manifest: reader.index.manifest };
         entry.members = await openMembers(reader);
         if (entry.members.length) {
           const m = displayManifest(entry);
@@ -528,6 +534,18 @@ export async function createComposer(
         text("p", m.capabilities.join(" · "), "quiet"),
         text("p", `Snapshot ${m.snapshot}`, "quiet"),
       );
+      if (m.transport) {
+        const f = m.transport.federation;
+        details.append(
+          text(
+            "p",
+            f
+              ? `OSM revision ${f.sourceRevision} · ${f.contract} · ${Object.keys(m.transport.profiles).join(", ")}`
+              : "Legacy routing · requires the same compiled graph",
+            "quiet",
+          ),
+        );
+      }
       if (m.selection)
         details.append(
           text("p", `Derived from ${m.selection.parentSnapshot}`, "quiet"),

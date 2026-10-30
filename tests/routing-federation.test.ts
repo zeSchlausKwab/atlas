@@ -456,3 +456,137 @@ test("adding a profile uses OSM authority even when compiled package identities 
   target.transport!.federation!.sourceRevision = "3".repeat(64);
   expect(() => routingAmendmentSelection(target, source, request)).toThrow();
 });
+
+test("independent publishers discover and route through Hashtree; a new router replays cached data offline", async () => {
+  const { publishedHost, discoverPublishedHost } = await import(
+    "./helpers/published-host"
+  );
+  const { HashtreeSource } = await import("../packages/hashtree/src/source");
+  const { verifyPublishedMap } = await import(
+    "../packages/hashtree/src/published-map"
+  );
+  const readers: AtlasReader[] = [],
+    routers: PagedRouter[] = [];
+  const hosts: Awaited<ReturnType<typeof publishedHost>>[] = [];
+  const blobs = new Map<string, Uint8Array>();
+  const store = {
+    available: true,
+    async getIndex() {
+      return undefined;
+    },
+    async putIndex() {},
+    async keys() {
+      return [];
+    },
+    async get(s: string, b: { hash: string }) {
+      return blobs.get(`${s}:${b.hash}`);
+    },
+    async put(s: string, b: { hash: string }, v: Uint8Array) {
+      blobs.set(`${s}:${b.hash}`, v.slice());
+    },
+  };
+  let offline = false;
+  try {
+    for (let i = 1; i <= 2; i++) {
+      const path = `${work}/published-${i}.atlas`;
+      await Bun.write(path, packages[i]!.bytes);
+      hosts.push(await publishedHost(path, `${work}/publisher-${i}`));
+    }
+    expect(hosts[0]!.pubkey).not.toBe(hosts[1]!.pubkey);
+    const offers = await Promise.all(hosts.map(discoverPublishedHost));
+    expect(offers[0]!.hashtree!.root).not.toBe(offers[1]!.hashtree!.root);
+    async function openOffers() {
+      return Promise.all(
+        offers.map(async (offer) => {
+          const reader = await new AtlasReader(
+            new HashtreeSource(offer.url, offer.hashtree!, offer.api, {
+              store,
+              offline: () => offline,
+            }),
+            undefined,
+            { store },
+          ).open();
+          verifyPublishedMap(offer, reader);
+          reader.offline = offline;
+          readers.push(reader);
+          return { id: offer.url, reader };
+        }),
+      );
+    }
+    const combined = new RoutingComposition(await openOffers()),
+      a = router(combined);
+    const b = router(
+      new RoutingComposition([{ id: "ref", reader: packages[0]!.reader }]),
+    );
+    routers.push(a, b);
+    blobs.clear();
+    readers.forEach((r) =>
+      (r.source as InstanceType<typeof HashtreeSource>).clear(),
+    );
+    hosts[1]!.unavailable();
+    expect(
+      (
+        await a.route(
+          point(0),
+          point(12),
+          "driving",
+          combined.prefix("driving"),
+        )
+      ).status,
+    ).toBe("missing-data");
+    hosts[1]!.unavailable(false);
+    for (const mode of TRANSPORT_MODES) {
+      const expected = await b.route(
+        point(0),
+        point(12),
+        mode,
+        combined.prefix(mode),
+      );
+      const actual = await a.route(
+        point(0),
+        point(12),
+        mode,
+        combined.prefix(mode),
+      );
+      expect(actual.status).toBe("found");
+      if (actual.status !== "found" || expected.status !== "found")
+        throw Error("Route missing");
+      expect(actual.coordinates).toEqual(expected.coordinates);
+      expect(actual.seconds).toEqual(expected.seconds);
+      expect(actual.wayIds).toEqual(expected.wayIds);
+    }
+    expect(
+      new Set([...combined.served.values()].map((v) => v.source)).size,
+    ).toBe(2);
+    for (const h of hosts) {
+      expect(h.stats().blobRequests).toBeGreaterThan(0);
+      expect(h.stats().rawRequests).toBe(0);
+    }
+    const reads = hosts.map((h) => h.stats().blobRequests);
+    offline = true;
+    await Promise.all(hosts.map((h) => h.close()));
+    // Drop all readers/engines: this proves persisted content-addressed bytes, not a warm graph.
+    readers.forEach((r) => r.dispose());
+    routers.forEach((r) => r.destroy());
+    readers.length = 0;
+    routers.length = 0;
+    const fresh = new RoutingComposition(await openOffers()),
+      c = router(fresh);
+    routers.push(c);
+    expect(
+      (await c.route(point(0), point(12), "driving", fresh.prefix("driving")))
+        .status,
+    ).toBe("found");
+    expect(hosts.map((h) => h.stats().blobRequests)).toEqual(reads);
+    // Correctly signed but inaccurate metadata must not override the root-pinned file.
+    const claim = structuredClone(offers[0]!);
+    claim.manifest.transport!.federation!.sourceRevision = "a".repeat(64);
+    expect(() => verifyPublishedMap(claim, readers[0]!)).toThrow(
+      "Published transport differs",
+    );
+  } finally {
+    routers.forEach((r) => r.destroy());
+    readers.forEach((r) => r.dispose());
+    await Promise.all(hosts.map((h) => h.close()));
+  }
+}, 30000);

@@ -1,5 +1,5 @@
 import {
-  validateRoutingFederation,
+  validateTransportMetadata,
   type RoutingFederation,
 } from "./routing-contract";
 import {
@@ -421,45 +421,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       manifest.selection.routingPaddingCells > 4)
   )
     throw new Error("Invalid routing selection padding");
-  if (manifest.transport) {
-    if (manifest.transport.federation)
-      validateRoutingFederation(manifest.transport.federation);
-    if (
-      manifest.transport.version !== 1 ||
-      (manifest.transport.graphSnapshot !== undefined &&
-        !/^[a-f0-9]{64}$/.test(manifest.transport.graphSnapshot)) ||
-      !manifest.transport.profiles ||
-      Object.keys(manifest.transport.profiles).length === 0 ||
-      Object.keys(manifest.transport.profiles).some(
-        (k) => !TRANSPORT_MODES.includes(k as TransportMode),
-      )
-    )
-      throw new Error("Invalid transport metadata");
-    for (const mode of TRANSPORT_MODES) {
-      const p = manifest.transport.profiles[mode];
-      if (!p) continue;
-      if (
-        p.prefix !== `routing/${mode}/cells` ||
-        p.zoom !== 14 ||
-        !["rcl2", "rcl3"].includes(p.codec) ||
-        !!manifest.transport.federation !== (p.codec === "rcl3") ||
-        ![
-          p.count,
-          p.nodes,
-          p.segments,
-          p.turns,
-          p.skippedWays,
-          p.unsupportedRestrictions,
-          p.excludedRestrictionWays,
-        ].every((n) => Number.isSafeInteger(n) && n >= 0)
-      )
-        throw new Error("Invalid transport profile");
-    }
-  }
-  if (
-    manifest.capabilities.includes("transport-routing") !== !!manifest.transport
-  )
-    throw new Error("Transport capability mismatch");
+  validateTransportMetadata(manifest.transport, manifest.capabilities);
   if (manifest.routing) {
     const r = manifest.routing;
     if (

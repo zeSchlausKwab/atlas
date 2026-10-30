@@ -1,3 +1,4 @@
+import { validateTransportMetadata } from "./routing-contract";
 import { validateRasters } from "./raster";
 import { parseTree, type TreeOffer } from "../../hashtree/src/source";
 import { MAP_LAYERS, type Manifest } from "./index";
@@ -52,6 +53,7 @@ export function parseCatalog(value: unknown, base: string): MapOffer[] {
     )
       throw new Error("Invalid map offer in catalog");
     validateRasters(f.rasters);
+    validateTransportMetadata(f.transport, f.capabilities);
     const url = httpUrl(m.url, base);
     if (seen.has(url)) throw new Error("Duplicate map URL in catalog");
     seen.add(url);

@@ -3,7 +3,11 @@ import {
   ownsRoutingCell,
 } from "../../format/src/routing-contract";
 import { AtlasReader } from "../../format/src/reader";
-import { type Manifest, type TransportMode } from "../../format/src/index";
+import {
+  TRANSPORT_MODES,
+  type Manifest,
+  type TransportMode,
+} from "../../format/src/index";
 import { selectedCell } from "../../offline/src/geometry";
 import { profilePrefix, validateTransport } from "./index";
 import { checkRoutingCodec, readRoutingCell, type CellRead } from "./paged";
@@ -28,6 +32,34 @@ export function graphIdentity(manifest: Manifest) {
     (!manifest.selection && manifest.transport ? manifest.snapshot : undefined)
   );
 }
+export function routingCompatibility(manifests: Manifest[]) {
+  const maps = manifests.filter((m) => m.transport);
+  const identity = maps[0] ? graphIdentity(maps[0]) : undefined;
+  const compatible =
+    !!identity && maps.every((m) => graphIdentity(m) === identity);
+  const kind = maps.every((m) => m.transport?.federation)
+    ? "osm-source"
+    : "shared-graph";
+  const profiles = TRANSPORT_MODES.filter((mode) =>
+    maps.some((m) => m.transport?.profiles[mode]),
+  );
+  const partialProfiles = profiles.filter((mode) =>
+    maps.some((m) => !m.transport?.profiles[mode]),
+  );
+  const message = !maps.length
+    ? "No selected map supplies routing."
+    : !compatible
+      ? "Routing sources are not compatible: use independent RCL3 extracts of the same OSM source revision and routing contract, or legacy excerpts from one shared compiled graph."
+      : `${maps.length} routing map${maps.length === 1 ? "" : "s"} · ${kind === "osm-source" ? "independent builds from one OSM revision" : "shared compiled graph"}. Cells and overlaps are checked as routes load.${partialProfiles.length ? ` ${partialProfiles.join(", ")} is unavailable in some maps; routes may need more coverage.` : ""}`;
+  return {
+    compatible,
+    kind: kind as "osm-source" | "shared-graph",
+    identity,
+    profiles,
+    partialProfiles,
+    message,
+  };
+}
 /** RCL3: independently compiled extracts of one OSM authority revision and contract.
  * RCL2: immutable excerpts of one compiled graph. Overlap is checked before
  * choosing an owner; display priority never decides routing ownership. */
@@ -39,22 +71,15 @@ export class RoutingComposition implements RoutingCellProvider {
   constructor(readonly sources: { id: string; reader: AtlasReader }[]) {
     if (!sources.length)
       throw new Error("Select at least one map with transport data.");
-    this.compatibility = sources.every(
-      (s) => s.reader.index.manifest.transport?.federation,
-    )
-      ? "osm-source"
-      : "shared-graph";
+    const compatibility = routingCompatibility(
+      sources.map((s) => s.reader.index.manifest),
+    );
+    if (!compatibility.compatible) throw new Error(compatibility.message);
+    this.compatibility = compatibility.kind;
     this.sourceSnapshots = [
       ...new Set(sources.map((s) => s.reader.index.manifest.snapshot)),
     ].sort();
-    const identities = sources.map((s) =>
-      graphIdentity(s.reader.index.manifest),
-    );
-    if (!identities[0] || identities.some((id) => id !== identities[0]))
-      throw new Error(
-        "Routing sources are not compatible: use independent RCL3 extracts of the same OSM source revision and routing contract, or legacy excerpts from one shared compiled graph.",
-      );
-    this.snapshot = identities[0];
+    this.snapshot = compatibility.identity!;
   }
   prefix(mode: TransportMode) {
     validateTransport(mode);

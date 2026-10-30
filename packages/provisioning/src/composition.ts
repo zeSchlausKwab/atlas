@@ -123,7 +123,7 @@ export async function packComposition(
       tileLayers: [],
       capabilities: ["map-composition"],
       limitations: [
-        "Contains independent Atlas members. Tools use member capabilities; graph composition still requires a shared graph identity. Custom families retain their original scope and dependencies.",
+        "Contains independent Atlas members. Tools use member capabilities; routing requires a compatible OSM source revision and contract, or a shared legacy graph. Custom families retain their original scope and dependencies.",
       ],
     };
     const size = await writer.finish(

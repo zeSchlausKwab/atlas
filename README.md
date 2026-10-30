@@ -442,3 +442,8 @@ relationships; `workspace_prepare` can query the `objects` family. New files
 contain these indexes in the same `.atlas`. Existing archives remain readable
 and must be upgraded to recover formerly omitted data. See
 [the source contract, measurements and test prompts](docs/ANALYSIS-SOURCE.md).
+
+Independent routing federation rehearsal: `bun run verify:routing-federation`, then
+`bun scripts/verify-routing-federation-real.ts` for the local Liechtenstein fixture.
+The latter uses two independent Nostr publishers and Hashtree delivery; no public
+relay is contacted. See [the routing federation contract](docs/ROUTING-FEDERATION.md).

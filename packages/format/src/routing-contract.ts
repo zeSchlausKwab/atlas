@@ -1,3 +1,8 @@
+import {
+  TRANSPORT_MODES,
+  type TransportMode,
+  type TransportMetadata,
+} from "./index";
 /** Independent OSM extracts share source authority, never package/build ordinals.
  * This first contract deliberately requires one exact upstream PBF revision.
  * A source date, file name, or matching OSM node ID is not a revision proof.
@@ -70,4 +75,47 @@ export function sameRoutingFederation(
     federationIdentity(a) === federationIdentity(b) &&
     a.completeBounds.every((v, i) => v === b.completeBounds[i])
   );
+}
+
+/** Validate discovery claims with the same rules as an opened archive. */
+export function validateTransportMetadata(
+  transport: TransportMetadata | undefined,
+  capabilities: string[],
+) {
+  if (transport) {
+    if (transport.federation) validateRoutingFederation(transport.federation);
+    if (
+      transport.version !== 1 ||
+      (transport.graphSnapshot !== undefined &&
+        !/^[a-f0-9]{64}$/.test(transport.graphSnapshot)) ||
+      !transport.profiles ||
+      Object.keys(transport.profiles).length === 0 ||
+      Object.keys(transport.profiles).some(
+        (k) => !TRANSPORT_MODES.includes(k as TransportMode),
+      )
+    )
+      throw new Error("Invalid transport metadata");
+    for (const mode of TRANSPORT_MODES) {
+      const p = transport.profiles[mode];
+      if (!p) continue;
+      if (
+        p.prefix !== `routing/${mode}/cells` ||
+        p.zoom !== 14 ||
+        !["rcl2", "rcl3"].includes(p.codec) ||
+        !!transport.federation !== (p.codec === "rcl3") ||
+        ![
+          p.count,
+          p.nodes,
+          p.segments,
+          p.turns,
+          p.skippedWays,
+          p.unsupportedRestrictions,
+          p.excludedRestrictionWays,
+        ].every((n) => Number.isSafeInteger(n) && n >= 0)
+      )
+        throw new Error("Invalid transport profile");
+    }
+  }
+  if (capabilities.includes("transport-routing") !== !!transport)
+    throw new Error("Transport capability mismatch");
 }

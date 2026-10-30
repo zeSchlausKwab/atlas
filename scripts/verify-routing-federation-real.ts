@@ -1,13 +1,15 @@
-/** Real-data rehearsal: three independent PBF compilations; two HTTP providers.
+import {
+  publishedHost,
+  discoverPublishedHost,
+} from "../tests/helpers/published-host";
+import { HashtreeSource } from "../packages/hashtree/src/source";
+import { verifyPublishedMap } from "../packages/hashtree/src/published-map";
+/** Real-data rehearsal: three independent PBF compilations; two independent Nostr/Hashtree publishers.
  * Run after verify:routing-federation; requires the local Liechtenstein PBF.
  * All scratch files and servers are removed, including after a failed assertion. */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import {
-  AtlasReader,
-  FileSource,
-  HttpSource,
-} from "../packages/format/src/reader";
+import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { encodePackage, type InputBlock } from "../packages/format/src/writer";
 import { TRANSPORT_MODES, type Manifest } from "../packages/format/src/index";
 import { routingAuthority } from "../packages/cli/src/routing-authority";
@@ -20,7 +22,7 @@ const input = process.argv[2] ?? "data/liechtenstein.osm.pbf";
 const authority = await fileHash(input);
 const work = await mkdtemp("/tmp/atlas-osm-federation-");
 const readers: AtlasReader[] = [],
-  servers: ReturnType<typeof Bun.serve>[] = [],
+  servers: Awaited<ReturnType<typeof publishedHost>>[] = [],
   routers: PagedRouter[] = [];
 async function build(name: string, bounds: [number, number, number, number]) {
   const pbf = `${work}/${name}.osm.pbf`;
@@ -88,31 +90,18 @@ async function build(name: string, bounds: [number, number, number, number]) {
   return bytes;
 }
 async function serve(bytes: Uint8Array) {
-  let requests = 0;
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      const m = /^bytes=(\d+)-(\d+)$/.exec(request.headers.get("range") ?? "");
-      if (!m) return new Response(null, { status: 416 });
-      const start = +m[1]!,
-        end = +m[2]!;
-      requests++;
-      return new Response(bytes.slice(start, end + 1), {
-        status: 206,
-        headers: {
-          etag: '"immutable-fixture"',
-          "content-range": `bytes ${start}-${end}/${bytes.length}`,
-        },
-      });
-    },
-  });
-  servers.push(server);
+  const id = servers.length;
+  const path = `${work}/host-${id}.atlas`;
+  await Bun.write(path, bytes);
+  const host = await publishedHost(path, `${work}/host-${id}-discovery`);
+  servers.push(host);
+  const offer = await discoverPublishedHost(host);
   const reader = await new AtlasReader(
-    new HttpSource(`http://127.0.0.1:${server.port}/map.atlas`),
+    new HashtreeSource(offer.url, offer.hashtree!, offer.api),
   ).open();
+  verifyPublishedMap(offer, reader);
   readers.push(reader);
-  return { id: `host-${server.port}`, reader, requests: () => requests };
+  return { id: host.pubkey, reader, requests: () => host.stats().blobRequests };
 }
 try {
   initSync({
@@ -161,7 +150,7 @@ try {
   assert.equal(new Set([...pair.served.values()].map((v) => v.source)).size, 2);
   const reads = south.requests() + north.requests();
   for (const r of [south.reader, north.reader]) r.offline = true;
-  for (const s of servers) s.stop(true);
+  for (const s of servers) await s.close();
   assert.equal(
     (
       await a.route(
@@ -179,7 +168,9 @@ try {
       passed: true,
       sourceRevision: authority,
       providers: 2,
-      httpRequests: reads,
+      hashtreeRequests: reads,
+      publishers: servers.map((h) => h.pubkey),
+      rawRangeRequests: servers.reduce((n, h) => n + h.stats().rawRequests, 0),
       cells: pair.served.size,
       offlineReplay: true,
     }),
@@ -187,6 +178,6 @@ try {
 } finally {
   for (const r of routers) r.destroy();
   for (const r of readers) r.dispose();
-  for (const s of servers) s.stop(true);
+  for (const s of servers) await s.close();
   await rm(work, { recursive: true, force: true });
 }

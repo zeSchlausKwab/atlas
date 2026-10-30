@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "targetTotalBytes": 200000000000,
-  "note": "Measured-size target, not a predicted size or a minimum. Adjust the large map's eastern edge after measuring; never pad output files. All three maps contain their own selected data.",
+  "note": "Measured-size target, not a predicted size or a minimum. Adjust the large map's eastern edge after measuring; never pad output files. All three maps contain their own selected data. Every map is compiled independently from the same retained planet SHA-256; no map depends on another map finishing.",
   "source": "verified cached planet",
   "required": [
     "objects",
@@ -20,19 +20,18 @@
     },
     {
       "key": "rhine-alps",
-      "name": "Rhine–Alps · shared-snapshot demo",
-      "parent": "western",
+      "name": "Rhine–Alps · independent OSM demo",
       "bounds": [1.5, 44, 11, 54],
       "targetBytes": 30000000000,
       "maxBytes": 60000000000
     },
     {
       "key": "alps-danube",
-      "name": "Alps–Danube · shared-snapshot demo",
-      "parent": "western",
+      "name": "Alps–Danube · independent OSM demo",
       "bounds": [9, 44, 20, 51],
       "targetBytes": 30000000000,
       "maxBytes": 60000000000
     }
-  ]
+  ],
+  "buildMode": "independent-osm"
 }

@@ -1,22 +1,18 @@
 #!/usr/bin/env bun
-/** Run on the host (or from an authorized admin client). Defaults to a reviewable dry run. */
+/** Three independent preparations from one pinned OSM authority. Dry run by default. */
 import { dirname } from "node:path";
 import { mkdir, rename } from "node:fs/promises";
-import { MAP_LAYERS, TRANSPORT_MODES } from "../packages/format/src/index";
-import { FEATURE_KINDS } from "../packages/features/src/index";
-import recipe from "../recipes/europe-three-map-demo.json";
+import { createHash } from "node:crypto";
+import { europeDemoPlan } from "./europe-demo-plan";
 const args = process.argv.slice(2),
   queue = args.includes("--queue");
 const option = (name: string, fallback: string) =>
   args.find((a) => a.startsWith(name + "="))?.slice(name.length + 1) ??
   fallback;
 const base = new URL(option("--server", "http://127.0.0.1:3100"));
-const receiptPath = option("--receipt", "data/europe-three-map-receipt.json");
+const receiptPath = option("--receipt", "data/europe-independent-receipt.json");
 const east = Number(option("--east", "27"));
-if (!Number.isFinite(east) || east < 20 || east > 35)
-  throw new Error(
-    "Eastern edge must be 20–35°E and include the two child regions",
-  );
+const only = option("--only", "western,rhine-alps,alps-danube").split(",");
 const request = async (path: string, body?: unknown) => {
   const response = await fetch(new URL(path, base), {
     method: body ? "POST" : "GET",
@@ -26,77 +22,68 @@ const request = async (path: string, body?: unknown) => {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(JSON.stringify(data));
+  if (!response.ok) throw Error(JSON.stringify(data));
   return data;
 };
-const config = await request("/admin/preparations");
-const source = config.cachedSources.find((s: any) => s.kind === "planet");
-if (!source) throw new Error("Register a verified cached planet first");
-if (!config.oceanSource)
-  throw new Error(
-    "Configure the verified assembled ocean source and GDAL first",
-  );
+const config = await request("/admin/preparations"),
+  plan = europeDemoPlan(config, east);
+if (!only.length || only.some((k) => !plan.maps.some((m) => m.key === k)))
+  throw Error("Invalid --only map keys");
+const identity = createHash("sha256")
+  .update(JSON.stringify({ server: base.origin, plan }))
+  .digest("hex");
 const receipt: {
   version: number;
-  source: string;
-  easternEdge: number;
+  identity: string;
+  createdAt: string;
   jobs: Record<string, string>;
 } = (await Bun.file(receiptPath).exists())
   ? await Bun.file(receiptPath).json()
-  : { version: 1, source: source.id, easternEdge: east, jobs: {} };
-if (receipt.source !== source.id || receipt.easternEdge !== east)
-  throw new Error(
-    "Receipt belongs to another source or area; choose a new receipt path",
+  : { version: 2, identity, createdAt: new Date().toISOString(), jobs: {} };
+if (receipt.version !== 2 || receipt.identity !== identity)
+  throw Error(
+    "Receipt belongs to a different source, area, server or legacy parent-map recipe. Use a new receipt path.",
   );
 const save = async () => {
   await mkdir(dirname(receiptPath), { recursive: true });
   await Bun.write(receiptPath + ".tmp", JSON.stringify(receipt, null, 2));
   await rename(receiptPath + ".tmp", receiptPath);
 };
-for (const map of recipe.maps) {
+if (queue) await save();
+for (const map of plan.maps.filter((m) => only.includes(m.key))) {
+  if (!queue) {
+    console.log(JSON.stringify(map, null, 2));
+    continue;
+  }
+  const current = await request("/admin/preparations");
+  if (
+    !current.cachedSources.some(
+      (s: any) => s.id === plan.source && s.sha256 === plan.sourceRevision,
+    )
+  )
+    throw Error("Pinned planet source changed while queuing");
+  const jobs = current.jobs;
   if (receipt.jobs[map.key]) {
+    if (!jobs.some((j: any) => j.id === receipt.jobs[map.key]))
+      throw Error(
+        "Saved build disappeared; inspect the receipt before queuing again",
+      );
     console.log(`${map.key}: already submitted (${receipt.jobs[map.key]})`);
     continue;
   }
-  const [w, s, e, n] = map.key === "western" ? [-15, 34, east, 65] : map.bounds;
-  const parentId = map.parent ? receipt.jobs[map.parent] : undefined;
-  const selection = {
-    name: map.name,
-    snapshot: map.parent
-      ? `pending:${parentId ?? map.parent}`
-      : config.globalSource.snapshot,
-    polygon: [
-      [w, s],
-      [e, s],
-      [e, n],
-      [w, n],
-    ],
-    minZoom: 0,
-    maxZoom: 16,
-    layers: [...MAP_LAYERS],
-    profiles: [...TRANSPORT_MODES],
-    featureKinds: [...FEATURE_KINDS],
-    placeNames: true,
-    streetNames: true,
-    pois: true,
-    search: true,
-    reverse: true,
-    peaks: true,
-    paddingCells: 2,
-    maxBytes: map.maxBytes,
-    ...(map.parent
-      ? { sourceAtlasId: parentId ?? map.parent }
-      : {
-          cachedSourceId: source.id,
-          ocean: { sha256: config.oceanSource.sha256 },
-        }),
-  };
-  if (!queue) {
-    console.log(JSON.stringify({ ...map, selection }, null, 2));
-    continue;
-  }
-  if (map.parent && !parentId) throw new Error("Parent was not queued");
-  const job = await request("/admin/preparations", selection);
+  // Recover an accepted POST if the caller stopped before saving its returned id.
+  const matches = jobs.filter(
+    (j: any) =>
+      j.createdAt >= receipt.createdAt &&
+      !["cancelled", "deleting"].includes(j.state) &&
+      Object.entries(map.selection).every(
+        ([k, v]) => JSON.stringify(j.selection[k]) === JSON.stringify(v),
+      ),
+  );
+  if (matches.length > 1)
+    throw Error("Ambiguous preparation; inspect host jobs before retrying");
+  const job =
+    matches[0] ?? (await request("/admin/preparations", map.selection));
   receipt.jobs[map.key] = job.id;
   await save();
   console.log(
@@ -110,6 +97,6 @@ for (const map of recipe.maps) {
 }
 console.log(
   queue
-    ? `Queue receipt saved to ${receiptPath}. Inspect /host for progress; only one compiler runs at a time.`
-    : "Dry run only. Add --queue to submit the three persistent builds.",
+    ? `Queue receipt saved to ${receiptPath}. Each job reads the retained planet independently; the host schedules one compiler at a time.`
+    : "Dry run only. Add --queue to submit. --only=rhine-alps,alps-danube queues just the two smaller maps.",
 );
