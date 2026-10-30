@@ -224,6 +224,23 @@
                   >
                 </div>
                 <p id="composition-routing" role="status" class="quiet"></p>
+                <details class="composition-rule">
+                  <summary>Capability coverage</summary>
+                  <label
+                    >Capability<select id="composition-family"></select
+                  ></label>
+                  <button id="composition-check-coverage">
+                    Check current view
+                  </button>
+                  <p
+                    id="composition-coverage-report"
+                    role="status"
+                    class="quiet"
+                  >
+                    Inspect the selected maps at this view’s zoom. This checks
+                    archive scope, not route connectivity.
+                  </p>
+                </details>
                 <div id="composition-sources"></div>
                 <form id="composition-nostr-form" class="composition-rule">
                   <label for="composition-relay">Discover through Nostr</label>

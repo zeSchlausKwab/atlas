@@ -1,3 +1,7 @@
+import {
+  coverageFamilies,
+  planCoverage,
+} from "../../../packages/coverage/src/index";
 import { verifyPublishedMap } from "../../../packages/hashtree/src/published-map";
 import { routingCompatibility } from "../../../packages/routing/src/composition";
 import { openMembers } from "../../../packages/format/src/composition";
@@ -162,8 +166,57 @@ export async function createComposer(
     };
   }
   const focused = () => active().find((s) => s.id === focusId)?.reader;
+  el("check-coverage").onclick = () => {
+    try {
+      const [w, s, e, n] = map.viewBounds();
+      const report = planCoverage(
+        {
+          polygon: [
+            [w, s],
+            [e, s],
+            [e, n],
+            [w, n],
+          ],
+          family: el<HTMLSelectElement>("family").value,
+          zoom: Math.floor(map.zoom),
+          reference: focusId,
+        },
+        active().map((s) => ({
+          id: s.id,
+          manifest: s.manifest,
+          location: "remote" as const,
+          verified: true,
+          bytes: s.reader.index.header.fileLength,
+        })),
+      );
+      el("coverage-report").textContent =
+        Object.entries(report.totals)
+          .filter(([, area]) => area > 0)
+          .map(
+            ([state, area]) =>
+              `${state}: ${((area / report.areaM2) * 100).toFixed(1)}%`,
+          )
+          .join(" · ") +
+        ". Verified archive scope only; empty routing cells and conflicts require directory checks in the host console.";
+    } catch (error) {
+      el("coverage-report").textContent = String(error);
+    }
+  };
   function refreshScope() {
     const sources = active();
+    const family = el<HTMLSelectElement>("family"),
+      previous = family.value;
+    family.replaceChildren(
+      ...[
+        ...new Set(
+          sources.flatMap((s) => coverageFamilies(s.manifest).map((f) => f.id)),
+        ),
+      ].map((id) => new Option(id, id)),
+    );
+    if ([...family.options].some((o) => o.value === previous))
+      family.value = previous;
+    el("coverage-report").textContent =
+      "Check current view to inspect these selected sources. Archive scope does not prove route connectivity.";
     if (!sources.some((s) => s.id === focusId)) focusId = sources[0]?.id;
     const select = document.getElementById("tool-source") as HTMLSelectElement;
     select.replaceChildren(

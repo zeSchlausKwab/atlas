@@ -1,3 +1,4 @@
+import { Federation } from "./federation";
 import { ArchiveUploads } from "./archive-uploads";
 import { IMAGE_MAX_BYTES } from "../../packages/raster/src/image-plan";
 import { limitedBody } from "./request-body";
@@ -123,6 +124,32 @@ const discovery = await MapDiscovery.open(
   ],
 );
 
+const federation = await Federation.open(
+  resolve(dataDir, "federation"),
+  access,
+  () => [
+    {
+      id: "demo",
+      path: mapPath,
+      offer: {
+        id: "demo",
+        url: "/maps/demo.atlas",
+        api: "/api",
+        bytes: snapshot.size,
+        manifest: engine.reader.index.manifest,
+      },
+    },
+    ...preparations
+      .catalog()
+      .map((m) => ({
+        id: m.id,
+        path: preparations.path(m.id),
+        offer: m as MapOffer,
+      })),
+  ],
+  archiveUploads,
+);
+
 const releaseLibrary = preparations.beforeDelete;
 preparations.beforeDelete = async (id) => {
   await discovery.remove(id);
@@ -183,6 +210,8 @@ const server = Bun.serve<{
         );
       const discovered = await discovery.handle(request, remoteAddress);
       if (discovered) return discovered;
+      if (path.startsWith("/admin/federation"))
+        return federation.handle(request, remoteAddress);
       if (path.startsWith("/admin/imports"))
         return archiveUploads.handle(request, remoteAddress);
       if (path.startsWith("/admin/sources"))
@@ -279,6 +308,7 @@ console.log(
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, async () => {
+    await federation.close();
     await discovery.close();
     await sourceCache.close();
     await preparations.close();

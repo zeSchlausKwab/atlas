@@ -30,6 +30,7 @@
         <a href="#prepare">Prepare a map</a><a href="#builds">Builds</a
         ><a href="#imports">Import files</a><a href="#imagery">Place an image</a
         ><a href="#library">Map library</a><a href="#sources">Source files</a
+        ><a href="#federation">Coverage & peers</a
         ><a href="#operations">Operations</a>
       </nav>
       <p id="host-access" class="host-source-note" role="status">
@@ -556,6 +557,112 @@
           Each prepared file has its own snapshot, download URL and HTTP tools.
           The source package below continues to serve the main demo.
         </p>
+      </section>
+      <section id="federation" aria-labelledby="federation-title">
+        <div class="host-section-heading">
+          <h2 id="federation-title">Coverage & peers</h2>
+          <span class="eyebrow">THIS HOST IS ALSO A CONSUMER</span>
+        </div>
+        <p>
+          Choose what you want to serve. Compare the local library with signed
+          maps from other hosts, mirror a verified file, or prepare a missing
+          area.
+        </p>
+        <form id="federation-peer-form" class="host-inline">
+          <label
+            >Atlas host URL<input
+              id="federation-peer-url"
+              type="url"
+              placeholder="http://192.168.0.180:3100"
+              required /></label
+          ><button type="submit">Add trusted host</button
+          ><button type="button" id="federation-refresh">
+            Refresh coverage
+          </button>
+        </form>
+        <p class="quiet">
+          Adding a host pins its publisher key. The server verifies signed
+          announcements and reads their Hashtree archives; an announcement alone
+          is not verified coverage.
+        </p>
+        <div id="federation-peers"></div>
+        <p id="federation-status" role="status" aria-live="polite"></p>
+        <div class="federation-layout">
+          <div>
+            <label
+              >Preview<select
+                id="federation-preview-provider"
+                aria-label="Preview"
+              >
+                <option value="openfree">OpenFreeMap · world</option>
+                <option value="blank">Blank · no external basemap</option>
+              </select></label
+            >
+            <div id="federation-map" class="federation-map"></div>
+            <div class="host-inline">
+              <button id="federation-rect">Rectangle</button
+              ><button id="federation-polygon">Polygon</button
+              ><button id="federation-finish" disabled>Finish polygon</button
+              ><button id="federation-view">Use visible area</button
+              ><button id="federation-clear">Clear</button>
+            </div>
+            <p id="federation-area" class="quiet">
+              Draw an area, or use the visible area.
+            </p>
+          </div>
+          <div>
+            <label
+              >Capability<select
+                id="federation-family"
+                aria-label="Capability"
+              ></select></label
+            ><label
+              >Display zoom<input
+                id="federation-zoom"
+                type="number"
+                min="0"
+                max="24"
+                value="14" /></label
+            ><label
+              >Routing reference<select
+                id="federation-reference"
+                aria-label="Routing reference"
+              >
+                <option value="">Automatic · prefer a local map</option>
+              </select></label
+            >
+            <p class="quiet">
+              Zoom applies to display geometry and imagery. Routing, search and
+              extraction have their own indexes.
+            </p>
+            <button id="federation-plan">Check selected coverage</button
+            ><button id="federation-inspect">Inspect routing cells</button>
+            <div id="federation-summary" aria-live="polite"></div>
+            <p id="federation-detail" role="status"></p>
+            <div class="host-inline">
+              <button id="federation-export" disabled>Export report JSON</button
+              ><button id="federation-prepare" disabled>
+                Prepare this area…</button
+              ><a href="#library">Assemble local maps ↓</a>
+            </div>
+          </div>
+        </div>
+        <h3>Sources to compare</h3>
+        <div id="federation-sources" class="host-library"></div>
+        <p class="quiet">
+          Colors describe archive scope: green local, blue remote and verified,
+          amber unknown, purple incompatible, red missing among checked sources.
+          This is not a claim of real-world completeness or a guarantee that
+          every payload is reachable. Empty routing cells are valid coverage.
+        </p>
+        <h3>Mirror downloads</h3>
+        <p class="quiet">
+          Full files are downloaded by the server through Hashtree. Transfers
+          can be paused and resumed, then enter the existing import queue.
+          Imported maps can be composed or assembled into one self-contained
+          Atlas file.
+        </p>
+        <div id="federation-mirrors" class="host-library"></div>
       </section>
       <section id="discovery">
         <h2>Discovery &amp; delivery</h2>

@@ -11,6 +11,7 @@ import type { Bounds } from "../../../packages/features/src/index";
 import type { Position } from "../../../packages/geocoding/src/model";
 import type { FeatureCollection } from "geojson";
 export interface HostPreview {
+  coverage?(data: FeatureCollection): void;
   image?(url: string, bounds: Bounds): void;
   selection(points: Position[], closed: boolean): void;
   picking(enabled: boolean): void;
@@ -131,6 +132,18 @@ export async function createPreview(
       );
     }
   };
+  let coverage: FeatureCollection = { type: "FeatureCollection", features: [] };
+  const paintCoverage = () => {
+    (
+      map.getSource("capability-coverage") as GeoJSONSource | undefined
+    )?.setData(coverage);
+    if (map.getLayer("selection-fill"))
+      map.setPaintProperty(
+        "selection-fill",
+        "fill-opacity",
+        coverage.features.length ? 0 : 0.18,
+      );
+  };
   let picking = false,
     points: Position[] = [],
     closed = false;
@@ -198,6 +211,19 @@ export async function createPreview(
         },
       });
     }
+    map.addSource("capability-coverage", { type: "geojson", data: coverage });
+    map.addLayer({
+      id: "capability-coverage-fill",
+      type: "fill",
+      source: "capability-coverage",
+      paint: { "fill-color": ["get", "color"], "fill-opacity": 0.45 },
+    });
+    map.addLayer({
+      id: "capability-coverage-line",
+      type: "line",
+      source: "capability-coverage",
+      paint: { "line-color": ["get", "color"], "line-width": 2 },
+    });
     map.addSource("selection", { type: "geojson", data: collection() });
     map.addLayer({
       id: "selection-fill",
@@ -225,6 +251,7 @@ export async function createPreview(
         "circle-stroke-width": 2,
       },
     });
+    paintCoverage();
     paintImage();
     status(
       world
@@ -259,6 +286,10 @@ export async function createPreview(
   container.addEventListener("keydown", key);
   fit();
   return {
+    coverage: (data) => {
+      coverage = data;
+      paintCoverage();
+    },
     image: (url, bounds) => {
       overlay = { url, bounds };
       paintImage();

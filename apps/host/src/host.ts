@@ -1,3 +1,4 @@
+import { startFederation } from "./host-federation";
 import { startImports } from "./host-imports";
 import { startImagery } from "./host-imagery";
 import { startDiscovery } from "./host-discovery";
@@ -102,6 +103,7 @@ async function start() {
       startImports(),
       startSources(),
       startDiscovery(),
+      startFederation(),
     ]);
   } catch (error) {
     el("access").textContent = String(error);

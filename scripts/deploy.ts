@@ -70,6 +70,7 @@ Usage: bun run deploy [deploy|status|logs|tunnel|rollback] [options]
   --resume RELEASE_ID   Resume an interrupted, never-activated release
   --upload-mib N        Optional transfer limit in MiB/s
   --dry-run             Print the plan; no builds, network or changes
+  --stage-only          Upload source/WASM only; do not build or restart the live server
   --skip-checks         Skip local tests/typecheck; WASM is still rebuilt
   --format md|json      Result format (progress goes to stderr)
 
@@ -117,6 +118,7 @@ Uses a user service. No sudo, firewall changes or public announcements.
     resume: o.resume,
     uploadMiB: o.uploadMiB,
     checks: !o.skipChecks,
+    stageOnly: o.stageOnly,
     dryRun: o.dryRun,
     steps:
       o.command === "deploy"
@@ -126,7 +128,7 @@ Uses a user service. No sudo, firewall changes or public announcements.
             "Resolve a Nix runtime, install locked dependencies, build Linux importers",
             "Smoke-test the candidate on a temporary loopback port",
             "Refuse active preparations, switch release, restart and verify; restore on failure",
-          ]
+          ].slice(0, o.stageOnly ? 2 : undefined)
         : [o.command],
   };
   if (o.dryRun) {
@@ -299,6 +301,16 @@ Uses a user service. No sudo, firewall changes or public announcements.
         );
         await Bun.sleep(2000);
       }
+    }
+    if (o.stageOnly) {
+      report({
+        staged: id,
+        revision,
+        activated: false,
+        remoteBuildPending: true,
+        resume: `bun run deploy --resume ${id} --host ${o.host} --root ${o.root} --port ${o.port}`,
+      });
+      return;
     }
     const command =
       `set -eu; cd ${q(release)}; nix-build deploy/runtime.nix --out-link .runtime >&2; ` +

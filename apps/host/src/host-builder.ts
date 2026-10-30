@@ -1,3 +1,4 @@
+import type { CoverageRequest } from "../../../packages/coverage/src/index";
 import { openRasterAmendment } from "./host-raster-amend";
 import { capabilityPanel } from "./host-capabilities";
 import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
@@ -1191,6 +1192,64 @@ export async function startBuilder() {
     (event) =>
       void chooseSource("cached", `cached:${(event as CustomEvent).detail.id}`),
   );
+  document.addEventListener("atlas-coverage-prepare", (event) => {
+    void (async () => {
+      const request = (event as CustomEvent<CoverageRequest>).detail;
+      await refresh();
+      const planet = cachedSources.find((s) => s.kind === "planet");
+      await chooseSource(
+        planet ? "cached" : "geofabrik",
+        planet ? `cached:${planet.id}` : "global",
+      );
+      for (const field of fields.values()) field.checked = false;
+      const family = request.family;
+      const keys = family.startsWith("tile:")
+        ? [`layer-${family.slice(5)}`]
+        : family.startsWith("routing:")
+          ? [`profile-${family.slice(8)}`]
+          : family === "labels"
+            ? ["places", "streets", "pois"]
+            : family === "search" || family === "addresses"
+              ? ["search", "reverse"]
+              : family === "query"
+                ? ["query-peaks"]
+                : family.startsWith("features:")
+                  ? [`feature-${family.slice(9)}`]
+                  : family === "features"
+                    ? [
+                        "feature-water",
+                        "feature-buildings",
+                        "feature-roads",
+                        "feature-railways",
+                        "feature-land",
+                      ]
+                    : [`feature-${family}`];
+      for (const key of keys) {
+        const field = fields.get(key);
+        if (field && !field.disabled) field.checked = true;
+      }
+      points = structuredClone(request.polygon);
+      closed = true;
+      mode = null;
+      el<HTMLInputElement>("name").value = `Coverage · ${family}`;
+      el<HTMLSelectElement>("preset").value = "custom";
+      el<HTMLInputElement>("min").value = "0";
+      el<HTMLInputElement>("max").value = String(
+        family.startsWith("tile:") ? Math.min(16, request.zoom) : 16,
+      );
+      preview?.fitArea([
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1])),
+      ]);
+      update();
+      el("message").textContent =
+        "Area and capability copied from coverage planning. Review the source and options before starting. A different source snapshot may not stitch with existing routing.";
+    })().catch((e) => {
+      el("message").textContent = String(e);
+    });
+  });
   el("form").addEventListener("input", update);
   el("form").addEventListener("change", update);
   el("jump").onclick = () => {

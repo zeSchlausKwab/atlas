@@ -447,3 +447,17 @@ Independent routing federation rehearsal: `bun run verify:routing-federation`, t
 `bun scripts/verify-routing-federation-real.ts` for the local Liechtenstein fixture.
 The latter uses two independent Nostr publishers and Hashtree delivery; no public
 relay is contacted. See [the routing federation contract](docs/ROUTING-FEDERATION.md).
+
+## Coverage and consuming other hosts
+
+The host console's **Coverage & peers** section compares local archives with
+verified signed offers from other Atlas hosts. Draw an area, choose a capability,
+and inspect local, remote, unknown, incompatible and missing coverage. Routing
+inspection also identifies empty and conflicting cells. Hosts can mirror a pinned
+Hashtree archive with resumable transfers, prepare the selected area, or assemble
+local archives into one self-contained file. The browser Composer uses the same
+coverage planner. See [coverage evidence, mirroring and the API](docs/COVERAGE-AND-MIRRORING.md).
+
+To upload an update while preparations are running, use
+`bun run deploy --stage-only`. This stages code without remote compilation or a
+service restart; activate it later with the printed `--resume` command.
