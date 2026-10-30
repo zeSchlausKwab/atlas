@@ -277,7 +277,8 @@ export class Preparations {
       job.recovery.retries = 0;
       delete job.recovery.nextAttemptAt;
     }
-    return this.create({ ...job.selection, allowStorageRisk }, job);
+    // Storage consent is execution policy, not part of the checkpoint recipe.
+    return this.create(job.selection, { ...job, allowStorageRisk });
   }
   private sourcePlanForMap(id: string): PbfPlan | undefined {
     const seen = new Set<string>();
@@ -809,7 +810,7 @@ export class Preparations {
     )
       throw new Error("Invalid storage override");
     const allowStorageRisk =
-      extra?.allowStorageRisk ?? previous?.allowStorageRisk ?? false;
+      previous?.allowStorageRisk ?? extra?.allowStorageRisk ?? false;
     const imageImport = previous?.imageImport;
     const archiveImport = previous?.archiveImport;
     const compositionExport =

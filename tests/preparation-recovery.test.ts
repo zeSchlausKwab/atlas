@@ -205,3 +205,64 @@ test("a persisted retry wakes the queue and completes without a browser or manua
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("manual resume keeps checkpoint recipes byte-identical when storage consent changes", async () => {
+  const f = await pluginFixture(),
+    dir = await mkdtemp("/tmp/atlas-manual-resume-");
+  const manager = await Preparations.open(
+    dir + "/hosted",
+    dir + "/source.atlas",
+    f.reader.index.manifest,
+  );
+  manager.startQueue = async () => {};
+  try {
+    const selection: PreparationJob["selection"] = {
+      name: "Resume recipe",
+      snapshot: f.reader.index.manifest.snapshot,
+      polygon: [
+        [9, 47],
+        [9.2, 47],
+        [9.2, 47.2],
+        [9, 47.2],
+      ],
+      minZoom: 0,
+      maxZoom: 0,
+      layers: [],
+      profiles: [],
+      featureKinds: ["water"],
+      placeNames: false,
+      streetNames: false,
+      pois: false,
+      search: false,
+      reverse: false,
+      peaks: false,
+      paddingCells: 0,
+      maxBytes: 1048576,
+    };
+    for (const legacyFlag of [undefined, true, false]) {
+      const original =
+        legacyFlag === undefined
+          ? selection
+          : { ...selection, allowStorageRisk: legacyFlag };
+      const recipe = JSON.stringify(original);
+      const created = await manager.create(original);
+      for (const consent of [true, false]) {
+        created.state = "cancelled";
+        manager.jobs.set(created.id, created);
+        const resumed = await manager.resume(created.id, consent);
+        expect(JSON.stringify(resumed.selection)).toBe(recipe);
+        expect(resumed.allowStorageRisk).toBe(consent);
+        const saved = await Bun.file(
+          dir + "/hosted/" + created.id + ".json",
+        ).json();
+        expect(JSON.stringify(saved.selection)).toBe(recipe);
+        expect(saved.allowStorageRisk).toBe(consent);
+      }
+    }
+  } finally {
+    await manager.close();
+    f.engine.destroy();
+    f.reader.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
