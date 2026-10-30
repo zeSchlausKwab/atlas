@@ -1,3 +1,4 @@
+import type { BrowserAcquisition } from "./acquisition-client";
 import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import type {
   AtlasReader,
@@ -14,6 +15,7 @@ export class ChatLauncher {
     readonly enabled: () => Set<string>,
     readonly offline: () => boolean,
     readonly onTransfer?: (event: ReadEvent) => void,
+    readonly acquisition?: BrowserAcquisition,
   ) {
     document.addEventListener("atlas-tab", () => void this.open(), {
       signal: this.abort.signal,
@@ -49,6 +51,7 @@ export class ChatLauncher {
           this.enabled,
           this.offline,
           this.onTransfer,
+          this.acquisition,
         );
     } catch (e) {
       if (this.alive) element.textContent = "Could not open chat: " + String(e);

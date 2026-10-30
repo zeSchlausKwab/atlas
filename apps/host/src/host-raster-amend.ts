@@ -1,3 +1,4 @@
+import { showHostSection } from "./host-workbench";
 import type { Manifest } from "../../../packages/format/src/index";
 import type {
   RasterAmendment,
@@ -217,9 +218,7 @@ export function openRasterAmendment(
         "Queued. This revision stays served until its replacement succeeds.";
       await refresh();
       dialog.close();
-      document
-        .getElementById("prepare-jobs")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      showHostSection("builds");
     } catch (e) {
       status.textContent = String(e);
     } finally {

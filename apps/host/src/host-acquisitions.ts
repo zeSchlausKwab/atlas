@@ -1,3 +1,4 @@
+import { hostActivity } from "./host-workbench";
 import { storageRequest } from "./host-storage";
 import type { CoverageRequest } from "../../../packages/coverage/src/index";
 import type { Federation } from "../../server/federation";
@@ -78,6 +79,16 @@ export function createAreaAcquisitions(
     });
   return {
     render(state: State) {
+      hostActivity(
+        "Area acquisition",
+        "acquisition",
+        state.acquisitions.map((j) => ({
+          id: j.id,
+          name: j.request.name,
+          state: j.state,
+          message: j.error ?? j.message,
+        })),
+      );
       const families = state.families.filter(
         (f) =>
           /^(tile:(land|water|buildings|roads|railways|peaks)|routing:(walking|cycling|driving)|raster:|features:)/.test(

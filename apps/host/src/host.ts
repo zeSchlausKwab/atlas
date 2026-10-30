@@ -1,3 +1,4 @@
+import { startWorkbench } from "./host-workbench";
 import { startFederation } from "./host-federation";
 import { startImports } from "./host-imports";
 import { startImagery } from "./host-imagery";
@@ -125,4 +126,5 @@ async function start() {
       input.disabled = true;
   }
 }
+startWorkbench();
 void start();

@@ -450,7 +450,7 @@ relay is contacted. See [the routing federation contract](docs/ROUTING-FEDERATIO
 
 ## Coverage and consuming other hosts
 
-The host console's **Coverage & peers** section compares local archives with
+The host console's **Network → Coverage & peers** section compares local archives with
 verified signed offers from other Atlas hosts. Draw an area, choose a capability,
 and inspect local, remote, unknown, incompatible and missing coverage. Routing
 inspection also identifies empty and conflicting cells. Hosts can mirror a pinned
@@ -465,4 +465,7 @@ service restart; activate it later with the printed `--resume` command.
 
 ### Acquire an offline area from multiple publishers
 
-**Host console → Coverage & peers → Complete this area** uses your selected polygon and sources. Select multiple capabilities, review local/remote/missing coverage and block sizes, then acquire via Hashtree. Pause/resume keeps verified blocks; export one self-contained `.atlas` or add it to the local map library. Independently compiled, compatible OSM routing sources retain their native identities. [Workflow, API, verification and current limits](docs/AREA-ACQUISITION.md).
+**Host console → Network → Coverage & peers → Complete this area** uses your selected polygon and sources. Select multiple capabilities, review local/remote/missing coverage and block sizes, then acquire via Hashtree. Pause/resume keeps verified blocks; export one self-contained `.atlas` or add it to the local map library. Independently compiled, compatible OSM routing sources retain their native identities. [Workflow, API, verification and current limits](docs/AREA-ACQUISITION.md).
+
+
+The host workbench uses **Library / Prepare / Import / Network / Tools** tabs, with downloads and preparations in a persistent Activity rail (a bottom drawer on mobile). In the client, **Offline → Save an area here** reviews and pins selected capabilities in browser storage for later map and AI-tool reuse. It supports pause/resume and overlapping saved areas. The AI tools `acquisition_catalog`, `acquisition_plan`, `acquisition_save` and `acquisition_status` share that workflow. Browser saves are persistent caches; the host flow exports a portable `.atlas`. See [area acquisition](docs/AREA-ACQUISITION.md) for scope and offline limits.

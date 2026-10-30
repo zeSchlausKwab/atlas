@@ -1,3 +1,4 @@
+import { PinnedBlockStore } from "./pinned-store";
 import { isRoutingCell } from "./index";
 import type { Block } from "./index";
 export interface SavedIndex {
@@ -15,6 +16,7 @@ export interface BlockStore {
 const eligible = (key: string) =>
   key.startsWith("hashtree/") ||
   key.startsWith("tile/") ||
+  key.startsWith("raster/") ||
   key.startsWith("labels/") ||
   key.startsWith("search/") ||
   key.startsWith("features/") ||
@@ -39,6 +41,7 @@ const done = (tx: IDBTransaction) => {
 /** Compressed, hash-checked immutable blocks. 128 MiB LRU across all snapshots. */
 export class BrowserBlockStore implements BlockStore {
   available = true;
+  private pins = new PinnedBlockStore();
   private queue: Promise<unknown> = Promise.resolve();
   private db: Promise<IDBDatabase>;
   private listeners = new Set<() => void>();
@@ -67,6 +70,7 @@ export class BrowserBlockStore implements BlockStore {
     });
     this.queue = job.catch(() => {});
     await job;
+    await this.pins.clear();
   }
   constructor(readonly limit = 128 * 1024 * 1024) {
     this.db = new Promise((resolve, reject) => {
@@ -112,6 +116,8 @@ export class BrowserBlockStore implements BlockStore {
     return `${snapshot}:${b.key}:${b.hash}`;
   }
   async get(snapshot: string, b: Block) {
+    const pinned = await this.pins.get(snapshot, b).catch(() => undefined);
+    if (pinned) return pinned;
     if (!eligible(b.key)) return;
     return this.safe(async (db) => {
       const id = this.id(snapshot, b),
@@ -161,13 +167,14 @@ export class BrowserBlockStore implements BlockStore {
     await job;
   }
   async keys(snapshot: string) {
-    return (
+    const pinned = await this.pins.keys(snapshot).catch(() => []);
+    const cached =
       (await this.safe(async (db) => {
         const entries = await request<Array<{ snapshot: string; key: string }>>(
           db.transaction("meta").objectStore("meta").getAll(),
         );
         return entries.filter((e) => e.snapshot === snapshot).map((e) => e.key);
-      })) ?? []
-    );
+      })) ?? [];
+    return [...new Set([...pinned, ...cached])];
   }
 }

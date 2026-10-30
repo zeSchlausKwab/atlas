@@ -1,3 +1,7 @@
+import { BrowserAcquisition } from "./acquisition-client";
+import { AcquisitionControls } from "./acquisition-controls";
+let acquisition: BrowserAcquisition | undefined;
+let savedAreas: AcquisitionControls | undefined;
 import { TransferLedger } from "../../../packages/format/src/transfer-ledger";
 import { ChatLauncher } from "./chat-launcher";
 let chat: ChatLauncher | undefined;
@@ -292,6 +296,10 @@ function closeSession() {
   map = undefined;
 }
 function closeTools() {
+  savedAreas?.destroy();
+  savedAreas = undefined;
+  acquisition?.destroy();
+  acquisition = undefined;
   chat?.destroy();
   chat = undefined;
   tools?.destroy();
@@ -488,6 +496,12 @@ function bindTools() {
       pois: el<HTMLInputElement>("poi-labels").checked,
     }),
   );
+  acquisition = new BrowserAcquisition(
+    compositionSources?.map((s) => s.reader) ?? [reader],
+    () => el<HTMLInputElement>("offline").checked,
+    aiTransfer,
+  );
+  savedAreas = new AcquisitionControls(acquisition, map);
   configureOperations();
   chat = new ChatLauncher(
     map,
@@ -495,6 +509,7 @@ function bindTools() {
     () => new Set(operations?.enabled ?? []),
     () => el<HTMLInputElement>("offline").checked,
     aiTransfer,
+    acquisition,
   );
   if (m.selection && !compositionSources) map.setSelection(m.selection.polygon);
   if (!compositionSources && m.name === "Vienna Plus") {
@@ -780,6 +795,7 @@ function configureOperations() {
       () => new Set(operations?.enabled ?? []),
       () => el<HTMLInputElement>("offline").checked,
       aiTransfer,
+      acquisition,
     );
   }
   el("execution-hint").textContent =

@@ -1,3 +1,4 @@
+import { hostActivity } from "./host-workbench";
 import type { ArchiveUpload } from "../../server/archive-uploads";
 import { storageRequest } from "./host-storage";
 import { storageSize } from "./host-budget";
@@ -28,6 +29,24 @@ export async function startImports() {
     return el;
   };
   const render = () => {
+    hostActivity(
+      "Upload",
+      "imports",
+      rows.map((row, i) => ({
+        id: row.upload?.id ?? String(i),
+        name: row.file?.name ?? row.upload!.filename,
+        state: row.done
+          ? "ready"
+          : row.error
+            ? "failed"
+            : active === row
+              ? "uploading"
+              : "waiting",
+        message: row.message,
+        completed: row.progress ?? row.upload?.offset,
+        total: row.file?.size ?? row.upload?.size,
+      })),
+    );
     picker.disabled = batch || !!active;
     start.disabled = batch || !!active || !rows.some((r) => r.file && !r.done);
     list.replaceChildren();

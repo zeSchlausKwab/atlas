@@ -1,5 +1,5 @@
 // App shell only: map packages are explicitly saved and reopened by the user.
-const CACHE = "atlas-shell-v27";
+const CACHE = "atlas-shell-v28";
 let generation = 0;
 let paused = false;
 const writes = new Set();
@@ -56,6 +56,7 @@ const SHELL = [
   "/client-config.json",
   "/main.js",
   "/offline-worker.js",
+  "/acquisition-worker.js",
   "/routing-worker.js",
   "/plugin-worker.js",
   "/wasm/atlas_renderer_bg.wasm",

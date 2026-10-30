@@ -1,3 +1,4 @@
+import { hostActivity } from "./host-workbench";
 import { createAreaAcquisitions } from "./host-acquisitions";
 import { unproject } from "../../../packages/format/src/index";
 import type { inspectRouting } from "../../../packages/coverage/src/routing-inspection";
@@ -249,6 +250,18 @@ export async function startFederation() {
     invalidate();
   }
   function renderMirrors(s: State) {
+    hostActivity(
+      "Mirror",
+      "federation",
+      s.mirrors.map((m) => ({
+        id: m.id,
+        name: m.name,
+        state: m.state,
+        message: m.error,
+        completed: m.offset,
+        total: m.bytes,
+      })),
+    );
     el("mirrors").replaceChildren(
       ...s.mirrors.map((m) => {
         const card = text("article", "");

@@ -1,3 +1,4 @@
+import { showHostSection } from "./host-workbench";
 import { storageRequest } from "./host-storage";
 import { NO_SIZE_LIMIT } from "../../../packages/provisioning/src/capacity";
 import {
@@ -149,9 +150,7 @@ export function capabilityPanel(
           "Queued. Progress is in Builds & checkpoints. This revision stays served until the new file succeeds.";
         panels.delete(job.id);
         await refresh();
-        document
-          .getElementById("prepare-jobs")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        showHostSection("builds");
       }
     } catch (e) {
       status.textContent = String(e);

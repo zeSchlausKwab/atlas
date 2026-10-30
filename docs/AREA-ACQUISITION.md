@@ -4,7 +4,7 @@ A host can act as a consumer: acquire selected capabilities for a polygon from o
 
 ## Workflow
 
-In **Host console → Coverage & peers**:
+In **Host console → Network → Coverage & peers**:
 
 1. Add trusted publishing hosts, let their signed offers and archive metadata verify, and select the sources to use.
 2. Draw an area, or explicitly choose **Use visible area**. The camera does not otherwise define the acquisition.
@@ -14,7 +14,27 @@ In **Host console → Coverage & peers**:
 6. **Pause & keep blocks** preserves content-addressed cached blocks and finished source members. Resume after a network failure or server restart. An unfinished member is rebuilt from cached inputs; this is not a checkpoint for every row of its index builder.
 7. **Download .atlas** produces a portable file. **Add to map library** sends that file through the normal verification/import queue; publish it with Hashtree there. Deleting the acquisition and its cache does not remove an imported library copy.
 
-This UI runs acquisition on the **host**. The map client already consumes the resulting file/composition. A browser acquisition UI and AI acquisition tools are subsequent work; neither is added by this slice.
+This flow runs on the **host** and produces a portable file. The client also has browser-side acquisition, described below; it pins source blocks rather than exporting a new file.
+
+## Browser saved areas
+
+Open **Client → Offline → Save an area here**. Choose **Use current view** explicitly or draw a polygon, select capabilities and zooms, then **Review saved area**. The polygon stays fixed when the camera moves. Review reports coverage separately for each capability and display zoom, conflicts and selected source-block bytes. Browser storage is keyed by source snapshot, block key and hash; its size estimate includes duplicate payloads under different keys, unlike the exporter's content deduplication.
+
+**Save on this device** runs the shared planner and a worker, reading verified bytes through the selected sources' existing Hashtree transport. Progress remains visible in the card. **Pause & keep blocks** cancels pending range reads; resume reuses hash-verified blocks. Closing the tab stops work, and opening the same source revisions lets you resume. Full plans are stored separately from lightweight progress checkpoints so a large block list is not rewritten on each update.
+
+Saved blocks live in `atlas-saved-areas-v1`, outside the rolling 128 MiB cache. Rendering, routing and AI workspace readers consult this store automatically. Overlapping areas share immutable blocks; removing an area only deletes blocks that no remaining area owns. **New chat** keeps saved areas; **Purge caches** removes them. A save requests persistent browser storage when initiated in the UI, but the browser or user can still evict/clear it. Quota failures are reported and preserve previous committed blocks.
+
+The four AI tools are `acquisition_catalog`, `acquisition_plan`, `acquisition_save` and `acquisition_status`. They use the same controller as the UI and emit progress and package-byte telemetry. A plan requires explicit polygon coordinates; it never silently defaults to the viewport. The harness asks before accepting gaps or overriding a storage estimate. Routing identity conflicts cannot be overridden.
+
+Try: “Prepare a walking trip around these named places. Resolve their locations, show me the proposed area and what data is available, then save walking routing, water geometry and building features on this device.”
+
+This is **a persistent source-block cache**, not a new `.atlas` revision or a guarantee that the entire app will boot with every remote catalog offline. Original map revisions must remain selected to resume. Source cells may extend beyond the polygon; full-text search postings are not rebuilt; relations outside the selection and routes leaving it can require more bytes. Use the host export flow when you need one independently portable archive. No real-world completeness is implied by “ready”.
+
+## Host workbench
+
+The console is organized into **Library**, **Prepare**, **Import**, **Network** and **Tools**. Existing deep links still select the corresponding tab. Source downloads are under Prepare; file/image imports under Import; discovery/publication under Network. Tab changes preserve form state and do not cancel work.
+
+An **Activity** rail remains visible across desktop tabs with build controls, download/upload/acquisition progress, publication and errors. On narrower screens it becomes a fixed expandable bottom drawer. Tab navigation supports arrows, Home and End; reduced-motion preferences are respected.
 
 ## Data and correctness
 
@@ -61,3 +81,6 @@ All endpoints use the existing host administration policy and same-origin checks
 `tests/routing-federation.test.ts` publishes two independently compiled archives through real Hashtree servers with raw map delivery disabled. Acquisition fails during a simulated outage, reopens from its saved plan, resumes, and produces one portable file. With both publishers unavailable, fresh file readers route walking/cycling/driving across the seam at the same cost as the whole-source baseline and find an address. A conflicting overlap is detected during planning.
 
 `tests/federation-host.test.ts` checks same-origin administration, explicit partial-coverage acknowledgement, restart, file download, idempotent library import and deletion of the acquisition cache without losing the imported file. A localhost browser rehearsal exercises the review, acquire, download and import controls.
+
+
+Browser verification (2026-10-30): a visible localhost rehearsal used real Hashtree delivery and IndexedDB with a one-byte ordinary LRU. It covered plan/save, cancellation during a stalled range read, resume, overlapping ownership/deletion, reload, and source-offline feature reads with no additional provider requests. The AI tool schemas and shared status controller were exercised without model calls. Desktop/mobile checks covered host tab state, deep links, keyboard navigation and horizontal overflow. Continental browser acquisitions remain unbenchmarked.

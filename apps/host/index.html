@@ -6,6 +6,7 @@
     <title>Atlas — host console</title>
     <link rel="stylesheet" href="/maplibre.css" />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/workbench.css" />
   </head>
   <body class="host-page">
     <header class="masthead">
@@ -519,38 +520,45 @@
             >Choose maps below, or open the full library.</span
           >
         </div>
-        <form id="prepare-export-form" class="host-actions">
-          <label
-            >Combined file name
-            <input
-              id="prepare-export-name"
-              value="Map composition"
-              maxlength="80"
-              required
-          /></label>
-          <button id="prepare-export" disabled>
-            Pack selected maps into one .atlas
-          </button>
-        </form>
-        <div class="host-composition-help">
-          <p>
-            <strong>One view, separate Hashtree sources.</strong> Check
-            “Compose” on the maps you want, then open the selection in the
-            client. Toggle layers and adjust imagery opacity there.
+        <details class="library-bundle">
+          <summary>Combine selected maps into one file</summary>
+          <p class="quiet">
+            Use composition above for a shared view, or pack the selected maps
+            into a portable archive here.
           </p>
-          <p>
-            Pack the selected maps to preserve every member’s geometry, routing,
-            search, imagery and custom data in one downloadable file. Source
-            maps stay available. This copies complete selected maps; it does not
-            cut them to the preview area. Network maps are published with
-            Hashtree automatically.
-          </p>
-          <p>
-            <strong>One file with embedded imagery.</strong> Choose “Manage
-            imagery” on a target map to add raster layers from your imported
-            maps and queue a new Atlas revision.
-          </p>
-        </div>
+          <form id="prepare-export-form" class="host-actions">
+            <label
+              >Combined file name
+              <input
+                id="prepare-export-name"
+                value="Map composition"
+                maxlength="80"
+                required
+            /></label>
+            <button id="prepare-export" disabled>
+              Pack selected maps into one .atlas
+            </button>
+          </form>
+          <div class="host-composition-help">
+            <p>
+              <strong>One view, separate Hashtree sources.</strong> Check
+              “Compose” on the maps you want, then open the selection in the
+              client. Toggle layers and adjust imagery opacity there.
+            </p>
+            <p>
+              Pack the selected maps to preserve every member’s geometry,
+              routing, search, imagery and custom data in one downloadable file.
+              Source maps stay available. This copies complete selected maps; it
+              does not cut them to the preview area. Network maps are published
+              with Hashtree automatically.
+            </p>
+            <p>
+              <strong>One file with embedded imagery.</strong> Choose “Manage
+              imagery” on a target map to add raster layers from your imported
+              maps and queue a new Atlas revision.
+            </p>
+          </div>
+        </details>
         <p id="prepare-library-message" role="status"></p>
         <div id="prepare-library" class="host-library"></div>
         <p class="quiet">

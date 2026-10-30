@@ -96,6 +96,11 @@ export async function createPreview(
     attributionControl: { compact: true },
   });
   map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+  const resize = new ResizeObserver(() => {
+    if (container.clientWidth) map.resize();
+  });
+  resize.observe(container);
+  map.on("remove", () => resize.disconnect());
   map.doubleClickZoom.disable();
   map.getCanvas().setAttribute("aria-label", "OpenFreeMap area picker");
   let overlay: { url: string; bounds: Bounds } | undefined;

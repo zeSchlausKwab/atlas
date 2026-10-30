@@ -1,5 +1,5 @@
 import { mkdir, cp, rm } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildPlugins, loadPlugins } from "./plugins";
 import { serverAddress } from "../apps/shared/urls";
@@ -24,6 +24,7 @@ export async function buildBrowserApp(kind: "client" | "host") {
           "compose",
           "chat-data-worker",
           "chat-code-worker",
+          "acquisition-worker",
         ].map((n) => `apps/web/src/${n}.ts`)
       : ["apps/host/src/host.ts"];
   const result = await Bun.build({
@@ -33,12 +34,21 @@ export async function buildBrowserApp(kind: "client" | "host") {
     ].map((p) => resolve(root, p)),
     outdir: directory,
     target: "browser",
+    naming: "[name].[ext]",
     minify: true,
     sourcemap: "external",
     define: { ATLAS_PLUGIN_ASSETS: JSON.stringify(installed) },
   });
   if (!result.success)
     throw new AggregateError(result.logs, `${kind} build failed`);
+  for (const entry of [
+    ...entries,
+    ...(kind === "client" ? ["apps/web/src/chat-panel.tsx"] : []),
+  ]) {
+    const name = basename(entry).replace(/\.tsx?$/, ".js");
+    if (!(await Bun.file(resolve(directory, name)).exists()))
+      throw new Error(`Missing browser entrypoint ${name}`);
+  }
   const files = [
     [
       kind === "client" ? "apps/web/index.html" : "apps/host/index.html",
@@ -64,6 +74,7 @@ export async function buildBrowserApp(kind: "client" | "host") {
           ...assets.map((a) => [`dist${a.url}`, a.url.slice(1)]),
         ]
       : [
+          ["apps/host/workbench.css", "workbench.css"],
           ["node_modules/maplibre-gl/dist/maplibre-gl.css", "maplibre.css"],
           [
             "node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs",

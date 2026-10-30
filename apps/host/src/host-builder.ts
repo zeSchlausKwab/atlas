@@ -1,3 +1,4 @@
+import { hostActivity, showHostSection } from "./host-workbench";
 import type { CoverageRequest } from "../../../packages/coverage/src/index";
 import { openRasterAmendment } from "./host-raster-amend";
 import { capabilityPanel } from "./host-capabilities";
@@ -451,6 +452,11 @@ function jobs(values: PreparationJob[]) {
     views.set(job.id, view);
     return { ...job, progress: view.progress };
   });
+  hostActivity(
+    "Build",
+    "builds",
+    values.map((j) => ({ id: j.id, name: j.name, state: j.state })),
+  );
   activeBuild = values.some((j) => ["running", "cancelling"].includes(j.state));
   for (const id of composition)
     if (
@@ -983,7 +989,7 @@ async function chooseSource(kind: string, value: string) {
   select.value = value;
   configureSource();
   await switchPreview();
-  document.getElementById("prepare")!.scrollIntoView({ behavior: "smooth" });
+  showHostSection("prepare");
 }
 function deleteButton(job: PreparationJob) {
   const button = text(

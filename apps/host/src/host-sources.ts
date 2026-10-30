@@ -1,3 +1,4 @@
+import { hostActivity } from "./host-workbench";
 import { storageRequest } from "./host-storage";
 import { storageSize } from "./host-budget";
 import type {
@@ -18,6 +19,18 @@ export async function startSources() {
     el<HTMLButtonElement>("start").disabled = action || !plan;
   }
   function render(jobs: SourceJob[]) {
+    hostActivity(
+      "Source download",
+      "sources",
+      jobs.map((j) => ({
+        id: j.id,
+        name: j.name,
+        state: j.state,
+        message: j.error ?? j.message,
+        completed: j.completed,
+        total: j.bytes,
+      })),
+    );
     const list = el("jobs");
     list.replaceChildren();
     for (const job of jobs) {

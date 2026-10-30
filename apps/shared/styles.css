@@ -3494,3 +3494,85 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
   color: var(--ink); background: var(--paper); font: inherit;
 }
 #federation input[type="checkbox"] { accent-color: var(--green); }
+
+/* Saved-area acquisition, shared by the browser controls and AI. */
+.saved-areas input:not([type="checkbox"]) {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #faf9f2;
+  color: var(--ink);
+}
+.saved-areas .area-families {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  padding: 12px;
+  margin: 16px 0;
+}
+.saved-areas .area-families label {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.saved-areas label {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.saved-areas .world-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.saved-areas button {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #faf9f2;
+  color: var(--green);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.saved-areas button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.saved-areas button.primary-button {
+  background: var(--green);
+  color: #fff;
+}
+.saved-area-card {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  overflow-wrap: anywhere;
+}
+.saved-area-card h3 {
+  margin: 0 0 6px;
+  font:
+    23px Georgia,
+    serif;
+}
+.saved-area-card small {
+  font: 11px var(--mono);
+  text-transform: uppercase;
+  color: var(--green);
+}
+.saved-area-card p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.saved-area-card details {
+  font-size: 12px;
+  margin: 12px 0;
+}
+.saved-area-card progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--green);
+}

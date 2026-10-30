@@ -1,3 +1,5 @@
+import type { BrowserAcquisition } from "../acquisition-client";
+import { acquisitionSpecs } from "../../../../packages/acquisition/src/tools";
 import { objectSpecs } from "../../../../packages/objects/src/tools";
 import { boundarySpecs } from "../../../../packages/boundaries/src/tools";
 import { ChatRecipes } from "./recipes";
@@ -39,6 +41,7 @@ const ref = { type: "string", minLength: 1, maxLength: 100 };
 const profile = { enum: ["walking", "cycling", "driving"] };
 const text = { type: "string", minLength: 1, maxLength: 120 };
 const specs: Array<[string, string, Record<string, unknown>]> = [
+  ...acquisitionSpecs,
   ...analysisSpecs,
   ...objectSpecs,
   ...boundarySpecs,
@@ -188,6 +191,7 @@ export class ChatTools implements AgentTools {
     readonly enabled: () => Set<string>,
     readonly offline: () => boolean,
     readonly onTransfer?: (event: ReadEvent) => void,
+    readonly acquisition?: BrowserAcquisition,
   ) {
     this.data = new ChatDataClient(readers, offline, onTransfer);
     this.layers = new ChatLayers(map);
@@ -210,6 +214,7 @@ export class ChatTools implements AgentTools {
   }
   get sourceBytes() {
     return (
+      (this.acquisition?.sourceBytes ?? 0) +
       this.data.sourceBytes +
       this.readers.reduce((n, r) => n + r.bytesByPurpose.routing, 0)
     );
@@ -333,7 +338,42 @@ export class ChatTools implements AgentTools {
       requirePurpose("features");
     if (name === "route" || name === "isochrone") requirePurpose("routing");
     let result: any;
-    if (name === "map_context") result = this.context();
+    if (name.startsWith("acquisition_")) {
+      if (!this.acquisition)
+        throw Error("Browser acquisition is unavailable for this map session.");
+      if (name === "acquisition_plan") {
+        for (const f of i.families) {
+          if (f.startsWith("routing:")) requirePurpose("routing");
+          if (["search", "addresses"].includes(f)) requirePurpose("search");
+          if (
+            ["features", "objects", "boundaries"].includes(f) ||
+            f.startsWith("features:")
+          )
+            requirePurpose("features");
+          if (f === "query") requirePurpose("queries");
+        }
+      }
+      const action = {
+        acquisition_catalog: "catalog",
+        acquisition_plan: "plan",
+        acquisition_save: "acquire",
+        acquisition_status: "list",
+      }[name]!;
+      result = await this.acquisition.call(
+        action,
+        name === "acquisition_plan"
+          ? {
+              ...i,
+              paddingCells: i.paddingCells ?? 1,
+              sourceIds: i.sourceIds ?? [
+                ...new Set(this.acquisition.sourceIds),
+              ],
+            }
+          : i,
+        signal,
+        progress,
+      );
+    } else if (name === "map_context") result = this.context();
     else if (name === "recipe_define") {
       result = await this.data.call(name, i, signal, progress);
       this.recipes.add(result);
