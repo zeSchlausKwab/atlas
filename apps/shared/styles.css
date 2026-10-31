@@ -3576,3 +3576,23 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
   height: 6px;
   accent-color: var(--green);
 }
+
+/* The client map workbench separates presentation from on-demand data. */
+.map-workbench-heading { padding: 28px 30px 0; background: #f1f5ef; border-bottom: 1px solid #d3ded2; }
+.map-workbench-heading h2 { margin: 6px 0 22px; }
+.view-picker { display: grid; gap: 8px; font-size: 13px; font-weight: 600; }
+.view-picker select { width: 100%; padding: 12px; border: 1px solid #c7d5c4; background: #fffdf8; color: var(--ink); border-radius: 4px; font: inherit; }
+.view-recipe-state { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0 4px; }
+.view-recipe-state span { font-size: 12px; color: #416b50; }
+.view-recipe-state button { background: transparent; color: var(--green); font: inherit; font-size: 12px; padding: 7px; border: 1px solid #c7d5c4; border-radius: 4px; cursor: pointer; }
+.view-recipe-state button:disabled { opacity: .45; cursor: default; }
+.map-sections { display: flex; gap: 2px; margin-top: 18px; }
+.map-sections button { flex: 1; font: inherit; font-size: 13px; color: #59695e; background: transparent; padding: 13px 5px; border: 0; border-bottom: 3px solid transparent; cursor: pointer; }
+.map-sections button[aria-pressed=true] { color: #274b38; border-color: #52785b; background: #e5eddf; }
+.layer, .capability { flex-wrap: wrap; }
+.layer-load-state { width: 100%; display: block; margin: -2px 0 6px 26px; font-size: 11px; color: #637563; }
+body[data-tab=map] .execution-control { display: none; }
+#panel-composer > #panel-data, #panel-composer > #panel-style { outline: none; }
+.map-workbench-heading .quiet { font-size: 12px; line-height: 1.5; }
+@media(max-width:600px) { .map-workbench-heading { padding: 20px 18px 0; } }
+.map-saved-areas { width: 100%; padding: 12px; border: 1px solid #c7d5c4; border-radius: 4px; background: #eef3e9; color: var(--green); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }

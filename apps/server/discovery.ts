@@ -16,6 +16,11 @@ import {
   publishAnnouncement,
 } from "../../packages/hashtree/src/discovery";
 import { parseCatalog, type MapOffer } from "../../packages/format/src/catalog";
+import { parseViewRecipe } from "../../packages/views/src/index";
+import {
+  viewAnnouncement,
+  parseViewAnnouncement,
+} from "../../packages/views/src/announcement";
 import type { AdminAccess } from "./admin-access";
 export type DiscoveryPeer = ServerWebSocket<{
   subscriptions: Map<string, Record<string, unknown>[]>;
@@ -32,6 +37,10 @@ interface Publication {
 /** This host's read-only Nostr relay. It never accepts or forwards third-party events. */
 export class MapDiscovery {
   readonly jobs = new Map<string, Publication>();
+  readonly views = new Map<string, Event>();
+  private viewRevisions = new Map<string, Event>();
+  private defaultView?: string;
+  private viewWrites: Promise<unknown> = Promise.resolve();
   private indexes = new Map<string, IndexedTree>();
   private peers = new Set<DiscoveryPeer>();
   private pending?: Promise<void>;
@@ -117,7 +126,77 @@ export class MapDiscovery {
         /* Missing or changed files must be republished. */
       }
     }
+    try {
+      const saved = JSON.parse(
+        await readFile(join(directory, "views.json"), "utf8"),
+      );
+      for (const event of saved.revisions ?? []) {
+        const parsed = parseViewAnnouncement(event, d.pubkey);
+        d.viewRevisions.set(parsed.event.id, parsed.event);
+      }
+      for (const id of saved.current ?? []) {
+        const event = d.viewRevisions.get(id);
+        if (event) d.views.set(parseViewAnnouncement(event).recipe.id, event);
+      }
+      if (d.views.has(saved.defaultView)) d.defaultView = saved.defaultView;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        console.error("Saved views unavailable:", error);
+    }
     return d;
+  }
+  private viewCatalog() {
+    return {
+      pubkey: this.pubkey,
+      defaultView: this.defaultView,
+      views: [...this.views.values()],
+    };
+  }
+  private async publishView(value: unknown, makeDefault: boolean) {
+    const recipe = parseViewRecipe(value);
+    for (const source of recipe.sources) {
+      const offer = [...this.jobs.values()].find(
+        (j) => j.state === "ready" && j.offer?.hashtree?.root === source.root,
+      )?.offer;
+      if (!offer || offer.url !== source.url)
+        throw new Error(
+          "Every view source must be published on this host at the pinned revision",
+        );
+      if (source.layers.some((l) => !offer.manifest.tileLayers?.includes(l)))
+        throw new Error(
+          "View requests a geometry layer missing from its source",
+        );
+    }
+    if (!this.views.has(recipe.id) && this.views.size >= 100)
+      throw new Error("At most 100 published views per host");
+    const previous = this.views.get(recipe.id);
+    const event = viewAnnouncement(
+      recipe,
+      this.key,
+      Math.max(Math.floor(Date.now() / 1000), (previous?.created_at ?? 0) + 1),
+    );
+    const views = new Map(this.views).set(recipe.id, event);
+    const revisions = new Map(this.viewRevisions).set(event.id, event);
+    const defaultView = makeDefault
+      ? recipe.id
+      : this.defaultView === recipe.id
+        ? undefined
+        : this.defaultView;
+    const path = join(this.directory, "views.json");
+    await writeFile(
+      path + ".tmp",
+      JSON.stringify({
+        defaultView,
+        current: [...views.values()].map((e) => e.id),
+        revisions: [...revisions.values()],
+      }),
+    );
+    await rename(path + ".tmp", path);
+    this.views.set(recipe.id, event);
+    this.viewRevisions = revisions;
+    this.defaultView = defaultView;
+    this.broadcast(event);
+    return event;
   }
   offer(id: string) {
     return this.jobs.get(id)?.state === "ready"
@@ -221,13 +300,60 @@ export class MapDiscovery {
     const u = new URL(request.url);
     if (u.pathname === "/discovery")
       return Response.json({
-        pubkey: this.pubkey,
         relay: `${u.protocol === "https:" ? "wss:" : "ws:"}//${u.host}/nostr`,
         profile: "atlas-map-v1",
+        ...this.viewCatalog(),
         publications: [...this.jobs.values()]
           .filter((j) => j.state === "ready")
           .map((j) => j.event),
       });
+    if (u.pathname === "/views" && request.method === "GET")
+      return Response.json(this.viewCatalog());
+    const revision = u.pathname.match(/^\/views\/([a-f0-9]{64})$/);
+    if (revision && request.method === "GET") {
+      const event = this.viewRevisions.get(revision[1]!);
+      return event
+        ? Response.json(event, {
+            headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+          })
+        : new Response(null, { status: 404 });
+    }
+    if (u.pathname === "/admin/views") {
+      if (!this.access(request, peer))
+        return Response.json(
+          { error: "Administration denied" },
+          { status: 403 },
+        );
+      if (request.method === "GET")
+        return Response.json({
+          ...this.viewCatalog(),
+          maps: [...this.jobs.values()]
+            .filter((j) => j.state === "ready")
+            .map((j) => j.offer),
+        });
+      if (
+        request.method !== "POST" ||
+        request.headers.get("Origin") !== u.origin ||
+        request.headers.get("Content-Type") !== "application/json"
+      )
+        return Response.json(
+          { error: "Same-origin JSON request required" },
+          { status: 403 },
+        );
+      try {
+        const raw = await request.text();
+        if (raw.length > 160 * 1024)
+          throw new Error("View recipe is too large");
+        const body = JSON.parse(raw);
+        const write = this.viewWrites.then(() =>
+          this.publishView(body.recipe, body.makeDefault === true),
+        );
+        this.viewWrites = write.catch(() => {});
+        return Response.json({ event: await write }, { status: 201 });
+      } catch (error) {
+        return Response.json({ error: String(error) }, { status: 400 });
+      }
+    }
     const blob = u.pathname.match(
       /^\/hashtree\/([a-f0-9]{64})\/([a-f0-9]{64})$/,
     );
@@ -364,6 +490,8 @@ export class MapDiscovery {
         for (const job of this.jobs.values())
           if (job.state === "ready" && job.event)
             this.send(ws, sub, filters, job.event);
+        for (const event of this.views.values())
+          this.send(ws, sub, filters, event);
         ws.send(JSON.stringify(["EOSE", sub]));
       } catch {
         ws.send(JSON.stringify(["NOTICE", "Invalid request"]));
@@ -374,6 +502,7 @@ export class MapDiscovery {
     clearInterval(this.automatic);
     this.abort.abort();
     await this.pending;
+    await this.viewWrites;
     for (const p of this.peers) p.close();
     for (const i of this.indexes.values()) i.close();
   }

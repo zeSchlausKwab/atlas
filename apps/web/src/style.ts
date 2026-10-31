@@ -122,6 +122,14 @@ export class StyleControls {
     };
     this.sync();
   }
+  load(style: MapStyle, scene: MapScene) {
+    this.style = parseStyle(style);
+    this.scene = parseScene(scene);
+    this.map()?.setStyle(this.style);
+    this.map()?.setScene(this.scene);
+    this.save();
+    this.sync();
+  }
   receiveScene(scene: MapScene) {
     this.scene = parseScene(scene);
     this.save();
@@ -147,12 +155,15 @@ export class StyleControls {
     this.map()?.setStyle(this.style);
     this.save();
     this.sync();
-    el("style-status").textContent = "";
+    el("style-status").textContent =
+      "Appearance updated · no additional map data requested.";
+    document.dispatchEvent(new Event("atlas-view-change"));
   }
   private applyScene() {
     this.map()?.setScene(this.scene);
     this.save();
     this.sync();
+    document.dispatchEvent(new Event("atlas-view-change"));
   }
   private sync() {
     for (const b of document.querySelectorAll<HTMLButtonElement>(

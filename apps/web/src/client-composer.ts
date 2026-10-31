@@ -1,4 +1,10 @@
 import {
+  parsePresentation,
+  type Presentation,
+} from "../../../packages/views/src/index";
+import { parseViewAnnouncement } from "../../../packages/views/src/announcement";
+import type { Event as NostrEvent } from "nostr-tools/pure";
+import {
   coverageFamilies,
   planCoverage,
 } from "../../../packages/coverage/src/index";
@@ -82,7 +88,8 @@ interface Recipe {
     pitch: number;
     bearing: number;
   };
-  style?: string;
+  presentation?: Presentation;
+  publisher?: NostrEvent;
   coverage?: boolean;
 }
 
@@ -90,6 +97,10 @@ export async function createComposer(
   map: CompositionMap,
   options: {
     catalog: string;
+    presentation: {
+      get: () => Presentation;
+      apply: (value: Presentation) => void;
+    };
     local?: ByteSource;
     store?: BlockStore;
     signal: AbortSignal;
@@ -106,9 +117,52 @@ export async function createComposer(
     starting = true,
     paused = false;
   let focusId: string | undefined;
+  let publisher: ReturnType<typeof parseViewAnnouncement> | undefined;
+  const published = new Map<string, ReturnType<typeof parseViewAnnouncement>>();
+  let applying = false;
+  const currentSources = () =>
+    entries.map((e) => ({
+      url: e.offer.url,
+      root: e.offer.hashtree?.root,
+      enabled: e.enabled,
+      layers: e.layers,
+      labels: e.labels,
+      rasterLayers: e.rasterLayers ?? {},
+    }));
+  const same = (a: unknown, b: unknown) =>
+    JSON.stringify(a) === JSON.stringify(b);
+  function refreshViewState() {
+    const origin = document.getElementById("view-origin")!;
+    let modified = false;
+    if (publisher) {
+      const baseline = publisher.recipe;
+      // Unselected discovered maps do not change a publisher's composition.
+      const relevant = currentSources().filter(
+        (s) => s.enabled || baseline.sources.some((b) => b.root === s.root),
+      );
+      modified =
+        !same(options.presentation.get(), baseline.presentation) ||
+        !same(relevant, baseline.sources) ||
+        map.coverage !== baseline.coverage;
+    }
+    origin.textContent = publisher
+      ? `${publisher.recipe.name} · ${modified ? "Modified" : "Publisher defaults"}`
+      : "Your own view · client settings";
+    (document.getElementById("view-reset") as HTMLButtonElement).disabled =
+      !publisher || applying;
+    document.dispatchEvent(new Event("atlas-sources-change"));
+  }
+  const onPresentationChange = () => {
+    if (!starting && !applying) {
+      save();
+      refreshViewState();
+    }
+  };
+  document.addEventListener("atlas-view-change", onPresentationChange);
   const watches: Array<{ relay: string; author: string; close: () => void }> =
     [];
   const stop = () => {
+    document.removeEventListener("atlas-view-change", onPresentationChange);
     for (const w of watches) w.close();
     for (const e of entries)
       if (e.reader?.source instanceof HashtreeSource) e.reader.source.clear();
@@ -234,7 +288,7 @@ export async function createComposer(
     el("message").textContent = value;
   }
   function save(withCamera = false) {
-    if (options.local) return;
+    if (options.local || applying) return;
     const value: Recipe = {
       version: 1,
       toolSource: focusId,
@@ -250,6 +304,8 @@ export async function createComposer(
         root: e.offer.hashtree?.root,
       })),
       coverage: map.coverage,
+      presentation: parsePresentation(options.presentation.get()),
+      publisher: publisher?.event,
     };
     if (withCamera)
       value.camera = {
@@ -266,6 +322,7 @@ export async function createComposer(
     fragment.set("view", JSON.stringify(value));
     link.hash = fragment.toString();
     history.replaceState(null, "", link.href);
+    refreshViewState();
   }
   function status(entry: Entry) {
     if (!entry.status) return;
@@ -282,7 +339,7 @@ export async function createComposer(
             : "Waiting…");
   }
   function sync() {
-    if (paused) return;
+    if (paused || applying) return;
     map.setSources(active());
     const compatibility = routingCompatibility(active().map((s) => s.manifest));
     el("routing").textContent = compatibility.message;
@@ -323,6 +380,7 @@ export async function createComposer(
       credit.title = attributions.join(" · ");
     }
     entries.forEach(status);
+    refreshViewState();
   }
   async function subscribe(entry: Entry) {
     if (paused) return;
@@ -369,7 +427,7 @@ export async function createComposer(
             saved?.layers?.filter((l) => m.tileLayers?.includes(l)) ??
             m.tileLayers ??
             [];
-          entry.labels = saved?.labels ?? true;
+          entry.labels = saved?.labels ?? entry.labels;
           for (const raster of m.rasters ?? []) {
             const view = saved?.rasterLayers?.[raster.id];
             entry.rasterLayers![raster.id] ??= {
@@ -442,7 +500,7 @@ export async function createComposer(
       card.setAttribute("aria-label", m.name);
       check.type = "checkbox";
       check.checked = entry.enabled;
-      check.setAttribute("aria-label", `Show ${m.name}`);
+      check.setAttribute("aria-label", `Use ${m.name}`);
       check.onchange = async () => {
         if (!(await enable(entry, check.checked)))
           check.checked = entry.enabled;
@@ -479,7 +537,7 @@ export async function createComposer(
       );
       const layers = document.createElement("fieldset");
       layers.className = "composition-layers";
-      layers.append(text("legend", "SUBSCRIBE TO DATA"));
+      layers.append(text("legend", "Display layers from this source"));
       for (const layer of MAP_LAYERS) {
         if (!m.tileLayers?.includes(layer)) continue;
         const row = document.createElement("label"),
@@ -544,7 +602,14 @@ export async function createComposer(
         row.append(label, dialLabel);
         layers.append(row);
       }
-      card.append(layers);
+      card.append(
+        layers,
+        text(
+          "p",
+          "These switches control display reads. Search, routing and analysis use the independent on-demand choices in Layers & data.",
+          "quiet",
+        ),
+      );
       const links = text("div", "", "host-actions"),
         fit = text("button", "Go to map") as HTMLButtonElement;
       fit.onclick = async () => {
@@ -713,6 +778,17 @@ export async function createComposer(
       },
       options.signal,
       message,
+      (view) => {
+        if (paused || published.has(view.event.id)) return;
+        published.set(view.event.id, view);
+        picker.add(
+          new Option(
+            `${view.recipe.name} · ${view.event.pubkey.slice(0, 8)}`,
+            view.event.id,
+          ),
+        );
+        // An announcement offers a choice; it never replaces the active pinned view.
+      },
     );
     watches.push({ relay, author, close });
   }
@@ -744,7 +820,7 @@ export async function createComposer(
   }
 
   const hash = new URLSearchParams(location.hash.slice(1)).get("view");
-  if (hash) {
+  if (hash && !options.local) {
     const saved = JSON.parse(hash);
     if (
       saved.version !== 1 ||
@@ -762,9 +838,92 @@ export async function createComposer(
       )
     )
       throw new Error("Invalid composition link");
+    if (saved.presentation)
+      saved.presentation = parsePresentation(saved.presentation);
+    if (saved.publisher) publisher = parseViewAnnouncement(saved.publisher);
     recipe = saved;
   }
   const failures: string[] = [];
+  const picker = document.getElementById("publisher-view") as HTMLSelectElement;
+  picker.replaceChildren(new Option("Your own composition", ""));
+  if (!options.local) {
+    try {
+      const base = new URL(options.catalog);
+      const response = await fetch(new URL("/views", base), {
+        signal: options.signal,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const info = await response.json();
+        if (
+          !/^[a-f0-9]{64}$/.test(info.pubkey) ||
+          !Array.isArray(info.views) ||
+          info.views.length > 100
+        )
+          throw new Error("Invalid published views");
+        for (const event of info.views) {
+          const parsed = parseViewAnnouncement(event, info.pubkey);
+          published.set(event.id, parsed);
+          picker.add(new Option(parsed.recipe.name, event.id));
+        }
+        const requested = recipe
+          ? null
+          : new URLSearchParams(location.search).get("viewRecipe");
+        let chosen = requested
+          ? published.get(requested)
+          : [...published.values()].find(
+              (p) => p.recipe.id === info.defaultView,
+            );
+        if (requested && !chosen) {
+          if (!/^[a-f0-9]{64}$/.test(requested))
+            throw new Error("Invalid view revision");
+          const r = await fetch(new URL(`/views/${requested}`, base), {
+            signal: options.signal,
+          });
+          if (!r.ok) throw new Error("Pinned view revision is unavailable");
+          chosen = parseViewAnnouncement(await r.json(), info.pubkey);
+          if (chosen.event.id !== requested)
+            throw new Error("Pinned view revision mismatch");
+          published.set(chosen.event.id, chosen);
+          picker.add(
+            new Option(
+              chosen.recipe.name + " · pinned revision",
+              chosen.event.id,
+            ),
+          );
+        }
+        if (
+          !recipe &&
+          chosen &&
+          (requested || !new URLSearchParams(location.search).has("maps"))
+        ) {
+          publisher = chosen;
+          recipe = {
+            ...chosen.recipe,
+            catalogs: [options.catalog],
+            publisher: chosen.event,
+          };
+        }
+      } else if (new URLSearchParams(location.search).has("viewRecipe"))
+        throw new Error("Published view service unavailable");
+    } catch (error) {
+      if (new URLSearchParams(location.search).has("viewRecipe")) throw error;
+      failures.push(`Publisher defaults unavailable: ${String(error)}`);
+    }
+  }
+  if (publisher && !published.has(publisher.event.id)) {
+    published.set(publisher.event.id, publisher);
+    picker.add(
+      new Option(
+        publisher.recipe.name + " · shared revision",
+        publisher.event.id,
+      ),
+    );
+  }
+  picker.value = publisher?.event.id ?? "";
+  // Apply before opening readers: a publisher's hidden layer must never be fetched first.
+  if (recipe?.presentation) options.presentation.apply(recipe.presentation);
+
   if (options.local) {
     recipe = undefined;
     const reader = await new AtlasReader(
@@ -824,6 +983,19 @@ export async function createComposer(
       entries[0].enabled = true;
     entries.sort((a, b) => Number(b.enabled) - Number(a.enabled));
   }
+  if (recipe)
+    for (const source of recipe.sources.filter((s) => s.enabled)) {
+      if (
+        !entries.some(
+          (e) =>
+            e.offer.url === source.url &&
+            (!source.root || e.offer.hashtree?.root === source.root),
+        )
+      )
+        failures.push(
+          `Pinned source unavailable: ${source.url}. It has not been replaced.`,
+        );
+    }
   buildCards();
   await Promise.all(entries.filter((e) => e.enabled).map(subscribe));
   options.signal.throwIfAborted();
@@ -849,17 +1021,15 @@ export async function createComposer(
     map.center = c.center;
     map.zoom = c.zoom;
     map.setScene({
+      ...options.presentation.get().scene,
       pitch: c.pitch,
       bearing: c.bearing,
-      extrude: false,
-      heightScale: 1,
-      fallbackHeight: 12,
-      shading: 0.8,
     });
   }
   map.coverage = recipe?.coverage ?? true;
   el<HTMLInputElement>("coverage").checked = map.coverage;
   map.invalidate();
+  refreshViewState();
   message(
     failures.length || pinnedWarnings.length
       ? [...failures, ...pinnedWarnings].join(" · ")
@@ -891,11 +1061,106 @@ export async function createComposer(
     save(true);
     try {
       await navigator.clipboard.writeText(location.href);
-      message("View link copied: sources, layers, priority and camera.");
+      message(
+        "View link copied: pinned sources, appearance, data choices and camera.",
+      );
     } catch {
       message("Copy the address bar to share this composition.");
     }
   };
+  async function applyPublished(id: string) {
+    if (!id) {
+      publisher = undefined;
+      recipe = undefined;
+      const url = new URL(location.href);
+      url.searchParams.delete("viewRecipe");
+      history.replaceState(null, "", url);
+      save();
+      return;
+    }
+    const selected = published.get(id);
+    if (!selected) return;
+    const missing = selected.recipe.sources.filter(
+      (s) =>
+        s.enabled &&
+        !entries.some(
+          (e) => e.offer.hashtree?.root === s.root && e.offer.url === s.url,
+        ),
+    );
+    if (missing.length) {
+      message(
+        "Cannot apply this view: one or more pinned source revisions are unavailable. Your current view is unchanged.",
+      );
+      picker.value = publisher?.event.id ?? "";
+      return;
+    }
+    applying = true;
+    refreshViewState();
+    try {
+      // Remove old renderer subscriptions before applying settings to avoid transient reads.
+      map.setSources([]);
+      options.changed([]);
+      for (const entry of entries) await enable(entry, false);
+      publisher = selected;
+      recipe = {
+        ...selected.recipe,
+        catalogs: [...catalogs],
+        publisher: selected.event,
+      };
+      options.presentation.apply(selected.recipe.presentation);
+      entries.sort((a, b) => {
+        const pos = (e: Entry) => {
+          const i = selected.recipe.sources.findIndex(
+            (s) => s.root === e.offer.hashtree?.root,
+          );
+          return i < 0 ? 1e6 : i;
+        };
+        return pos(a) - pos(b);
+      });
+      for (const entry of entries) {
+        const state = selected.recipe.sources.find(
+          (s) => s.root === entry.offer.hashtree?.root,
+        );
+        if (state) {
+          entry.layers = [...state.layers];
+          entry.labels = state.labels;
+          entry.rasterLayers = structuredClone(state.rasterLayers ?? {});
+          entry.enabled = state.enabled;
+        }
+      }
+      await Promise.all(entries.filter((e) => e.enabled).map(subscribe));
+      map.coverage = selected.recipe.coverage;
+      el<HTMLInputElement>("coverage").checked = map.coverage;
+      applying = false;
+      sync();
+      map.fit();
+      if (selected.recipe.camera) {
+        map.center = selected.recipe.camera.center;
+        map.zoom = selected.recipe.camera.zoom;
+        map.setScene({
+          ...selected.recipe.presentation.scene,
+          pitch: selected.recipe.camera.pitch,
+          bearing: selected.recipe.camera.bearing,
+        });
+      }
+      picker.value = id;
+      buildCards();
+      applying = false;
+      save(true);
+      message(
+        "Publisher view applied. Tools remain on demand; nothing is bulk-downloaded.",
+      );
+    } finally {
+      applying = false;
+      refreshViewState();
+    }
+  }
+  picker.onchange = () =>
+    void applyPublished(picker.value).catch((e) => message(String(e)));
+  document.getElementById("view-reset")!.onclick = () =>
+    void applyPublished(publisher?.event.id ?? "").catch((e) =>
+      message(String(e)),
+    );
   document.getElementById("tool-source")!.onchange = (e) => {
     focusId = (e.target as HTMLSelectElement).value;
     sync();

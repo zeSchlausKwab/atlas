@@ -1,3 +1,4 @@
+import { startViews } from "./host-views";
 import { startWorkbench } from "./host-workbench";
 import { startFederation } from "./host-federation";
 import { startImports } from "./host-imports";
@@ -100,6 +101,7 @@ async function start() {
     await Promise.all([
       load(),
       startBuilder(),
+      startViews(),
       startImagery(),
       startImports(),
       startSources(),

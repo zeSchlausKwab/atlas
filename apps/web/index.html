@@ -216,7 +216,7 @@
                   <p>
                     <strong>Top source wins, per layer.</strong> Lower maps fill
                     the remaining coverage. Use ↑ to raise a source’s priority.
-                    Data tab switches apply to all sources.
+                    Layers & data choices apply to all sources.
                   </p>
                   <label
                     ><input id="composition-coverage" type="checkbox" checked />
@@ -261,8 +261,7 @@
                   <button type="submit">Listen for maps</button>
                 </form>
                 <p class="quiet">
-                  Cross-map routing requires one shared compiled graph.
-                  Independent snapshots can share a display. Composition uses 2D
+                  Cross-map routing requires compatible OSM source revisions and routing contracts. Independently compiled maps can connect. Composition uses 2D
                   geometry. The host library can pack selected maps into one
                   file.
                 </p>
@@ -1135,7 +1134,7 @@
                   Choose any combination. Only selected layers are requested.
                 </p>
                 <p class="search-scope">
-                  Choices are saved for the next load. Previously read bytes
+                  Hidden layers stop display requests, not analysis of those objects. Previously read bytes
                   remain in the session counter.
                 </p>
               </section>
@@ -1151,7 +1150,7 @@
                 </p>
                 <label class="capability"
                   ><span
-                    ><strong>Routing</strong><small>Walking graph</small></span
+                    ><strong>Routing</strong><small>Walking, cycling and driving where included</small></span
                   ><input
                     type="checkbox"
                     data-purpose="routing"

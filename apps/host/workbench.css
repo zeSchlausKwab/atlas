@@ -675,3 +675,22 @@
   margin: 0;
   padding: 16px 20px;
 }
+
+/* Published experiences share data; each recipe has its own cartographic defaults. */
+.host-page .publisher-views { margin: 0 0 32px; padding: 24px; background: #edf3ed; border: 1px solid #cbd8c8; border-top: 3px solid #51735a; }
+.publisher-views h2 { margin: 0; }
+.publisher-views #views-list { margin: 20px 0; }
+.publisher-views .published-view { display: grid; gap: 10px; padding: 18px; border: 1px solid #cbd8c8; background: #fffdf8; flex: 1 1 200px; }
+.publisher-views .published-view small { color: #526457; }
+.publisher-views summary { cursor: pointer; font-weight: 600; padding: 12px 0; }
+.publisher-views form { display: grid; gap: 18px; }
+.publisher-views .view-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.publisher-views label { display: flex; gap: 9px; align-items: center; }
+.publisher-views .view-form-grid > label { display: grid; }
+.publisher-views fieldset { display: grid; gap: 10px; border: 1px solid #cbd8c8; padding: 16px; }
+.publisher-views input[type=checkbox] { width: auto; }
+.publisher-views .view-source-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #cbd8c8; }
+@media(max-width:650px) { .publisher-views .view-form-grid { grid-template-columns:1fr; } }
+.host-page .publisher-views .section-heading h2 { font-size: 26px; letter-spacing: -.025em; }
+.publisher-views input:not([type=checkbox]), .publisher-views select { padding: 12px; border: 1px solid #cbd8c8; border-radius: 4px; background: #fffdf8; color: inherit; font: inherit; width: 100%; box-sizing: border-box; }
+.publisher-views .view-form-grid > label { align-content: start; gap: 8px; }

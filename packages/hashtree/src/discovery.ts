@@ -1,3 +1,4 @@
+import { VIEW_KIND, parseViewAnnouncement } from "../../views/src/announcement";
 import { finalizeEvent, verifyEvent, type Event } from "nostr-tools/pure";
 import { Relay } from "nostr-tools/relay";
 import { parseCatalog, type MapOffer } from "../../format/src/catalog";
@@ -93,6 +94,7 @@ export async function watchMaps(
   accept: (offer: MapOffer, event: Event) => void,
   signal: AbortSignal,
   report: (message: string) => void = () => {},
+  acceptView?: (view: ReturnType<typeof parseViewAnnouncement>) => void,
 ) {
   if (
     !authors.length ||
@@ -111,11 +113,32 @@ export async function watchMaps(
       "Discovery relay disconnected; existing map snapshots remain pinned. Reconnect to discover updates.",
     );
   const sub = relay.subscribe(
-    [{ kinds: [MAP_KIND], authors, "#t": ["atlas-map"], limit: 100 }],
+    [
+      {
+        kinds: acceptView ? [MAP_KIND, VIEW_KIND] : [MAP_KIND],
+        authors,
+        "#t": acceptView ? ["atlas-map", "atlas-view"] : ["atlas-map"],
+        limit: 100,
+      },
+    ],
     {
       onevent(event) {
         try {
           if (!authors.includes(event.pubkey)) return;
+          if (event.kind === VIEW_KIND && acceptView) {
+            const parsed = parseViewAnnouncement(event);
+            const key = `${event.pubkey}:view:${parsed.recipe.id}`;
+            const old = seen.get(key);
+            if (
+              old &&
+              (old.created_at > event.created_at ||
+                (old.created_at === event.created_at && old.id <= event.id))
+            )
+              return;
+            seen.set(key, event);
+            acceptView(parsed);
+            return;
+          }
           const parsed = parseAnnouncement(event),
             key = `${event.pubkey}:${event.tags.find((t) => t[0] === "d")![1]}`;
           const old = seen.get(key);

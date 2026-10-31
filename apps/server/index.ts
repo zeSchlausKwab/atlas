@@ -139,13 +139,11 @@ const federation = await Federation.open(
         manifest: engine.reader.index.manifest,
       },
     },
-    ...preparations
-      .catalog()
-      .map((m) => ({
-        id: m.id,
-        path: preparations.path(m.id),
-        offer: m as MapOffer,
-      })),
+    ...preparations.catalog().map((m) => ({
+      id: m.id,
+      path: preparations.path(m.id),
+      offer: m as MapOffer,
+    })),
   ],
   archiveUploads,
 );
@@ -183,7 +181,12 @@ const server = Bun.serve<{
     ) {
       try {
         request = new Request(request, {
-          body: await limitedBody(request, 16384),
+          body: await limitedBody(
+            request,
+            new URL(request.url).pathname === "/admin/views"
+              ? 160 * 1024
+              : 16384,
+          ),
         });
       } catch {
         return Response.json({ error: "Request too large" }, { status: 413 });

@@ -1,3 +1,8 @@
+import { setupMapWorkbench } from "./map-workbench";
+import {
+  parsePresentation,
+  type Presentation,
+} from "../../../packages/views/src/index";
 import { BrowserAcquisition } from "./acquisition-client";
 import { AcquisitionControls } from "./acquisition-controls";
 let acquisition: BrowserAcquisition | undefined;
@@ -22,6 +27,7 @@ import { StyleControls } from "./style";
 import { setupTabs } from "./tabs";
 import { OperationSession, executionText, type Capability } from "./operations";
 import { ExtractControls } from "./extract";
+setupMapWorkbench();
 setupTabs();
 const connection = await clientConnection().catch((error) => {
   const element = document.getElementById("error")!;
@@ -407,12 +413,13 @@ function bindTools() {
   for (const checkbox of document.querySelectorAll<HTMLInputElement>(
     "[data-mask]",
   )) {
-    checkbox.disabled =
-      !compositionSources &&
-      !!m.tileLayers &&
-      !m.tileLayers.some(
-        (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
-      );
+    checkbox.disabled = !(
+      compositionSources?.flatMap((s) => s.manifest.tileLayers ?? []) ??
+      m.tileLayers ??
+      MAP_LAYERS
+    ).some(
+      (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
+    );
   }
   el("layer-transport").textContent = m.tileLayers
     ? "Choose any combination. Only selected layers are requested."
@@ -502,6 +509,17 @@ function bindTools() {
     aiTransfer,
   );
   savedAreas = new AcquisitionControls(acquisition, map);
+  const currentAcquisition = acquisition;
+  const updateSavedBadge = () => {
+    const ready = currentAcquisition.jobs.filter((j) => j.state === "ready");
+    const badge = document.getElementById("map-saved-areas");
+    if (badge)
+      badge.textContent = ready.length
+        ? `${ready.length} saved area${ready.length === 1 ? "" : "s"} on this device · inspect coverage in Offline`
+        : "No saved areas yet · keep an area for offline use";
+  };
+  acquisition.subscribe(updateSavedBadge);
+  updateSavedBadge();
   configureOperations();
   chat = new ChatLauncher(
     map,
@@ -532,7 +550,7 @@ function bindTools() {
     el("dataset-name").textContent = `Tool source: ${m.name}`;
     el("read-scope").textContent = "Reads across the selected map sources.";
     el("layer-transport").textContent =
-      "Global filters: apply to every source. Client composer can further restrict each map.";
+      "These display choices apply across sources. Source cards can further restrict each provider; analysis data remains independent.";
     el("height-coverage").textContent =
       "Composition uses 2D geometry. Open a source on its own in Client composer for building extrusion.";
     el("download").hidden = true;
@@ -547,6 +565,7 @@ function bindTools() {
     const input = document.getElementById(id) as HTMLInputElement | null;
     if (input) input.disabled = !!compositionSources;
   }
+  document.dispatchEvent(new Event("atlas-sources-change"));
   toolSignature = `${m.snapshot}|${compositionSources?.map((s) => s.id).join("|") ?? "single"}`;
 }
 async function openComposition(local?: ByteSource) {
@@ -598,6 +617,52 @@ async function openComposition(local?: ByteSource) {
     next.setGrid(el<HTMLInputElement>("tile-grid").checked);
     const control = await createComposer(next, {
       catalog: connection.catalog,
+      presentation: {
+        get: () => ({
+          style: appearance.style,
+          scene: appearance.scene,
+          layers: selectedLayers(),
+          labels: {
+            places: el<HTMLInputElement>("place-labels").checked,
+            streets: el<HTMLInputElement>("street-labels").checked,
+            pois: el<HTMLInputElement>("poi-labels").checked,
+          },
+          tools: [
+            ...document.querySelectorAll<HTMLInputElement>("[data-purpose]"),
+          ]
+            .filter((i) => i.checked)
+            .map((i) => i.dataset.purpose as any),
+        }),
+        apply: (value: Presentation) => {
+          const p = parsePresentation(value);
+          appearance.load(p.style, p.scene);
+          for (const input of document.querySelectorAll<HTMLInputElement>(
+            "[data-mask]",
+          ))
+            input.checked = p.layers.some(
+              (l) => (LAYER_MASKS[l] & Number(input.dataset.mask)) !== 0,
+            );
+          for (const [id, on] of [
+            ["place-labels", p.labels.places],
+            ["street-labels", p.labels.streets],
+            ["poi-labels", p.labels.pois],
+          ] as const)
+            el<HTMLInputElement>(id).checked = on;
+          const before = [
+            ...document.querySelectorAll<HTMLInputElement>("[data-purpose]"),
+          ]
+            .filter((i) => i.checked)
+            .map((i) => i.dataset.purpose)
+            .join();
+          for (const input of document.querySelectorAll<HTMLInputElement>(
+            "[data-purpose]",
+          ))
+            input.checked = p.tools.includes(input.dataset.purpose as any);
+          setLayers();
+          setLabels();
+          if (before !== p.tools.join()) configureOperations();
+        },
+      },
       local,
       store: blockStore,
       signal: abort.signal,
@@ -819,7 +884,10 @@ el("execution-mode").addEventListener("change", configureOperations);
 for (const input of document.querySelectorAll<HTMLInputElement>(
   "[data-purpose]",
 ))
-  input.addEventListener("change", configureOperations);
+  input.addEventListener("change", () => {
+    configureOperations();
+    document.dispatchEvent(new Event("atlas-view-change"));
+  });
 function setLabels() {
   saveLayers();
   world?.refresh();
@@ -830,7 +898,10 @@ function setLabels() {
   );
 }
 for (const id of ["place-labels", "street-labels", "poi-labels"])
-  el<HTMLInputElement>(id).onchange = setLabels;
+  el<HTMLInputElement>(id).onchange = () => {
+    setLabels();
+    document.dispatchEvent(new Event("atlas-view-change"));
+  };
 function setLayers() {
   map?.setLayers(selectedLayers());
   saveLayers();
@@ -854,9 +925,13 @@ el<HTMLInputElement>("offline").onchange = (event) => {
   el("connection-dot").style.background = offline ? "#c88a41" : "#688668";
   el("error").hidden = true;
 };
-document
-  .querySelectorAll<HTMLInputElement>("[data-mask]")
-  .forEach((input) => (input.onchange = setLayers));
+document.querySelectorAll<HTMLInputElement>("[data-mask]").forEach(
+  (input) =>
+    (input.onchange = () => {
+      setLayers();
+      document.dispatchEvent(new Event("atlas-view-change"));
+    }),
+);
 el("highest-peak").onclick = async () => {
   const button = el<HTMLButtonElement>("highest-peak");
   button.disabled = true;

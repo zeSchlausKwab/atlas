@@ -1,4 +1,13 @@
 export function activateTab(name: string, focus = false) {
+  const section =
+    name === "style"
+      ? "appearance"
+      : name === "data"
+        ? "layers"
+        : name === "composer"
+          ? "sources"
+          : undefined;
+  if (section) name = "map";
   document.body.dataset.tab = name;
   for (const tab of document.querySelectorAll<HTMLButtonElement>(
     '[role="tab"]',
@@ -12,6 +21,10 @@ export function activateTab(name: string, focus = false) {
     '[role="tabpanel"]',
   ))
     panel.hidden = panel.dataset.panel !== name;
+  if (section)
+    document.dispatchEvent(
+      new CustomEvent("atlas-map-section", { detail: section }),
+    );
   document.dispatchEvent(new Event("atlas-tab"));
 }
 export function setupTabs() {
@@ -41,11 +54,20 @@ export function setupTabs() {
       return;
     }
     const name = newHash.get("tab");
-    if (tabs.some((t) => t.dataset.tab === name)) activateTab(name!);
+    if (
+      name &&
+      (["composer", "style", "data"].includes(name) ||
+        tabs.some((t) => t.dataset.tab === name))
+    )
+      activateTab(name!);
   });
   const initial = new URLSearchParams(location.hash.slice(1)).get("tab");
   activateTab(
-    tabs.some((t) => t.dataset.tab === initial) ? initial! : "explore",
+    initial &&
+      (["composer", "style", "data"].includes(initial) ||
+        tabs.some((t) => t.dataset.tab === initial))
+      ? initial
+      : "map",
   );
   document
     .getElementById("open-composer")

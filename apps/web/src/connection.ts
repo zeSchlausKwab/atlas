@@ -23,7 +23,7 @@ export async function clientConnection() {
     try {
       const next = new URL(location.href);
       next.searchParams.set("server", serverAddress(input.value));
-      for (const key of ["map", "maps", "source", "api"])
+      for (const key of ["map", "maps", "source", "api", "viewRecipe"])
         next.searchParams.delete(key);
       next.hash = "tab=composer";
       location.assign(next.href);
