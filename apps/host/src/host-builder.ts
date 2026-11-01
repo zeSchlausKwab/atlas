@@ -476,15 +476,17 @@ function jobs(values: PreparationJob[]) {
   for (const job of values) {
     const card = text("article", "", "preparation-card"),
       heading = text("div", "", "preparation-card-heading");
-    card.dataset.state =
-      job.state === "ready" && job.served === false ? "retained" : job.state;
+    const visibleState = job.checkpointParking
+      ? job.checkpointParking.phase === "parked"
+        ? "paused · NAS"
+        : "checkpoint transfer"
+      : job.state === "ready" && job.served === false
+        ? "retained"
+        : job.state;
+    card.dataset.state = job.checkpointParking ? "cancelled" : visibleState;
     heading.append(
       text("h3", job.name),
-      text(
-        "span",
-        job.state === "ready" && job.served === false ? "retained" : job.state,
-        "state-badge",
-      ),
+      text("span", visibleState, "state-badge"),
     );
     card.append(heading);
     if (job.state === "ready" && job.manifest) {
@@ -636,6 +638,35 @@ function jobs(values: PreparationJob[]) {
       );
       library.append(card);
     } else {
+      if (job.checkpointParking) {
+        const p = job.checkpointParking;
+        const bar = document.createElement("progress");
+        bar.max = p.total || 1;
+        bar.value = p.completed;
+        bar.setAttribute(
+          "aria-label",
+          `${p.phase} checkpoints for ${job.name}`,
+        );
+        card.append(
+          text(
+            "p",
+            p.phase === "parked"
+              ? "Build paused. Verified checkpoints are retained on the NAS. Restore them to the SSD before resuming."
+              : `${p.phase === "verifying" ? "Verifying the NAS copy" : p.phase === "error" ? "Checkpoint transfer needs attention" : "Copying checkpoints to the NAS"} · ${bytes(p.completed)} / ${bytes(p.total)}${p.total ? ` · ${((100 * p.completed) / p.total).toFixed(1)}%` : ""}`,
+          ),
+          bar,
+        );
+        if (p.error) card.append(text("p", p.error));
+        card.append(
+          text(
+            "p",
+            "Local data is reclaimed only after SHA-256 verification. Resume and delete remain locked until checkpoints are restored.",
+            "quiet",
+          ),
+        );
+        list.append(card);
+        continue;
+      }
       if (["failed", "cancelled"].includes(job.state)) {
         const resume = text(
           "button",

@@ -36,3 +36,23 @@ For the adjacent-map demo, park the stopped Western Europe work directory on the
 For the full Western Europe area, reduce peak compiler working space before resuming. Candidate changes: immutable completed artifacts on NAS, bounded geographic source partitions, reclaiming stage inputs only after durable receipts, and final archive streaming to the chosen output volume. Do not casually relocate the writable SQLite database to the current GVFS/SMB share. Validate any remote working-store strategy explicitly.
 
 The final deliverable remains one self-contained `.atlas` per map. Temporary storage placement is independent of that format requirement. Neither reducing the reserve nor removing old release caches supplies enough space to finish the current continental pipeline reliably.
+
+## Selected follow-up
+
+The user selected the two smaller adjacent builds, retaining Western Europe paused. Both satellite imports subsequently completed. Free space after their cleanup was about 20 GiB.
+
+The recovery utility `scripts/park-checkpoints.ts` moves explicitly selected inactive checkpoint files, verifying SHA-256 by reading the NAS copy before unlinking the original. It keeps a local `checkpoint-parked.json` manifest and an archive manifest. The host refuses resume/delete while that marker exists and displays transfer progress. An explicit verified restore clears the marker. The extracted PBF remains at its original path and retains its original mtime, so native checkpoint identity is preserved.
+
+For this incident, park `compiler/source-v4.sqlite` and its rollback journal under the NAS `atlas/checkpoints/western-europe-20261101/`. This reclaims approximately 195 GiB; coordinates, completed routing and the PBF remain on SSD. The writable SQLite database is **not** opened on the NAS. Follow-up job IDs are Rhine–Alps `569e36a3-7e75-4b44-ba77-5b43c42b546c` and Alps–Danube `1c976fbf-55b3-4ee5-9e42-ea63168e3b9e`. They are submitted sequentially through the normal queue once parking is complete, with no storage override.
+
+To restore later, stop the job and provide enough SSD space for the archived files plus the reserve:
+
+```sh
+bun scripts/park-checkpoints.ts --restore \
+  --job b8272577-990e-4eca-85b1-839c7be9ba18 \
+  --work /home/nixuser/atlas/shared/data/hosted/b8272577-990e-4eca-85b1-839c7be9ba18.work
+```
+
+Archive files are retained after restoration. A transfer interrupted by a caught I/O error can be rerun with the same arguments; already verified files are checked and reused. A hard process kill can leave `checkpoint-parking.lock`: confirm the old process is gone before removing that lock. Do not remove the guard manifest to bypass restoration.
+
+Validation: 390 Bun tests passed; TypeScript and the host build passed. An 8 MiB probe was copied to the actual NAS, fsynced, SHA-256 verified, restored and compared byte-for-byte before starting the real transfer.

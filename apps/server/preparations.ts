@@ -1,3 +1,8 @@
+import {
+  assertCheckpointsLocal,
+  readParking,
+  type ParkingState,
+} from "../../packages/provisioning/src/checkpoint-parking";
 import { OSM_ROUTING_CONTRACT } from "../../packages/format/src/routing-contract";
 import { recoverBuild, type BuildRecovery } from "./preparation-recovery";
 import type { ArchiveImport } from "./archive-import";
@@ -77,6 +82,7 @@ export interface PreparationJob {
     | "deleting";
   selection: PackageSelection;
   resumeCheckpoint?: boolean;
+  checkpointParking?: ParkingState;
   recovery?: BuildRecovery;
   allowStorageRisk?: boolean;
   sourcePlan?: PbfPlan;
@@ -273,6 +279,7 @@ export class Preparations {
     const job = this.jobs.get(id);
     if (!job || !["failed", "cancelled"].includes(job.state))
       throw new Error("Only stopped preparations can be queued again.");
+    await assertCheckpointsLocal(resolve(this.directory, `${id}.work`));
     if (job.recovery) {
       job.recovery.retries = 0;
       delete job.recovery.nextAttemptAt;
@@ -791,6 +798,10 @@ export class Preparations {
     });
   }
   async create(value: unknown, previous?: PreparationJob, start = false) {
+    if (previous)
+      await assertCheckpointsLocal(
+        resolve(this.directory, `${previous.id}.work`),
+      );
     if (this.closing)
       throw new Error("Server is stopping; try again after restart.");
     const extra = value as {
@@ -1293,6 +1304,7 @@ export class Preparations {
   /** Persist a tombstone before unlinking so a restart completes partial deletion. */
   async delete(id: string) {
     const file = this.path(id);
+    await assertCheckpointsLocal(resolve(this.directory, `${id}.work`));
     const job = this.jobs.get(id);
     if (!job) throw new Error("Unknown dataset");
     if (this.active === id || ["running", "cancelling"].includes(job.state))
@@ -1378,8 +1390,15 @@ export class Preparations {
           codec: "rcl3",
         },
         cachedSources: await verifiedSources(this.sourceDirectory),
-        jobs: [...this.jobs.values()].sort((a, b) =>
-          b.createdAt.localeCompare(a.createdAt),
+        jobs: await Promise.all(
+          [...this.jobs.values()]
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .map(async (job) => ({
+              ...job,
+              checkpointParking: await readParking(
+                resolve(this.directory, `${job.id}.work`),
+              ),
+            })),
         ),
       });
     if (request.method !== "POST") return json({ error: "Use POST" }, 405);
