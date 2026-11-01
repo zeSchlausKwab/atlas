@@ -93,3 +93,22 @@ split SQLite/payload placement and interrupted publication. A native fixture
 compares all routing, search and display block hashes between single-disk and
 split builds, then verifies resume reuses the saved archives. Browser checks
 exercise folder testing and saved policy on desktop and mobile.
+
+## MyCloud deployment — 1 November 2026
+
+Deployed code revision `49c89d3` as
+`20261101T071720543Z-49c89d359bb1-9c05556e`. The LAN host's default policy is
+`when-needed`, with the existing MyCloud Public share's
+`atlas/atlas-workspaces` folder selected. The actual share was detected as a
+network filesystem on a different volume.
+
+Validation passed: 396 Bun tests, TypeScript, desktop/mobile UI checks without
+browser errors, and a native build against the real NAS. The NAS probe generated
+13 routing/search/display blocks, reused its stage archives on rerun, verified
+cross-volume copy/readback, and tested partial-copy cancellation without losing
+the source archive. Probe directories were removed afterward.
+
+The separately running Western Europe checkpoint transfer was not interrupted.
+It had finished copying and entered checksum verification when this setting was
+activated. The two smaller existing jobs retain their original SSD paths and
+the previously configured recovery sequence; this setting does not migrate them.
