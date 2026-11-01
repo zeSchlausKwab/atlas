@@ -56,3 +56,5 @@ bun scripts/park-checkpoints.ts --restore \
 Archive files are retained after restoration. A transfer interrupted by a caught I/O error can be rerun with the same arguments; already verified files are checked and reused. A hard process kill can leave `checkpoint-parking.lock`: confirm the old process is gone before removing that lock. Do not remove the guard manifest to bypass restoration.
 
 Validation: 390 Bun tests passed; TypeScript and the host build passed. An 8 MiB probe was copied to the actual NAS, fsynced, SHA-256 verified, restored and compared byte-for-byte before starting the real transfer.
+
+The transfer was started as `atlas-park-western-20261101.service` (user systemd service). It continues without a browser or SSH session, retries caught failures with a 60-second delay, and queues the two follow-up jobs only after verification and local reclamation. At 06:38 UTC, 7.54 GB had copied successfully. Use the host activity card for live copy/verification progress or `journalctl --user -u atlas-park-western-20261101.service`. This records a running recovery, not a completed archive or completed vector builds.

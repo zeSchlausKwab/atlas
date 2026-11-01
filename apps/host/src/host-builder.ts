@@ -455,7 +455,17 @@ function jobs(values: PreparationJob[]) {
   hostActivity(
     "Build",
     "builds",
-    values.map((j) => ({ id: j.id, name: j.name, state: j.state })),
+    values.map((j) => ({
+      id: j.id,
+      name: j.name,
+      state: j.checkpointParking
+        ? j.checkpointParking.phase === "parked"
+          ? "cancelled"
+          : j.checkpointParking.phase === "error"
+            ? "failed"
+            : "running"
+        : j.state,
+    })),
   );
   activeBuild = values.some((j) => ["running", "cancelling"].includes(j.state));
   for (const id of composition)
