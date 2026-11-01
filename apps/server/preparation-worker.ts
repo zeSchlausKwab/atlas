@@ -1,3 +1,10 @@
+import {
+  initializeWorkspace,
+  checkWorkspace,
+  removeWorkspace,
+  type BuildWorkspace,
+} from "../../packages/provisioning/src/work-storage";
+import { publishPrepared } from "../../packages/provisioning/src/publish-prepared";
 import { packComposition } from "../../packages/provisioning/src/composition";
 import type { CompositionExport } from "./preparations";
 import { importArchive, type ArchiveImport } from "./archive-import";
@@ -44,6 +51,7 @@ process.on(
   "message",
   async (data: {
     type: string;
+    workspace?: BuildWorkspace;
     source: string;
     output: string;
     selection: PackageSelection;
@@ -75,7 +83,7 @@ process.on(
     if (data.type !== "start" || started) return;
     started = true;
     const { output } = data,
-      work = output.replace(/\.atlas$/, ".work");
+      work = data.workspace?.work ?? output.replace(/\.atlas$/, ".work");
     let targetFile: PackageSource | undefined;
     let file: PackageSource | undefined,
       result: PackageSource | undefined,
@@ -100,6 +108,7 @@ process.on(
       if (checkingDisk || abort.signal.aborted) return;
       checkingDisk = true;
       try {
+        if (data.workspace) await checkWorkspace(data.workspace);
         const storage = await readStorage(dirname(output));
         if (storage.availableBytes < DISK_RESERVE)
           throw new Error(
@@ -114,6 +123,11 @@ process.on(
     };
     const diskTimer = setInterval(() => void checkDisk(), 1000);
     try {
+      if (data.workspace) {
+        await initializeWorkspace(data.workspace);
+        process.env.TMPDIR = work;
+        process.env.SQLITE_TMPDIR = work;
+      }
       await checkDisk();
       abort.signal.throwIfAborted();
       if (data.compositionExport) {
@@ -342,6 +356,7 @@ process.on(
               work,
               abort.signal,
               report,
+              data.workspace?.artifacts,
             )
           : data.sourcePlan
             ? await importPbf(
@@ -353,11 +368,29 @@ process.on(
                 report,
               )
             : data.source;
-        if (data.cachedSource && planCachedBuild(data.selection).partitioned) {
+        if (
+          data.cachedSource &&
+          (planCachedBuild(data.selection).partitioned || data.workspace)
+        ) {
           // The partitioned compiler already applies the exact capability/polygon selection.
           // Move the completed archive; avoid rewriting Europe through the regional excerpt path.
           abort.signal.throwIfAborted();
-          await rename(source, output);
+          await publishPrepared(
+            source,
+            output,
+            abort.signal,
+            (completed, total) =>
+              report({
+                phase: "verifying",
+                message:
+                  "Copying and verifying the finished map on the map disk",
+                completed,
+                total,
+                unit: "bytes",
+                readBytes: completed,
+                writtenBytes: completed,
+              }),
+          );
         } else {
           file = await PackageSource.open(source);
           abort.signal.throwIfAborted();
@@ -413,8 +446,19 @@ process.on(
           !data.imageImport &&
           !data.archiveImport) ||
         (final!.type === "ready" && !data.archiveImport)
-      )
-        await rm(work, { recursive: true, force: true });
+      ) {
+        if (data.workspace) {
+          try {
+            await removeWorkspace(data.workspace);
+            await rm(work, { recursive: true, force: true });
+          } catch (e) {
+            console.error(
+              "Finished map retained; working files could not be cleaned:",
+              e,
+            );
+          }
+        } else await rm(work, { recursive: true, force: true });
+      }
     }
     // A large manifest can still be buffered when send() returns. Do not exit
     // until the IPC write completes, or the host can mistake success for failure.

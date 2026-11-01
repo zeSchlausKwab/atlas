@@ -433,6 +433,12 @@ See [deployment, rollback and NixOS setup](docs/DEPLOYMENT.md) and the
 [server demo roadmap](docs/DEMO-ROADMAP.md). `ATLAS_DATA_DIR` keeps runtime state
 outside code releases; `/health` reports the deployed release identifier.
 
+The host **Storage** tab can assign new cached-PBF builds to another mounted
+disk, either always or when the map disk is short of estimated space. NAS
+assistance places extracted files and intermediate archives on the share while
+keeping writable databases on the local disk. Finished maps remain standalone
+files in the normal library. See [build storage](docs/BUILD-STORAGE.md).
+
 ## Analysis source retention
 
 The host's **Analysis** preset or **Analysis source** capability retains tagged

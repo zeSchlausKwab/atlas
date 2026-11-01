@@ -45,6 +45,8 @@ export interface PartitionedOptions {
   input: string;
   output: string;
   work: string;
+  /** Sequential archives may live on a NAS; writable databases stay in work. */
+  artifacts?: string;
   selection: PackageSelection;
   source?: Manifest["source"];
   signal?: AbortSignal;
@@ -62,6 +64,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
       ? AbortSignal.any([o.signal, abort.signal])
       : abort.signal;
   await mkdir(o.work, { recursive: true });
+  const artifactRoot = o.artifacts ?? o.work;
+  await mkdir(artifactRoot, { recursive: true });
   await mkdir(dirname(o.output), { recursive: true });
   const inputHash = await fileHash(
     o.input,
@@ -110,8 +114,13 @@ export async function compilePartitioned(o: PartitionedOptions) {
   }
   let failure: Error | undefined;
   const space = async () => {
-    const fs = await statfs(o.work);
-    if (fs.bavail * fs.bsize < (o.reserveBytes ?? 2 * 1024 ** 3)) {
+    const disks = await Promise.all(
+      [...new Set([o.work, artifactRoot])].map((p) => statfs(p)),
+    );
+    if (
+      Math.min(...disks.map((fs) => fs.bavail * fs.bsize)) <
+      (o.reserveBytes ?? 2 * 1024 ** 3)
+    ) {
       failure = new Error(
         "Build paused at the free-space reserve. Completed stages remain available for resume.",
       );
@@ -170,7 +179,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
   async function stage(name: string, build: (path: string) => Promise<void>) {
     signal.throwIfAborted();
     await space();
-    const path = join(o.work, name),
+    const path = join(name.endsWith(".atlas") ? artifactRoot : o.work, name),
       receipt = state.completed[name];
     const verify = () => {
       const report = measuredProgress(
@@ -208,7 +217,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
     path: string,
     build: (w: StreamWriter) => Promise<Omit<Manifest, "snapshot">>,
   ) {
-    const w = await new StreamWriter(path, s.maxBytes).open();
+    const w = await new StreamWriter(
+      path,
+      s.maxBytes,
+      join(o.work, path.split("/").at(-1)! + ".directory.part"),
+    ).open();
     try {
       const manifest = await build(w);
       const label = path.split("/").at(-1)!;

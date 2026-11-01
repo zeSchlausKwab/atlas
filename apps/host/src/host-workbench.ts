@@ -66,6 +66,13 @@ export function startWorkbench() {
       sections: ["federation", "discovery"],
     },
     {
+      id: "storage",
+      title: "Storage",
+      heading: "Room to build.",
+      note: "Keep maps close. Give preparation a little more room on another disk or your NAS.",
+      sections: ["storage"],
+    },
+    {
       id: "operations",
       title: "Tools",
       heading: "Give your maps abilities.",

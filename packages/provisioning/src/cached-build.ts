@@ -188,6 +188,7 @@ export async function importCachedPbf(
   work: string,
   signal: AbortSignal,
   report: (p: PreparationProgress) => void,
+  artifacts?: string,
 ) {
   const plan = planCachedBuild(selection);
   const sourceStat = await stat(source.path);
@@ -195,7 +196,7 @@ export async function importCachedPbf(
     throw new Error(
       "Verified PBF changed on disk. Select a verified source again.",
     );
-  if (plan.partitioned || selection.ocean)
+  if (plan.partitioned || selection.ocean || artifacts)
     return importPartitionedCached(
       source,
       selection,
@@ -203,6 +204,7 @@ export async function importCachedPbf(
       plan.bounds,
       signal,
       report,
+      artifacts,
     );
   const identity = createHash("sha256")
     .update(

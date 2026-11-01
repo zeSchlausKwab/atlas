@@ -92,3 +92,38 @@ test("in-place archive compaction preserves payload across overlapping chunks an
     await rm(dir, { recursive: true, force: true });
   }
 }, 30000);
+
+test("archive payloads and SQLite directory can use separate disks", async () => {
+  const { mkdir } = await import("node:fs/promises");
+  const dir = await mkdtemp("/tmp/atlas-writer-split-");
+  await mkdir(dir + "/ssd");
+  await mkdir(dir + "/nas");
+  const output = dir + "/nas/map.atlas",
+    db = dir + "/ssd/directory.sqlite";
+  const writer = await new StreamWriter(output, 1024 ** 2, db).open();
+  try {
+    const bytes = new TextEncoder().encode("query fixture");
+    await writer.add({ key: "query/test", bytes });
+    expect(await Bun.file(db).exists()).toBe(true);
+    expect(await Bun.file(output + ".directory.part").exists()).toBe(false);
+    expect(await Bun.file(output + ".payload.part").exists()).toBe(true);
+    await writer.finish(m);
+    const reader = await new AtlasReader(
+      new FileSource(Bun.file(output)),
+    ).open();
+    expect(await reader.block("query/test")).toEqual(bytes);
+    reader.dispose();
+    expect(await Bun.file(db).exists()).toBe(false);
+    const aborted = await new StreamWriter(
+      output + ".new",
+      1024 ** 2,
+      db,
+    ).open();
+    await aborted.abort();
+    expect(await Bun.file(db).exists()).toBe(false);
+    expect(await Bun.file(output + ".new.payload.part").exists()).toBe(false);
+  } finally {
+    await writer.abort();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

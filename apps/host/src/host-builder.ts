@@ -499,6 +499,14 @@ function jobs(values: PreparationJob[]) {
       text("span", visibleState, "state-badge"),
     );
     card.append(heading);
+    if (job.workspace)
+      card.append(
+        text(
+          "p",
+          `${job.workspace.mode === "nas-assisted" ? "NAS-assisted build" : "Working disk"} · ${job.workspace.location.label} · ${job.workspace.reason === "low-space" ? "selected for extra space" : "preferred workspace"}`,
+          "quiet",
+        ),
+      );
     if (job.state === "ready" && job.manifest) {
       const m = job.manifest;
       if (job.sourcePlan)
@@ -898,6 +906,10 @@ async function refresh() {
       el("storage-free").textContent =
         "Server disk information is unavailable. Preparation will check again before starting.";
     renderStorage();
+    el("work-storage").textContent =
+      data.workStorage?.policy !== "map-disk" && data.workStorage?.location
+        ? `New cached-PBF builds: ${data.workStorage.policy === "always" ? "always use" : "overflow to"} ${data.workStorage.location.label}${data.workStorage.location.kind === "network" ? " · NAS assistance; databases stay on the map disk" : ""}. Server checks both locations before starting.`
+        : "New builds use the map disk for temporary files.";
     return data;
   } catch (e) {
     el("message").textContent = String(e);

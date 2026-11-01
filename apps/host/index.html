@@ -37,6 +37,125 @@
       <p id="host-access" class="host-source-note" role="status">
         Checking administration access…
       </p>
+      <section id="storage" class="workspace-storage">
+        <div class="storage-route" aria-label="Storage layout">
+          <article class="storage-place storage-maps">
+            <p class="eyebrow">01 / FINISHED MAPS</p>
+            <h2>A permanent home.</h2>
+            <p>Your published .atlas files stay on the map disk.</p>
+            <strong id="work-primary-free">Checking space…</strong
+            ><meter
+              id="work-primary-meter"
+              aria-label="Free map disk space"
+            ></meter
+            ><code id="work-primary-path"></code>
+          </article>
+          <span class="storage-route-arrow" aria-hidden="true">←</span>
+          <article class="storage-place storage-builds">
+            <p class="eyebrow">02 / WORK IN PROGRESS</p>
+            <h2>Space to prepare.</h2>
+            <p id="work-layout-note">
+              Choose where PBF builds keep their intermediate files.
+            </p>
+            <strong id="work-extra-free">Map disk by default</strong
+            ><meter
+              id="work-extra-meter"
+              aria-label="Free working disk space"
+              hidden
+            ></meter
+            ><code id="work-extra-path"></code>
+          </article>
+        </div>
+        <form id="work-storage-form" class="storage-settings">
+          <div class="host-step-heading">
+            <span class="host-step-number">↳</span>
+            <h2>Where should builds work?</h2>
+            <button id="work-refresh" type="button">Refresh disks</button>
+          </div>
+          <fieldset class="storage-policies">
+            <legend class="sr-only">Build storage policy</legend>
+            <label
+              ><input
+                type="radio"
+                name="work-policy"
+                value="map-disk"
+                checked
+              /><span
+                ><strong>Map disk</strong
+                ><small>Everything stays together.</small></span
+              ></label
+            >
+            <label
+              ><input
+                type="radio"
+                name="work-policy"
+                value="when-needed"
+              /><span
+                ><strong>Use extra space when needed</strong
+                ><small
+                  >Choose the extra location when the map disk falls short of
+                  the build estimate.</small
+                ></span
+              ></label
+            >
+            <label
+              ><input type="radio" name="work-policy" value="always" /><span
+                ><strong>Always use extra space</strong
+                ><small
+                  >Give every new PBF build the selected workspace.</small
+                ></span
+              ></label
+            >
+          </fieldset>
+          <div id="work-extra-options">
+            <h3>Choose a location on this server</h3>
+            <p class="quiet">
+              Use a detected location, or enter a mounted folder. Atlas creates
+              its own atlas-workspaces folder inside it.
+            </p>
+            <div id="work-locations" class="storage-locations"></div>
+            <div class="storage-folder-fields">
+              <label
+                >Folder on the server<input
+                  id="work-path"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="/mnt/build-disk or a mounted NAS folder" /></label
+              ><label
+                >Name<input
+                  id="work-label"
+                  type="text"
+                  maxlength="80"
+                  placeholder="MyCloud NAS"
+              /></label>
+            </div>
+            <button id="work-test" type="button">Test this folder</button>
+            <p id="work-test-result" role="status"></p>
+          </div>
+          <div class="storage-explanation">
+            <h3 id="work-placement-title">
+              One file at the end. Room along the way.
+            </h3>
+            <p id="work-placement-detail">
+              A local disk can hold the whole workspace. With NAS assistance,
+              extracted PBFs and intermediate map archives go to the NAS;
+              writable databases and temporary indexes stay on the map disk.
+            </p>
+            <p>
+              Finished maps are verified and stored in your map library. Each
+              build keeps its assigned paths through stop, resume and server
+              restart. Existing builds are not moved.
+            </p>
+          </div>
+          <div class="storage-save">
+            <button type="submit" id="work-save">Save build storage</button>
+            <p id="work-status" role="status">
+              Applies to new builds from PBF files in the source library.
+              Imports and amendments keep their existing storage.
+            </p>
+          </div>
+        </form>
+      </section>
       <section id="prepare" class="host-builder">
         <section class="host-source-step" aria-labelledby="source-step-title">
           <div class="host-step-heading">
@@ -267,7 +386,7 @@
 
             <section class="host-storage" aria-label="Server storage">
               <div class="host-storage-heading">
-                <h3>Server storage</h3>
+                <h3>Map disk space</h3>
                 <button id="prepare-storage-refresh" type="button">
                   Refresh space
                 </button>
@@ -283,6 +402,8 @@
                 aria-label="Available server disk space"
               ></meter>
               <p id="prepare-storage-estimate"></p>
+              <p id="prepare-work-storage"></p>
+              <a href="#storage">Choose build storage ↗</a>
               <p class="quiet">
                 No fixed download or output size cap. Preparation also needs
                 temporary files; the final size is not known yet. If the

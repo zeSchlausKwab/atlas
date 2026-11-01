@@ -1,4 +1,9 @@
 import {
+  WorkStorage,
+  removeWorkspace,
+  type BuildWorkspace,
+} from "../../packages/provisioning/src/work-storage";
+import {
   assertCheckpointsLocal,
   readParking,
   type ParkingState,
@@ -83,6 +88,7 @@ export interface PreparationJob {
   selection: PackageSelection;
   resumeCheckpoint?: boolean;
   checkpointParking?: ParkingState;
+  workspace?: BuildWorkspace;
   recovery?: BuildRecovery;
   allowStorageRisk?: boolean;
   sourcePlan?: PbfPlan;
@@ -107,6 +113,7 @@ export interface CompositionExport {
   maxBytes?: number;
 }
 export class Preparations {
+  readonly workStorage: WorkStorage;
   readonly sources = new PbfSources();
   readonly jobs = new Map<string, PreparationJob>();
   beforeDelete?: (id: string) => Promise<void>;
@@ -123,7 +130,9 @@ export class Preparations {
     readonly sourcePath: string,
     readonly source: Manifest,
     private readonly access: AdminAccess,
-  ) {}
+  ) {
+    this.workStorage = new WorkStorage(directory);
+  }
   static async open(
     directory: string,
     sourcePath: string,
@@ -196,6 +205,8 @@ export class Preparations {
     return work;
   }
   private async cleanup(id: string, keepWork = false) {
+    const workspace = this.jobs.get(id)?.workspace;
+    if (!keepWork && workspace) await removeWorkspace(workspace);
     if (!keepWork)
       await rm(resolve(this.directory, `${id}.work`), {
         recursive: true,
@@ -1004,8 +1015,9 @@ export class Preparations {
       previous?.resumeCheckpoint && cached
         ? Bun.file(
             resolve(
-              this.directory,
-              `${previous.id}.work/extraction/area.osm.pbf`,
+              previous.workspace?.artifacts ??
+                resolve(this.directory, `${previous.id}.work`),
+              "extraction/area.osm.pbf",
             ),
           ).size
         : 0;
@@ -1031,10 +1043,25 @@ export class Preparations {
                     atlasBytes: Bun.file(inputPath).size,
                   });
     const disk = await readStorage(this.directory);
-    checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
+    const jobId = previous?.id ?? crypto.randomUUID();
+    // Existing jobs keep their exact paths. New cached-PBF builds can use the configured disk.
+    const workspace =
+      previous?.workspace ??
+      (!previous && cached
+        ? await this.workStorage.choose(jobId, needed, disk.availableBytes)
+        : undefined);
+    if (workspace)
+      await this.workStorage.admit(
+        workspace,
+        needed,
+        disk.availableBytes,
+        allowStorageRisk,
+      );
+    else checkStorageEstimate(needed, disk.availableBytes, allowStorageRisk);
     if (!start) {
       const job: PreparationJob = {
-        id: previous?.id ?? crypto.randomUUID(),
+        id: jobId,
+        workspace,
         name: selection.name.trim(),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
         state: "queued",
@@ -1072,7 +1099,7 @@ export class Preparations {
       throw new Error(
         "Another preparation is running. Wait for it or cancel it first.",
       );
-    const id = previous?.id ?? crypto.randomUUID();
+    const id = jobId;
     this.active = id;
     this.activeSource = atlas?.id;
     try {
@@ -1083,6 +1110,7 @@ export class Preparations {
       }
       const job: PreparationJob = Object.assign(previous ?? {}, {
         id,
+        workspace,
         name: selection.name.trim(),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
         state: "running",
@@ -1229,6 +1257,7 @@ export class Preparations {
       });
       worker.send({
         type: "start",
+        workspace: job.workspace,
         source: inputPath,
         output: this.path(id),
         selection: job.selection,
@@ -1361,11 +1390,17 @@ export class Preparations {
         });
     if (!this.access(request, remoteAddress))
       return json({ error: ADMIN_DENIED }, 403);
+    if (
+      request.method === "GET" &&
+      url.pathname === "/admin/preparations/work-storage"
+    )
+      return json(await this.workStorage.status());
     if (request.method === "GET" && url.pathname === "/admin/preparations")
       return json({
         storage: await readStorage(this.directory).catch(() => ({
           error: "Server disk information is unavailable.",
         })),
+        workStorage: await this.workStorage.settings(),
         source: this.source,
         sourceBytes: Bun.file(this.sourcePath).size,
         available: availability(this.source),
@@ -1449,6 +1484,14 @@ export class Preparations {
       const raw = await request.text();
       if (new TextEncoder().encode(raw).length > 16384)
         return json({ error: "Request too large" }, 413);
+      if (url.pathname === "/admin/preparations/work-storage/test") {
+        const b = JSON.parse(raw);
+        return json(await this.workStorage.test(b.path, b.label));
+      }
+      if (url.pathname === "/admin/preparations/work-storage") {
+        await this.workStorage.save(JSON.parse(raw));
+        return json(await this.workStorage.status());
+      }
       const match = url.pathname.match(
         /^\/admin\/preparations\/([a-f0-9-]{36})\/(cancel|resume|delete)$/,
       );
