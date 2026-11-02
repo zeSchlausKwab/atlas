@@ -894,3 +894,67 @@
   color: var(--ink);
   font: inherit;
 }
+
+/* Keep measured build detail visible inside the narrow Activity rail. */
+.build-progress-panel {
+  margin: 18px 0;
+  padding: 14px 0 0;
+  border-top: 1px solid #c9d9e8;
+}
+.build-progress-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #345c7a;
+}
+.build-progress-heading span {
+  font: 11px var(--mono);
+}
+.build-progress-heading strong {
+  font: 600 20px var(--mono);
+}
+.workbench-activity .build-stage-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 14px 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.workbench-activity .build-stage-list [data-state="active"] {
+  color: #315f83;
+}
+.workbench-activity .build-stage-list [data-state="done"] {
+  color: #496e50;
+}
+.workbench-activity .build-progress-counter {
+  margin: 2px 0 12px;
+  font: 11px/1.6 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.build-progress-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0;
+}
+.build-progress-metrics dt {
+  font-size: 10px;
+  line-height: 1.5;
+  color: #627586;
+}
+.build-progress-metrics dd {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: #314b60;
+  font-variant-numeric: tabular-nums;
+}
+.workbench-activity .build-progress-note {
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+  color: #627586;
+}

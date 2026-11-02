@@ -11,7 +11,7 @@ export function compilerProgress(
       p.completed < 0 ||
       !Number.isSafeInteger(p.total) ||
       p.total < 0 ||
-      p.completed > p.total ||
+      (p.total > 0 && p.completed > p.total) ||
       ![
         "bytes",
         "ways",

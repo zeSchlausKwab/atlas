@@ -551,3 +551,25 @@ test("v1 catalogs and unshared geometry remain readable with exact-tag fallback"
     r.dispose();
   }
 });
+
+test("source object packing emits measured totals and distinguishes later index passes", async () => {
+  const { compilerProgress } = await import(
+    "../packages/provisioning/src/compiler-progress"
+  );
+  const w = new ObjectWriter({ add: async () => {} });
+  const lines: string[] = [];
+  await w.add(tree);
+  await w.add(campus);
+  await w.finish((line) => lines.push(line));
+  const events = lines.map((line) => compilerProgress(line)).filter((p) => !!p);
+  for (const stage of ["semantic-object-packing", "semantic-object-lookup"]) {
+    const last = events.filter((p) => p.stage === stage).at(-1)!;
+    expect(last.completed).toBe(2);
+    expect(last.total).toBe(2);
+    expect(last.stagePercent).toBe(100);
+  }
+  const tags = events.filter((p) => p.stage === "semantic-object-tags").at(-1)!;
+  expect(tags.completed).toBeGreaterThan(0);
+  expect(tags.total).toBe(0);
+  expect(tags.stagePercent).toBeUndefined();
+});

@@ -50,3 +50,12 @@ test("semantic and packaging counters use measurable units", () => {
     compilerProgress(line({ completed: 0, total: 0 }))?.stagePercent,
   ).toBeUndefined();
 });
+
+test("unknown totals retain a real counter without creating a percentage", () => {
+  const p = compilerProgress(
+    line({ completed: 45000, total: 0, unit: "terms" }),
+  );
+  expect(p?.completed).toBe(45000);
+  expect(p?.total).toBe(0);
+  expect(p?.stagePercent).toBeUndefined();
+});

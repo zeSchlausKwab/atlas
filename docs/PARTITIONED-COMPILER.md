@@ -159,7 +159,7 @@ For a compiler already running on older code, `scripts/observe-compilation.ts`
 can read its job messages, completed-stage receipts and source SQLite counts. It
 never edits checkpoints or holds a database connection between samples. It writes
 only a small JSON observation file for the host console, every 15 seconds, and
-exits when no jobs remain active. Unknown legacy sub-stages stay indeterminate.
+exits when no jobs remain active or queued. Pass `--once` to capture one sample. Unknown legacy sub-stages stay indeterminate.
 The console accepts observations only for the exact running job and discards them
 after 45 seconds. This bridge permits a static console update without restarting
 an expensive build; subsequent normal deployments use the new compiler events.
@@ -172,6 +172,23 @@ The bridge is optional and temporary. Native progress remains the fallback when
 it is absent or stale. A normal deployment is still blocked while preparations
 are active. Updating the console alone does not replace an already-running
 compiler or change its recovery guarantees.
+
+### Activity panel and source-object packing
+
+The Activity rail puts running builds first and queued builds in FIFO order.
+It renders a capability-aware stage timeline even for legacy text-only workers,
+plus measured counters, current-pass elapsed time/ETA, saved stage bytes and the
+last reported checkpoint. Unknown totals stay indeterminate; “Observed this
+pass” measures only the observer’s lifetime and is not full compiler elapsed time.
+A checkpoint timestamp identifies saved work, not a promise that every unfinished
+operation resumes from its current counter.
+
+Source-object packing and identity lookup now emit structured progress using the
+writer’s existing object counts. Tag indexing reports a growing term count until
+its total is known; object sorting and tree assembly remain indeterminate.
+These events add no full-table counting pass. The legacy observer honors the job’s
+workspace path and can read a packing denominator only when SQLite permits a
+read-only query. A busy index is left alone and its ETA remains unavailable.
 
 ### Multi-core execution
 

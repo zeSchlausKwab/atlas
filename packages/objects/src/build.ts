@@ -1,3 +1,4 @@
+import { measuredProgress } from "../../provisioning/src/compiler-progress";
 import { PayloadPacker } from "./packing";
 import { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
@@ -189,8 +190,29 @@ export class ObjectWriter {
   }
   async finish(progress: (s: string) => void = () => {}) {
     try {
+      const count = Object.values(this.report.counts).reduce(
+        (a, b) => a + b,
+        0,
+      );
+      progress(
+        "ATLAS_PROGRESS " +
+          JSON.stringify({
+            stage: "semantic-object-index",
+            message: "Indexing source objects for packing",
+            completed: 0,
+            total: 0,
+            unit: "objects",
+          }),
+      );
       this.db.run(
         "COMMIT; CREATE INDEX records_spatial ON records(bucket,cell,id); BEGIN",
+      );
+      const packingProgress = measuredProgress(
+        progress,
+        "semantic-object-packing",
+        "Packing source objects",
+        count,
+        "objects",
       );
       const packer = new PayloadPacker(this.writer, this.next);
       let packed = 0,
@@ -244,13 +266,22 @@ export class ObjectWriter {
         batch.push(v);
         size += row.json.length;
         if (++packed % 10000 === 0) {
-          progress(`Packing source objects · ${packed} objects`);
+          packingProgress(packed);
           await new Promise((r) => setTimeout(r, 0));
         }
       }
       await flush();
       await packer.finish();
+      packingProgress(packed);
       this.db.run("COMMIT");
+      const lookupProgress = measuredProgress(
+        progress,
+        "semantic-object-lookup",
+        "Indexing source identities",
+        count,
+        "objects",
+      );
+      let indexed = 0;
       const lookup: Page[] = [];
       let ids: { id: string; page: string }[] = [];
       for (const row of this.db
@@ -260,13 +291,22 @@ export class ObjectWriter {
         >("SELECT id,page FROM records ORDER BY id")
         .iterate()) {
         ids.push(row);
+        if (++indexed % 10000 === 0) lookupProgress(indexed);
         if (ids.length === 256) {
           lookup.push(await this.page("ids", ids));
           ids = [];
         }
       }
       if (ids.length) lookup.push(await this.page("ids", ids));
-      progress("Building exact tag-value index");
+      lookupProgress(indexed);
+      const tagProgress = measuredProgress(
+        progress,
+        "semantic-object-tags",
+        "Indexing exact tag values",
+        0,
+        "terms",
+      );
+      let indexedTerms = 0;
       const tagPages: Page[] = [];
       let terms: { term: string; root?: Page; pages?: string[] }[] = [],
         termBytes = 0;
@@ -279,6 +319,7 @@ export class ObjectWriter {
       };
       const flushTerm = async () => {
         if (term === undefined) return;
+        tagProgress(++indexedTerms);
         const entry =
             postings.length <= 8
               ? { term, pages: postings.map((p) => p.key) }
@@ -308,11 +349,18 @@ export class ObjectWriter {
       }
       await flushTerm();
       await flushTerms();
-      const tagTree = await this.tree("tag-index", tagPages);
-      const count = Object.values(this.report.counts).reduce(
-        (a, b) => a + b,
-        0,
+      tagProgress(indexedTerms, true);
+      progress(
+        "ATLAS_PROGRESS " +
+          JSON.stringify({
+            stage: "semantic-object-trees",
+            message: "Assembling source object indexes",
+            completed: 0,
+            total: 0,
+            unit: "blocks",
+          }),
       );
+      const tagTree = await this.tree("tag-index", tagPages);
       const spatial = await this.tree("spatial", pages),
         idTree = await this.tree("lookup", lookup);
       await this.writer.add({

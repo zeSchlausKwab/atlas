@@ -1,11 +1,15 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import type { PreparationJob } from "./preparations";
 import { ProgressRate } from "../../packages/provisioning/src/compiler-progress";
 import type { CompilerObservation } from "../../packages/provisioning/src/compiler-observation";
 /** Read-only observer for a compiler already running without structured stage events. */
 export class CompilerObserver {
   private rate = new ProgressRate();
+  private objectTotal = 0;
+  private observedStage = "";
+  private observedSince = Date.now();
   private sourceIdentity = "";
   private featureTotal = 0;
   private cursor = -1;
@@ -35,7 +39,7 @@ export class CompilerObserver {
   ): Promise<CompilerObservation | undefined> {
     if (!job.cachedSource || !["running", "cancelling"].includes(job.state))
       return;
-    const work = join(directory, `${job.id}.work`),
+    const work = job.workspace?.work ?? join(directory, `${job.id}.work`),
       compiler = join(work, "compiler");
     const checkpoint = await Bun.file(join(compiler, "partitioned.json"))
       .json()
@@ -104,7 +108,11 @@ export class CompilerObserver {
       Object.values(completed).reduce((n, c) => n + c.size, 0);
     const dbPath = join(compiler, sourceKey);
     const identity = completed[sourceKey]?.sha256;
-    if (identity && identity !== this.sourceIdentity) {
+    if (
+      identity &&
+      identity !== this.sourceIdentity &&
+      /^(Semantic source objects:|Display batch)/.test(progress.message)
+    ) {
       const total = this.query<{ n: number }>(
         dbPath,
         "SELECT count(*) AS n FROM features",
@@ -122,10 +130,25 @@ export class CompilerObserver {
       const display = progress.message.match(
         /^Display batch \d+ saved \(source cursor (\d+)\)$/,
       );
+      const packing = progress.message.match(
+        /^Packing source objects · (\d+) objects$/,
+      );
       let done: number | undefined,
         total = this.featureTotal,
         stage = "";
-      if (features && !completed["semantics.atlas"]) {
+      if (packing && !completed["semantics.atlas"]) {
+        if (!this.objectTotal) {
+          const count = this.query<{ n: number }>(
+            join(compiler, sourceKey + ".objects-index.sqlite"),
+            "SELECT count(*) AS n FROM records",
+          );
+          if (count) this.objectTotal = count.n;
+        }
+        done = Number(packing[1]);
+        total = this.objectTotal;
+        stage = "semantic-object-packing";
+        progress.message = "Packing source objects";
+      } else if (features && !completed["semantics.atlas"]) {
         done = Number(features[1]);
         stage = "semantic-features";
         const cursor = this.query<{ value: string }>(
@@ -188,7 +211,19 @@ export class CompilerObserver {
         ? this.rate.estimate(stage, progress.completed, progress.total)
         : undefined;
     }
+    if (!progress.checkpointAt) {
+      const checkpointStat = await stat(
+        join(compiler, "partitioned.json"),
+      ).catch(() => undefined);
+      if (checkpointStat)
+        progress.checkpointAt = checkpointStat.mtime.toISOString();
+    }
+    if (this.observedStage !== progress.stage) {
+      this.observedStage = progress.stage ?? "";
+      this.observedSince = Date.now();
+    }
     return {
+      observedElapsedSeconds: (Date.now() - this.observedSince) / 1000,
       id: job.id,
       createdAt: job.createdAt,
       observedAt: new Date().toISOString(),

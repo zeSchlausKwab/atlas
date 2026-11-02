@@ -9,7 +9,7 @@ import {
   currentObservation,
   type CompilerObservation,
 } from "../../../packages/provisioning/src/compiler-observation";
-import { approximateDuration } from "../../../packages/provisioning/src/compiler-progress";
+import { buildProgressPanel, orderBuildJobs } from "./host-build-progress";
 import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
 import { storageSize } from "./host-budget";
@@ -446,7 +446,7 @@ let nextObservationRead = 0;
 function jobs(values: PreparationJob[]) {
   exportJobs = values;
   const views = new Map<string, CompilerObservation>();
-  values = values.map((job) => {
+  values = orderBuildJobs(values).map((job) => {
     const view = currentObservation(observations.get(job.id), job);
     if (!view) return job;
     views.set(job.id, view);
@@ -737,62 +737,8 @@ function jobs(values: PreparationJob[]) {
           );
         card.append(history);
       }
-      const view = views.get(job.id);
-      if (view) {
-        const stages = text("ol", "", "build-stage-list");
-        for (const stage of view.stages) {
-          const item = text(
-            "li",
-            `${stage.state === "done" ? "✓" : stage.state === "active" ? "●" : "○"} ${stage.label}`,
-          );
-          item.dataset.state = stage.state;
-          stages.append(item);
-        }
-        card.append(stages);
-      }
       if (job.state === "running" || job.state === "cancelling") {
-        const progress = document.createElement("progress");
-        progress.max =
-          job.progress.stagePercent !== undefined
-            ? 100
-            : job.progress.total || 1;
-        if (job.progress.stagePercent !== undefined)
-          progress.value = job.progress.stagePercent;
-        else if (job.progress.total) progress.value = job.progress.completed;
-        progress.setAttribute("aria-label", `Preparing ${job.name}`);
-        card.append(
-          progress,
-          text(
-            "p",
-            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit ?? "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} ${job.cachedSource ? "saved stage data" : "Atlas written"}`,
-            "quiet",
-          ),
-        );
-        if (job.progress.stage) {
-          const p = job.progress;
-          card.append(
-            text(
-              "p",
-              `${p.stageIndex ? `Routing stage ${p.stageIndex} of ${p.stageCount} · ` : ""}${p.stagePercent !== undefined ? `${p.stagePercent.toFixed(1)}% of this pass · ` : ""}${p.etaSeconds !== undefined ? `Approximately ${approximateDuration(p.etaSeconds)} left in this stage` : p.total ? "Estimating remaining time from throughput…" : "Working · this step has no reliable total yet"}`,
-              "quiet",
-            ),
-          );
-          if (p.checkpointAt)
-            card.append(
-              text(
-                "p",
-                `Checkpoint saved ${new Date(p.checkpointAt).toLocaleTimeString()} · Resume continues from the last committed batch.`,
-                "quiet",
-              ),
-            );
-          card.append(
-            text(
-              "p",
-              "Percentage and ETA apply to this pass only. Later passes have different costs; a reliable whole-build ETA is not available yet.",
-              "quiet",
-            ),
-          );
-        }
+        card.append(buildProgressPanel(job, views.get(job.id)));
         const cancel = text(
           "button",
           job.state === "cancelling"

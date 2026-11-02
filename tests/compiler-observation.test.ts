@@ -154,3 +154,74 @@ test.each(["source.sqlite", "source-v3.sqlite", "source-v4.sqlite"])(
     }
   },
 );
+
+test("live object packing exposes its committed total and checkpoint with NAS-assisted storage", async () => {
+  const directory = await mkdtemp("/tmp/atlas-packing-progress-");
+  const compiler = `${directory}/custom-local-work/compiler`;
+  await mkdir(compiler, { recursive: true });
+  const db = new Database(`${compiler}/source-v4.sqlite.objects-index.sqlite`);
+  db.run(
+    "CREATE TABLE records(id TEXT PRIMARY KEY); INSERT INTO records VALUES('a'),('b'),('c'),('d')",
+  );
+  db.close();
+  await Bun.write(
+    `${compiler}/partitioned.json`,
+    JSON.stringify({
+      completed: {
+        "transport.atlas": { size: 100, sha256: "a" },
+        "source-v4.sqlite": { size: 200, sha256: "b" },
+      },
+    }),
+  );
+  const job = {
+    id: "fixture",
+    createdAt: "2026-11-02T08:00:00Z",
+    state: "running",
+    cachedSource: { id: "pbf" },
+    workspace: {
+      work: `${directory}/custom-local-work`,
+      artifacts: "/unmounted-nas/not-needed-for-progress",
+    },
+    selection: {
+      profiles: ["walking"],
+      layers: ["water"],
+      featureKinds: ["objects"],
+    },
+    progress: {
+      phase: "compiling",
+      message: "Packing source objects · 2 objects",
+      completed: 2,
+      total: 0,
+      unit: "stages",
+      readBytes: 0,
+      writtenBytes: 50,
+    },
+  } as PreparationJob;
+  try {
+    const before = await Bun.file(
+      `${compiler}/source-v4.sqlite.objects-index.sqlite`,
+    ).bytes();
+    const observation = await new CompilerObserver().sample(job, directory);
+    expect(observation?.progress.stage).toBe("semantic-object-packing");
+    expect(observation?.progress.total).toBe(4);
+    expect(observation?.progress.completed).toBe(2);
+    expect(observation?.progress.stagePercent).toBe(50);
+    expect(observation?.progress.etaSeconds).toBeUndefined();
+    expect(observation?.progress.checkpointAt).toBeTruthy();
+    expect(observation?.stages.map((s) => s.state)).toEqual([
+      "done",
+      "done",
+      "done",
+      "active",
+      "pending",
+      "pending",
+    ]);
+    expect(
+      await Bun.file(
+        `${compiler}/source-v4.sqlite.objects-index.sqlite`,
+      ).bytes(),
+    ).toEqual(before);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
