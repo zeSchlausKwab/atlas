@@ -383,3 +383,22 @@ Validation: 405 Bun tests, TypeScript checking, host asset build, desktop/mobile
 browser fixtures for known and unknown totals, and the deployed assets/live
 progress through a read-only local browser proxy. Browser checks reported no
 uncaught exceptions, console errors or failed requests.
+
+### Counter retention follow-up
+
+UI revision `a5c52c9` preserves prior n/x counters across passes and fixes the
+observer fallback that could erase native counters without a stage name. The
+static-only update and rollback assets are under
+`/home/nixuser/atlas/shared/ui-updates/20261102-a5c52c9/`. The independent observer
+was replaced by `atlas-progress-counters-20261102.service`; `atlas.service` stayed
+PID 725574 with the original start time. No compiler process was restarted.
+
+The live feed recovered **30,766,021 / 30,766,021 objects** for both completed
+packing and identity lookup. The currently running legacy tag-index pass does
+not emit a term count; the UI explicitly reports that instead of removing the
+earlier counters or presenting their total as tag-index progress.
+
+Validation: 409 tests and typechecking passed; browser tests covered a measured
+pass becoming unmeasured, a growing counter with unknown total, previous counts
+after refresh, and desktop/mobile layout. The deployed live feed and UI show both
+completed object counts.
