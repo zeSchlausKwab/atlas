@@ -10,9 +10,15 @@ const option = (name: string, fallback: string) =>
   args.find((a) => a.startsWith(name + "="))?.slice(name.length + 1) ??
   fallback;
 const base = new URL(option("--server", "http://127.0.0.1:3100"));
-const receiptPath = option("--receipt", "data/europe-independent-receipt.json");
+const profile = option("--recipe", "europe");
+if (profile !== "europe" && profile !== "north-sea")
+  throw Error("Unknown --recipe; choose europe or north-sea");
+const receiptPath = option(
+  "--receipt",
+  `data/${profile}-independent-receipt.json`,
+);
 const east = Number(option("--east", "27"));
-const only = option("--only", "western,rhine-alps,alps-danube").split(",");
+const onlyOption = option("--only", "");
 const request = async (path: string, body?: unknown) => {
   const response = await fetch(new URL(path, base), {
     method: body ? "POST" : "GET",
@@ -26,7 +32,8 @@ const request = async (path: string, body?: unknown) => {
   return data;
 };
 const config = await request("/admin/preparations"),
-  plan = europeDemoPlan(config, east);
+  plan = europeDemoPlan(config, east, profile);
+const only = onlyOption ? onlyOption.split(",") : plan.maps.map((m) => m.key);
 if (!only.length || only.some((k) => !plan.maps.some((m) => m.key === k)))
   throw Error("Invalid --only map keys");
 const identity = createHash("sha256")
@@ -98,5 +105,5 @@ for (const map of plan.maps.filter((m) => only.includes(m.key))) {
 console.log(
   queue
     ? `Queue receipt saved to ${receiptPath}. Each job reads the retained planet independently; the host schedules one compiler at a time.`
-    : "Dry run only. Add --queue to submit. --only=rhine-alps,alps-danube queues just the two smaller maps.",
+    : "Dry run only. Add --queue to submit. --recipe=north-sea selects the reduced three-map demo, smaller pair first. --only accepts comma-separated recipe keys.",
 );

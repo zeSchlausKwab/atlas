@@ -38,3 +38,35 @@ test("independent queue refuses legacy servers and missing pinned sources", () =
   );
   expect(() => europeDemoPlan(config, 19)).toThrow("Eastern edge");
 });
+
+test("reduced demo runs the adjacent pair first with ocean and every analysis family", () => {
+  const plan = europeDemoPlan(config, 27, "north-sea");
+  expect(plan.maps.map((m) => m.key)).toEqual([
+    "lower-rhine-west",
+    "lower-rhine-east",
+    "north-sea",
+  ]);
+  const [west, east, big] = plan.maps.map((m) => m.selection);
+  for (const s of [west, east, big]) {
+    expect(s.ocean?.sha256).toBe(config.oceanSource.sha256);
+    expect(s.minZoom).toBe(0);
+    expect(s.maxZoom).toBe(16);
+    expect(s.profiles).toEqual(["walking", "cycling", "driving"]);
+    expect(s.featureKinds).toContain("objects");
+    expect(s.featureKinds).toContain("boundaries");
+    expect(
+      s.search && s.reverse && s.pois && s.streetNames && s.placeNames,
+    ).toBe(true);
+    expect(s.cachedSourceId).toBe("planet");
+    expect(s.maxBytes).toBe(Number.MAX_SAFE_INTEGER);
+    expect(s).not.toHaveProperty("sourceAtlasId");
+  }
+  expect(west.polygon[1][0]).toBeGreaterThan(east.polygon[0][0]);
+  for (const s of [west, east])
+    for (const [x, y] of s.polygon) {
+      expect(x).toBeGreaterThanOrEqual(big.polygon[0][0]);
+      expect(x).toBeLessThanOrEqual(big.polygon[2][0]);
+      expect(y).toBeGreaterThanOrEqual(big.polygon[0][1]);
+      expect(y).toBeLessThanOrEqual(big.polygon[2][1]);
+    }
+});

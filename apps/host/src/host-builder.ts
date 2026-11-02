@@ -947,7 +947,7 @@ function configureSource() {
   }
   for (const [k, label] of [
     ["land", "Landscape"],
-    ["water", "Water"],
+    ["water", "Lakes & rivers"],
     ["roads", "Roads & paths"],
     ["railways", "Railways"],
     ["buildings", "Buildings & heights"],
@@ -967,6 +967,20 @@ function configureSource() {
     !!oceanSource && sourceValue().startsWith("cached:"),
     true,
   );
+  const oceanNote = text(
+    "p",
+    sourceValue().startsWith("cached:") && oceanSource
+      ? "Sea polygons fill the ocean around coasts and islands. They use the separate coastline snapshot; keep this checked for blue seas."
+      : global()
+        ? oceanSource
+          ? "Lakes and rivers are included above. For blue seas, use a retained PBF from Source files with Sea polygons enabled."
+          : "Lakes and rivers are included above. Blue seas need an assembled coastline source configured on this server; coastline lines alone do not fill the ocean."
+        : "This excerpt reuses the source map’s water data. It includes sea fill only if the source map already contains it.",
+  );
+  oceanNote.id = "build-ocean-note";
+  el("layers").querySelector("#build-ocean-note")?.remove();
+  oceanNote.className = "hint";
+  el("layers").append(oceanNote);
   for (const [k, label] of [
     ["places", "Cities & villages"],
     ["streets", "Street names"],

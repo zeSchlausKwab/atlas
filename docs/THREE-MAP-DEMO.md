@@ -1,99 +1,89 @@
-# Three-map stress-test demo
+# Three-map demo
 
-The versioned recipe is `recipes/europe-three-map-demo.json`. Bounds are an
-approximation of the requested screenshot. The variable edge is **east**, initially
-27°E; the other edges are −15°W, 34°N and 65°N.
+## Current recipe: North Sea and Lower Rhine (2 November 2026)
 
-| Map            | Bounds W/S/E/N     | Purpose                                       |
-| -------------- | ------------------ | --------------------------------------------- |
-| Western Europe | −15 / 34 / 27 / 65 | Large AI, geographic and navigation workload  |
-| Rhine–Alps     | 1.5 / 44 / 11 / 54 | Western half of composed test                 |
-| Alps–Danube    | 9 / 44 / 20 / 51   | Eastern half: Vienna, Bratislava and Budapest |
+`recipes/north-sea-demo.json` replaces the oversized Western Europe / Rhine–Alps /
+Alps–Danube experiment for this machine. The goal is three working, independently
+compiled packages, not a 200 GB output target. Geographic extent is reduced;
+capabilities are retained.
 
-The two smaller maps overlap between 9–11°E and both overlap the large map.
-They are derived from the completed large archive, preserving its routing graph
-identity. Each is a complete standalone file; neither needs the parent at runtime.
-Disable the large source when testing cross-map routing on the smaller pair.
+| Build order | Map              | Bounds W/S/E/N        | Demo                                                     |
+| ----------- | ---------------- | --------------------- | -------------------------------------------------------- |
+| 1           | Lower Rhine West | 3 / 50.5 / 5.7 / 53.8 | Rotterdam, Antwerp, Eindhoven, coast                     |
+| 2           | Lower Rhine East | 5.3 / 50.5 / 8 / 53.8 | Lower Rhine, Ruhr, Düsseldorf, northern coast            |
+| 3           | North Sea        | −5.5 / 50 / 10.5 / 55 | Southern Britain, Benelux, northern Germany and open sea |
 
-All use z0–16, walking/cycling/driving graphs, address/location search, nearest
-street lookup, peak queries, labels, extractable geometries, administrative/national
-boundaries, generic tags and ordered relation members, and assembled sea surfaces.
-Unmapped or incomplete OSM objects remain explicitly incomplete; this does not add
-DEM, bathymetry, official hazards, live data, or a global shipping graph.
+The smaller pair overlaps between 5.3–5.7°E. Both lie inside the large map.
+Disable the large map when demonstrating cross-source operations. Every file is
+built independently from the same verified planet PBF with OSM-authoritative
+routing IDs; no build depends on another Atlas file finishing.
 
-## Size and storage
+All retain z0–16 geometry, building heights, labels, walking/cycling/driving,
+isochrones, address/location search, nearest-street lookup, peak queries, selectable
+features, administrative/national boundaries, generic tags and relation members.
+Assembled sea polygons are explicitly enabled, using a separately pinned coastline
+snapshot. These are the implemented capabilities, not a claim that OSM contains
+complete addresses, all relations, bathymetry or a global shipping network.
 
-200 GB (decimal) is a **soft total final-file target**, tentatively 140 + 30 + 30 GB.
-Actual size depends on source density and compression. Recipe `maxBytes` values
-are hard ceilings (220 / 60 / 60 GB), not size predictions or padding targets.
-Measure the first result before adjusting the east edge/child extents. Temporary
-compiler stages can exceed final archive size. The live free-space guard retains
-10 GiB plus a 2 GiB stopping margin; failed/cancelled cached builds keep checkpoints.
+## Storage and build placement
 
-The verified planet stays on the NAS. SQLite, temporary stages and served maps use
-the SSD. The source snapshot is reused: no new planet download is required. The
-coastline ZIP is a separately fingerprinted October 11 source, while the cached
-planet snapshot is October 5.
+The failed Rhine–Alps run had an 11 GiB regional PBF and a 131 GiB source database.
+Final archive size is a poor predictor of peak scratch space. Never admit several
+large SQLite builds just because their final files might fit.
 
-## Queue overnight
+Run the three preparations sequentially. Use the tested NAS working folder for
+extracts and intermediate archives; writable SQLite/native coordinate stores and
+finished files remain on the SSD. A job pins its workspace when it is queued:
+changing the Storage policy later does not move existing work. For these demos,
+select **Always use this working folder** while queuing, then restore the previous
+policy if desired. Runtime checks retain 10 GiB plus a 2 GiB stopping margin.
+There is no fixed output-size cap in the reduced recipe.
 
-From the server release directory (default is a dry run):
+The superseded three build workspaces, including Western Europe's parked NAS
+checkpoint, were deleted with user approval on 2 November. Small diagnostic job
+records remain in `/home/nixuser/atlas/shared/retired-builds-20261102/`.
+The planet, assembled coastline input and three finished satellite packages remain.
+Cleanup left approximately 345 GiB available on the SSD.
+
+## Preflight, queue and recovery
+
+Run inside a configured server release. Preflight uses the real assembled coastline
+source and production tile encoding at z8,10,12,14,16. It checks open sea and land
+in all three regions and the previously missing sea around Madeira. It only visits
+sample tiles, so it does not generate the entire z16 ocean pyramid.
 
 ```sh
-bun scripts/queue-europe-demo.ts --server=http://127.0.0.1:3100
-bun scripts/queue-europe-demo.ts --server=http://127.0.0.1:3100 --queue --receipt=/home/nixuser/atlas/shared/recipes/europe-three-map-receipt.json
+ATLAS_OCEAN_SOURCE=/path/to/water-polygons.zip bun scripts/preflight-demo-water.ts /path/to/preflight
+bun scripts/queue-europe-demo.ts --recipe=north-sea --server=http://127.0.0.1:3100
+bun scripts/queue-europe-demo.ts --recipe=north-sea --server=http://127.0.0.1:3100 --queue --receipt=/path/to/north-sea-receipt.json
 ```
 
-Use `--east=27` to change the large eastern edge (20–35°E, still enclosing the
-children). A saved receipt prevents duplicate submissions on a normal rerun.
-If a submission's outcome is unknown after a connection failure, inspect `/host`
-before retrying. Each job is recorded on disk. The child jobs wait until the parent
-is published; then they run in order. Queued jobs survive a server restart; interrupted active work uses the persisted
-automatic recovery policy below. Remove a queued job with
-its queue button; stopping a running cached-PBF job keeps its checkpoints.
+The first queue command is a dry run. Receipts prevent duplicate submissions and
+pin the source hash and exact recipe. `--only=lower-rhine-west,lower-rhine-east`
+selects just the pair. Jobs survive page closure and server restarts. Completed
+checkpoints are reused after recoverable failures; low disk, checksum errors and
+corrupt databases require attention. Stopped jobs never restart themselves.
+Transient worker failures use the existing bounded automatic retry policy.
 
-The host form can enqueue more preparations while another runs. Source downloads
-have their own persistent queue and continue independently of the compiler queue.
-Only one compiler runs at a time (it still uses the configured native worker pool).
-Deployments refuse to switch code while preparations are running or queued.
-The source-download worker keeps its pinned bundled implementation across deployment.
+The old `--recipe=europe` plan remains available for larger machines, but is not
+the current demo or the recommended queue for this server.
 
-## Acceptance before using the large results
+## Acceptance after compilation
 
-Check all three ready manifests and actual sizes, shared `graphSnapshot`, retention
-reports, address search and cross-seam walking/cycling/driving. Query named areas
-away from the viewport, municipal/national polygons, physical coastlines, sea
-surfaces with island holes, and exact-tag point features. Repeat analysis from cache
-and verify no extra source reads. Local Vienna regressions cover these code paths;
-large-map performance still needs measurement after the builds finish.
+A preflight pass is not evidence that the finished maps or long routes passed.
+Before calling the full demo complete:
 
-## Overnight recovery (2026-10-29)
+- Verify each ready manifest, source authority, all selected capabilities, z0–16
+  sample tiles and sea/land probes in the **finished** archive.
+- Search named locations and addresses; query administrative polygons, coastlines,
+  tagged features and relations away from the viewport.
+- With only the smaller pair enabled, route from Eindhoven to Duisburg in walking,
+  cycling and driving modes. Verify both source archives were used and overlap
+  IDs agree under the OSM routing contract.
+- Repeat cached analysis and inspect actual package reads, time and memory.
+- Open the large map at the North Sea coast; confirm sea is blue and land/islands
+  remain unfilled. Record actual output sizes and peak scratch space.
 
-The preparation queue now persists automatic retries for recognized worker/native
-crashes and transient transfer failures (1 minute, 5 minutes, then 15 minutes).
-An unclean server restart also requeues interrupted active work. Completed native
-checkpoints are reused; retrying does not certify that an underlying bug is fixed.
-The host card exposes the original error, stage, checkpoint and each recovery
-attempt. After three automatic retries, manual **Resume saved build** starts a new
-retry cycle while keeping its failure history. Stop/cancel never resumes itself.
-Low disk, corrupt databases, checksum failures and invalid inputs require attention.
-There is no wall-clock watchdog: legitimate long compilation passes are not killed.
-
-## Fresh deployment and queue — 29 October 2026
-
-Server release `20261029T170931742Z-d6f40793546b-3afcef8f` includes the recovery
-policy and automatic Hashtree publication. The seven legacy jobs/maps were removed;
-the verified NAS source, coastline input and signing identity remain available.
-The old demo base is replaced by an empty bootstrap package. About 357 GiB was
-available before restarting compilation.
-
-Queue receipt: `/home/nixuser/atlas/shared/recipes/europe-three-map-20261029-rebuild.json`.
-
-- Western Europe: `b8272577-990e-4eca-85b1-839c7be9ba18`.
-- Rhine–Alps: `95a9a7cf-d44c-4720-b33f-38aa2f26836f`.
-- Alps–Danube: `fa0b5b37-c2d7-4793-95ae-7f5857d48fe8`.
-
-At deployment verification the parent was extracting its region from the NAS
-planet; the two children were waiting for that parent. This records a started
-build, not completed datasets. The earlier native double-free remains unexplained;
-automatic retry improves recovery but does not repair that root cause.
+Madeira's old direct-Geofabrik package contained inland water but no sea polygons.
+A water checkbox alone does not synthesize sea from open coastline ways. The host
+now distinguishes lakes/rivers from sea fill and explains missing sea input.
