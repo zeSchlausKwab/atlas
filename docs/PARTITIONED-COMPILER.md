@@ -183,6 +183,19 @@ pass” measures only the observer’s lifetime and is not full compiler elapsed
 A checkpoint timestamp identifies saved work, not a promise that every unfinished
 operation resumes from its current counter.
 
+Measured n/x counters remain visible under **Previous pass counts** after a pass
+changes. A reported fraction is labeled “Last reported” unless its numerator
+reaches the measured total. New counters with no total show `n / ?`; completely
+unmeasured passes explicitly say that their item count is not reported. Counters
+are not reused as a percentage or ETA for a different pass. Counter regressions
+invalidate later observations from a previous attempt.
+
+For a legacy worker already indexing exact tag values, the observer can recover
+completed object packing and identity-lookup counts from its read-only records
+index: that compiler message is emitted only after both operations finish.
+Busy databases remain untouched. Native counters without a stage-name field are
+preserved rather than overwritten by the observer's fallback.
+
 Source-object packing and identity lookup now emit structured progress using the
 writer’s existing object counts. Tag indexing reports a growing term count until
 its total is known; object sorting and tree assembly remain indeterminate.

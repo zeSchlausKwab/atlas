@@ -1,3 +1,4 @@
+import { CompilerPassHistory } from "../../packages/provisioning/src/compiler-pass-history";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
@@ -7,6 +8,7 @@ import type { CompilerObservation } from "../../packages/provisioning/src/compil
 /** Read-only observer for a compiler already running without structured stage events. */
 export class CompilerObserver {
   private rate = new ProgressRate();
+  private history = new CompilerPassHistory();
   private objectTotal = 0;
   private observedStage = "";
   private observedSince = Date.now();
@@ -122,6 +124,33 @@ export class CompilerObserver {
         this.featureTotal = total.n;
       }
     }
+    // Reconstruct counters when this observer starts during legacy tag indexing.
+    // The compiler reaches this message only after packing AND identity lookup finish.
+    const tags =
+      progress.message === "Building exact tag-value index" ||
+      progress.stage === "semantic-object-tags";
+    if (tags && !completed["semantics.atlas"]) {
+      if (!this.objectTotal) {
+        const count = this.query<{ n: number }>(
+          join(compiler, sourceKey + ".objects-index.sqlite"),
+          "SELECT count(*) AS n FROM records",
+        );
+        if (count) this.objectTotal = count.n;
+      }
+      if (this.objectTotal) {
+        for (const [stage, message] of [
+          ["semantic-object-packing", "Packing source objects"],
+          ["semantic-object-lookup", "Indexing source identities"],
+        ])
+          this.history.record({
+            stage,
+            message,
+            completed: this.objectTotal,
+            total: this.objectTotal,
+            unit: "objects",
+          });
+      }
+    }
     // New compilers report more precise sub-stages themselves.
     if (!progress.stage) {
       const features = progress.message.match(
@@ -190,6 +219,8 @@ export class CompilerObserver {
         stage = "display-geometry";
         progress.message =
           "Generating display tiles (completed source batches)";
+      } else if (tags) {
+        stage = "semantic-object-tags";
       } else {
         stage = derivedComplete
           ? "assembly"
@@ -201,9 +232,17 @@ export class CompilerObserver {
         // Legacy stages with no measurable denominator remain explicitly indeterminate.
       }
       progress.stage = stage;
-      progress.completed = done ?? 0;
-      progress.total = done !== undefined && done <= total ? total : 0;
-      progress.unit = "objects";
+      if (done !== undefined) {
+        progress.completed = done;
+        progress.total = done <= total ? total : 0;
+        progress.unit = "objects";
+      } else if (progress.unit === "stages") {
+        // A parent-stage count is not an item counter for this pass.
+        progress.completed = 0;
+        progress.total = 0;
+        progress.unit = undefined;
+      }
+      // Keep native n/x counters even when a worker omitted the stage-name field.
       progress.stagePercent = progress.total
         ? (100 * progress.completed) / progress.total
         : undefined;
@@ -222,7 +261,9 @@ export class CompilerObserver {
       this.observedStage = progress.stage ?? "";
       this.observedSince = Date.now();
     }
+    this.history.record(progress);
     return {
+      previousPasses: this.history.previous(progress.stage),
       observedElapsedSeconds: (Date.now() - this.observedSince) / 1000,
       id: job.id,
       createdAt: job.createdAt,

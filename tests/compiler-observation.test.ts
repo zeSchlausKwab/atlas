@@ -201,7 +201,8 @@ test("live object packing exposes its committed total and checkpoint with NAS-as
     const before = await Bun.file(
       `${compiler}/source-v4.sqlite.objects-index.sqlite`,
     ).bytes();
-    const observation = await new CompilerObserver().sample(job, directory);
+    const observer = new CompilerObserver();
+    const observation = await observer.sample(job, directory);
     expect(observation?.progress.stage).toBe("semantic-object-packing");
     expect(observation?.progress.total).toBe(4);
     expect(observation?.progress.completed).toBe(2);
@@ -216,6 +217,38 @@ test("live object packing exposes its committed total and checkpoint with NAS-as
       "pending",
       "pending",
     ]);
+    // Moving into tags proves both packing and identity lookup finished.
+    // The old worker supplies no current term count: do not reuse the objects as terms.
+    job.progress.message = "Building exact tag-value index";
+    const tags = (await observer.sample(job, directory))!;
+    expect(tags.progress.stage).toBe("semantic-object-tags");
+    expect(tags.progress.total).toBe(0);
+    expect(tags.progress.stagePercent).toBeUndefined();
+    expect(
+      tags.previousPasses?.map((p) => [p.stage, p.completed, p.total]),
+    ).toEqual([
+      ["semantic-object-packing", 4, 4],
+      ["semantic-object-lookup", 4, 4],
+    ]);
+    // Browser/observer restart can recover the completed counts during this pass.
+    expect(
+      (await new CompilerObserver().sample(job, directory))?.previousPasses,
+    ).toEqual(tags.previousPasses);
+    // An unnamed native pass must not lose its existing n/x to the legacy fallback.
+    job.progress = {
+      ...job.progress,
+      message: "Finishing custom index",
+      completed: 3,
+      total: 4,
+      unit: "cells",
+    };
+    const native = (await observer.sample(job, directory))!;
+    expect([
+      native.progress.completed,
+      native.progress.total,
+      native.progress.unit,
+    ]).toEqual([3, 4, "cells"]);
+    expect(native.progress.stagePercent).toBe(75);
     expect(
       await Bun.file(
         `${compiler}/source-v4.sqlite.objects-index.sqlite`,

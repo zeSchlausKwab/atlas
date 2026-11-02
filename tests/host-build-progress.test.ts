@@ -38,7 +38,9 @@ test("text-only worker still gets a stage timeline and real counter, without a f
     "pending",
     "pending",
   ]);
-  expect(m.counter).toBe(`${(21400000).toLocaleString()} objects processed`);
+  expect(m.counter).toBe(
+    `${(21400000).toLocaleString()} / ? objects processed`,
+  );
   expect(m.percent).toBeUndefined();
   expect(m.eta).toBeUndefined();
   expect(m.elapsed).toBeUndefined();
@@ -118,5 +120,48 @@ test("import jobs do not get a fictitious PBF pipeline; disabled capabilities ar
     "Source geometry",
     "Display tiles",
     "Assembly & verification",
+  ]);
+});
+
+test("previous n/x remain visible while the current pass has no measurement", () => {
+  const j = job();
+  j.progress = {
+    ...j.progress,
+    stage: "semantic-object-tags",
+    message: "Building exact tag-value index",
+    completed: 0,
+    total: 0,
+    unit: undefined,
+  };
+  const m = buildProgressModel(j, undefined, [
+    {
+      stage: "packing",
+      message: "Packing source objects",
+      completed: 1000,
+      total: 1000,
+      unit: "objects",
+    },
+    {
+      stage: "lookup",
+      message: "Indexing source identities",
+      completed: 900,
+      total: 1000,
+      unit: "objects",
+    },
+  ]);
+  expect(m.counter).toBeUndefined();
+  expect(m.percent).toBeUndefined();
+  expect(m.eta).toBeUndefined();
+  expect(m.previousPasses).toEqual([
+    {
+      label: "Packing source objects",
+      counter: `${(1000).toLocaleString()} / ${(1000).toLocaleString()} objects`,
+      status: "Complete",
+    },
+    {
+      label: "Indexing source identities",
+      counter: `900 / ${(1000).toLocaleString()} objects`,
+      status: "Last reported",
+    },
   ]);
 });

@@ -9,6 +9,7 @@ import {
   currentObservation,
   type CompilerObservation,
 } from "../../../packages/provisioning/src/compiler-observation";
+import { CompilerPassHistory } from "../../../packages/provisioning/src/compiler-pass-history";
 import { buildProgressPanel, orderBuildJobs } from "./host-build-progress";
 import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
@@ -443,14 +444,24 @@ el<HTMLFormElement>("export-form").onsubmit = async (event) => {
 let lastJobs = "";
 let observations = new Map<string, CompilerObservation>();
 let nextObservationRead = 0;
+const passHistories = new Map<string, CompilerPassHistory>();
 function jobs(values: PreparationJob[]) {
   exportJobs = values;
   const views = new Map<string, CompilerObservation>();
   values = orderBuildJobs(values).map((job) => {
     const view = currentObservation(observations.get(job.id), job);
-    if (!view) return job;
-    views.set(job.id, view);
-    return { ...job, progress: view.progress };
+    const key = `${job.id}:${job.createdAt}`;
+    if (!["running", "cancelling"].includes(job.state)) {
+      passHistories.delete(key);
+      return job;
+    }
+    const history = passHistories.get(key) ?? new CompilerPassHistory();
+    passHistories.set(key, history);
+    for (const pass of view?.previousPasses ?? []) history.record(pass);
+    const progress = view?.progress ?? job.progress;
+    history.record(progress);
+    if (view) views.set(job.id, view);
+    return { ...job, progress };
   });
   hostActivity(
     "Build",
@@ -738,7 +749,15 @@ function jobs(values: PreparationJob[]) {
         card.append(history);
       }
       if (job.state === "running" || job.state === "cancelling") {
-        card.append(buildProgressPanel(job, views.get(job.id)));
+        card.append(
+          buildProgressPanel(
+            job,
+            views.get(job.id),
+            passHistories
+              .get(`${job.id}:${job.createdAt}`)
+              ?.previous(job.progress.stage),
+          ),
+        );
         const cancel = text(
           "button",
           job.state === "cancelling"

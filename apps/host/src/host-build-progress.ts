@@ -3,6 +3,8 @@ import type { CompilerObservation } from "../../../packages/provisioning/src/com
 import { approximateDuration } from "../../../packages/provisioning/src/compiler-progress";
 import { storageSize } from "./host-budget";
 
+import type { CompilerPassCounter } from "../../../packages/provisioning/src/compiler-pass-history";
+
 type Stage = { label: string; state: "done" | "active" | "pending" };
 /** Keep the running work in view; queue order is FIFO, not reverse creation time. */
 export function orderBuildJobs<
@@ -89,6 +91,7 @@ function inferredStages(job: PreparationJob): Stage[] {
 export function buildProgressModel(
   job: PreparationJob,
   view?: CompilerObservation,
+  previousPasses: CompilerPassCounter[] = view?.previousPasses ?? [],
 ) {
   const p = view?.progress ?? job.progress;
   const stages = view?.stages ?? inferredStages({ ...job, progress: p });
@@ -105,6 +108,17 @@ export function buildProgressModel(
   const active = stages.findIndex((s) => s.state === "active");
   return {
     stages,
+    previousPasses: previousPasses
+      .filter((c) => c.stage !== p.stage)
+      .map((c) => ({
+        label: c.message,
+        counter:
+          c.unit === "bytes"
+            ? `${storageSize(c.completed)} / ${c.total > 0 ? storageSize(c.total) : "?"}`
+            : `${c.completed.toLocaleString()} / ${c.total > 0 ? c.total.toLocaleString() : "?"} ${c.unit}`,
+        status:
+          c.total > 0 && c.completed === c.total ? "Complete" : "Last reported",
+      })),
     step:
       active >= 0
         ? `Step ${active + 1} of ${stages.length}`
@@ -121,7 +135,7 @@ export function buildProgressModel(
       : count > 0 && unit !== "stages"
         ? unit === "bytes"
           ? `${storageSize(count)} processed`
-          : `${count.toLocaleString()} ${unit} processed`
+          : `${count.toLocaleString()} / ? ${unit} processed`
         : undefined,
     elapsed:
       Number.isFinite(elapsed) && elapsed! >= 0
@@ -153,8 +167,9 @@ const element = (tag: string, value: string, className = "") => {
 export function buildProgressPanel(
   job: PreparationJob,
   view?: CompilerObservation,
+  previousPasses?: CompilerPassCounter[],
 ) {
-  const m = buildProgressModel(job, view),
+  const m = buildProgressModel(job, view, previousPasses),
     panel = element("section", "", "build-progress-panel");
   panel.setAttribute("aria-label", `Build progress for ${job.name}`);
   const heading = element("div", "", "build-progress-heading");
@@ -187,8 +202,29 @@ export function buildProgressPanel(
   panel.append(bar);
   if (m.substep)
     panel.append(element("p", m.substep, "build-progress-counter"));
-  if (m.counter)
-    panel.append(element("p", m.counter, "build-progress-counter"));
+  panel.append(
+    element(
+      "p",
+      m.counter ?? "Item count not reported for this pass",
+      "build-progress-counter",
+    ),
+  );
+  if (m.previousPasses.length) {
+    const history = element("section", "", "build-pass-history");
+    history.setAttribute("aria-label", "Previous pass counts");
+    history.append(element("h4", "Previous pass counts"));
+    const rows = element("ul", "");
+    for (const pass of m.previousPasses) {
+      const row = element("li", "");
+      row.append(
+        element("span", `${pass.label} · ${pass.status}`),
+        element("strong", pass.counter),
+      );
+      rows.append(row);
+    }
+    history.append(rows);
+    panel.append(history);
+  }
   const metrics = element("dl", "", "build-progress-metrics");
   const metric = (label: string, value: string) => {
     const item = element("div", "");

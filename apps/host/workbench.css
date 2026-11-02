@@ -958,3 +958,20 @@
   margin: 8px 0 0;
   color: #627586;
 }
+
+/* Previous measured counters remain visible while an uninstrumented pass runs. */
+.build-pass-history {
+  border-top: 1px solid #d9e3ee;
+  padding-top: 10px;
+  margin: 12px 0;
+}
+.build-pass-history h4 {
+  margin: 0 0 8px;
+  color: #526b80;
+  font-size: 11px;
+  font-weight: 600;
+}
+.build-pass-history ul { list-style: none; padding: 0; margin: 0; }
+.build-pass-history li { display: grid; gap: 4px; margin: 0 0 10px; }
+.build-pass-history span { font-size: 10px; color: #627586; }
+.build-pass-history strong { font: 11px/1.6 var(--mono); color: #314b60; }
