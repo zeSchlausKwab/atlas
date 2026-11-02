@@ -355,3 +355,31 @@ receipts, then repacks the display archive with the coarse-geometry fix. The
 parallel compiler and structured pass progress are now also deployed. No library
 maps or cached sources were deleted; approximately 213 GiB remained free.
 See [the reproduction and recovery notes](BRITAIN-TILE-RECOVERY.md).
+
+## Activity progress restoration — 2 November 2026
+
+Progress UI revision `93dc5fa` was applied to the running LAN release
+`20261102T075127413Z-f5a63e34f814-20511141` as a static-only update:
+`dist/host/{host.js,host.js.map,workbench.css}`. Backups and the uploaded observer
+are in `/home/nixuser/atlas/shared/ui-updates/20261102-93dc5fa/`.
+The Atlas server remained PID 725574 with its original 08:52:35 CET start time;
+no preparations were stopped, requeued or restarted.
+
+The transient user service `atlas-progress-observer-20261102` reads job state and
+completed-stage receipts, writes `dist/host/compiler-progress.json` every 15
+seconds, and waits through queued jobs. It has lowered CPU priority and a 256 MiB
+memory limit. It does not change compiler files, source databases or checkpoints.
+The source-object index was initially locked; the observer kept that pass
+indeterminate. When a read became available it measured 30,766,021 records. This
+is a packing total, not a whole-build total. Observed elapsed time begins with
+the observer, and an ETA is withheld until enough forward progress is measured.
+
+Structured object packing, identity lookup and tag-index instrumentation is
+committed for the next normal deployment. The current workers retain their
+original compiler code. Rollback of this UI update requires only restoring the
+three files from `previous/` and stopping the independent observer service.
+
+Validation: 405 Bun tests, TypeScript checking, host asset build, desktop/mobile
+browser fixtures for known and unknown totals, and the deployed assets/live
+progress through a read-only local browser proxy. Browser checks reported no
+uncaught exceptions, console errors or failed requests.
