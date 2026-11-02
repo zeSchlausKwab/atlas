@@ -87,3 +87,23 @@ Before calling the full demo complete:
 Madeira's old direct-Geofabrik package contained inland water but no sea polygons.
 A water checkbox alone does not synthesize sea from open coastline ways. The host
 now distinguishes lakes/rivers from sea fill and explains missing sea input.
+
+## Live rollout — 2 November 2026
+
+Deployed code `f5a63e3` as release
+`20261102T075127413Z-f5a63e34f814-20511141` after 397 passing Bun tests and
+TypeScript validation. Real-provider preflight passed 50 sea/land checks; report:
+`/home/nixuser/atlas/shared/preflight-north-sea-20261102/water-preflight.json`.
+
+Queue receipt: `/home/nixuser/atlas/shared/recipes/north-sea-20261102.json`.
+
+| Order | Key              | Job                                    |
+| ----- | ---------------- | -------------------------------------- |
+| 1     | lower-rhine-west | `6cd1a246-74a1-4acf-9d9a-312140973039` |
+| 2     | lower-rhine-east | `99b22a09-1f7d-41c1-afce-4276e9a2b1d2` |
+| 3     | north-sea        | `a4a4a7c9-4b2c-4256-a97d-c935f0fb8c16` |
+
+All three pin NAS-assisted workspaces. The future-job policy was restored to
+`when-needed` after queueing. At handoff West was extracting and the others were
+queued; compilation and finished-archive/cross-map acceptance are still pending.
+No finished-map claim follows from the preflight results.
