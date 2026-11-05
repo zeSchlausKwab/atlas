@@ -28,6 +28,61 @@ fn frame(out: &mut impl Write, key: &str, bytes: &[u8]) -> Result<(), Error> {
     out.write_all(bytes)?;
     Ok(())
 }
+// Acknowledged batches bound output even when the host runtime eagerly drains pipes.
+// This is only the compiler IPC protocol; persisted RCL bytes and checkpoints do not change.
+const OUTPUT_WINDOW: usize = 1024 * 1024;
+struct RoutingOutput<W: Write, R: Read> {
+    output: W,
+    acknowledgments: Option<R>,
+    pending: usize,
+}
+impl<W: Write, R: Read> RoutingOutput<W, R> {
+    fn new(mut output: W, acknowledgments: Option<R>) -> Result<Self, Error> {
+        if acknowledgments.is_some() {
+            frame(
+                &mut output,
+                "protocol",
+                br#"{"version":1,"windowBytes":1048576}"#,
+            )?;
+        }
+        Ok(Self {
+            output,
+            acknowledgments,
+            pending: 0,
+        })
+    }
+    fn checkpoint(&mut self) -> Result<(), Error> {
+        if self.pending == 0 {
+            return Ok(());
+        }
+        if let Some(input) = &mut self.acknowledgments {
+            frame(&mut self.output, "ack", &[])?;
+            self.output.flush()?;
+            let mut ack = [0u8; 1];
+            input.read_exact(&mut ack)?;
+            if ack != [1] {
+                return Err("Invalid routing output acknowledgment".into());
+            }
+        }
+        self.pending = 0;
+        Ok(())
+    }
+    fn cell(&mut self, key: &str, bytes: &[u8]) -> Result<(), Error> {
+        let size = 8 + key.len() + bytes.len();
+        if self.pending > 0 && self.pending + size > OUTPUT_WINDOW {
+            self.checkpoint()?;
+        }
+        frame(&mut self.output, key, bytes)?;
+        self.pending += size;
+        Ok(())
+    }
+    fn finish(mut self, metadata: &[u8]) -> Result<(), Error> {
+        self.checkpoint()?;
+        frame(&mut self.output, "metadata", metadata)?;
+        self.output.flush()?;
+        Ok(())
+    }
+}
 pub fn import(source: &str, work: &str) -> Result<(), Error> {
     std::fs::create_dir_all(work)?;
     let work = Path::new(work);
@@ -543,7 +598,15 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
             state.commit(&db)?;
         }
     }
-    let mut output = BufWriter::new(std::io::stdout().lock());
+    let ack = std::env::var("ATLAS_GRAPH_OUTPUT_ACK").as_deref() == Ok("1");
+    let mut output = RoutingOutput::new(
+        BufWriter::new(std::io::stdout().lock()),
+        if ack {
+            Some(std::io::stdin().lock())
+        } else {
+            None
+        },
+    )?;
     let mut metadata = serde_json::Map::new();
     let mut progress = Progress::new(0);
     let total = state.counts.iter().map(|c| c[0]).sum();
@@ -557,8 +620,7 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
             let mut bytes = Vec::new();
             flate2::read::GzDecoder::new(&compressed[..]).read_to_end(&mut bytes)?;
             let (x, y) = (address / 16384, address % 16384);
-            frame(
-                &mut output,
+            output.cell(
                 &format!("routing/{}/cells/14/{x}/{y}", transport::MODES[mode]),
                 &bytes,
             )?;
@@ -582,8 +644,54 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
         let c = state.counts[mode];
         metadata.insert(transport::MODES[mode].into(),json!({"count":c[0],"nodes":c[1],"segments":c[2],"turns":c[3],"canonicalSegments":state.ids[mode],"skippedWays":state.skipped[mode],"unsupportedRestrictions":state.unsupported[mode],"excludedRestrictionWays":excluded}));
     }
-    frame(&mut output, "metadata", &serde_json::to_vec(&metadata)?)?;
-    output.flush()?;
+    output.finish(&serde_json::to_vec(&metadata)?)?;
     db.execute_batch("COMMIT; PRAGMA wal_checkpoint(TRUNCATE)")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    use std::io::Cursor;
+    #[test]
+    fn acknowledged_batches_preserve_payload_and_require_credit() {
+        let payload = vec![7u8; OUTPUT_WINDOW / 2];
+        let mut bytes = Vec::new();
+        let mut output = RoutingOutput::new(&mut bytes, Some(Cursor::new(vec![1, 1]))).unwrap();
+        output.cell("cell", &payload).unwrap();
+        output.cell("cell", &payload).unwrap();
+        output.finish(b"{}").unwrap();
+        let mut input = Cursor::new(bytes);
+        let mut keys = Vec::new();
+        while (input.position() as usize) < input.get_ref().len() {
+            let mut header = [0u8; 8];
+            input.read_exact(&mut header).unwrap();
+            let mut key = vec![0; u32::from_le_bytes(header[..4].try_into().unwrap()) as usize];
+            let mut body = vec![0; u32::from_le_bytes(header[4..].try_into().unwrap()) as usize];
+            input.read_exact(&mut key).unwrap();
+            input.read_exact(&mut body).unwrap();
+            let key = String::from_utf8(key).unwrap();
+            if key == "cell" {
+                assert_eq!(body, payload);
+            }
+            keys.push(key);
+        }
+        assert_eq!(keys, ["protocol", "cell", "ack", "cell", "ack", "metadata"]);
+        for credit in [vec![], vec![0]] {
+            let mut output = RoutingOutput::new(Vec::new(), Some(Cursor::new(credit))).unwrap();
+            output.cell("cell", &payload).unwrap();
+            assert!(output.cell("cell", &payload).is_err());
+        }
+    }
+    #[test]
+    fn standalone_stream_remains_byte_identical() {
+        let mut bytes = Vec::new();
+        let mut output = RoutingOutput::new(&mut bytes, None::<Cursor<Vec<u8>>>).unwrap();
+        output.cell("cell", b"payload").unwrap();
+        output.finish(b"{}").unwrap();
+        let mut expected = Vec::new();
+        frame(&mut expected, "cell", b"payload").unwrap();
+        frame(&mut expected, "metadata", b"{}").unwrap();
+        assert_eq!(bytes, expected);
+    }
 }

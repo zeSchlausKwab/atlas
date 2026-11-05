@@ -2,6 +2,7 @@ import {
   validateRoutingFederation,
   type RoutingFederation,
 } from "../../format/src/routing-contract";
+import { consumeRoutingOutput } from "./routing-output";
 import { spawn } from "node:child_process";
 import { nativeDiagnostics } from "./native-diagnostics";
 import { fileURLToPath } from "node:url";
@@ -34,10 +35,11 @@ export async function addPartitionedTransport(
         ...process.env,
         TMPDIR: work,
         ATLAS_GRAPH_SOURCE_HASH: sourceHash,
+        ATLAS_GRAPH_OUTPUT_ACK: "1",
         ATLAS_ROUTING_IDS: federation?.segmentIdentity ?? "legacy",
       },
       detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     },
   );
   const kill = () => {
@@ -51,70 +53,29 @@ export async function addPartitionedTransport(
   if (signal.aborted) kill();
   const diagnostics = nativeDiagnostics(child, progress);
   const { exited, stderr } = diagnostics;
-  const iterator = child.stdout![Symbol.asyncIterator]();
-  let buffer = new Uint8Array(0),
-    offset = 0;
-  async function take(n: number, eof = false): Promise<Uint8Array | null> {
-    const out = new Uint8Array(n);
-    let at = 0;
-    while (at < n) {
-      signal.throwIfAborted();
-      if (offset === buffer.length) {
-        const v = await iterator.next();
-        if (v.done) {
-          if (eof && at === 0) return null;
-          const exit = await exited;
-          signal.throwIfAborted();
-          if (exit.code !== 0)
-            throw await diagnostics.failure("Partitioned graph compiler");
-          throw new Error("Truncated native compiler frame");
-        }
-        buffer = v.value;
-        offset = 0;
-      }
-      const len = Math.min(n - at, buffer.length - offset);
-      out.set(buffer.subarray(offset, offset + len), at);
-      offset += len;
-      at += len;
-    }
-    return out;
-  }
-  let metadata: any;
+  // Pipe errors are reported by the awaited write callback, including cancellation.
+  child.stdin!.on("error", () => {});
   try {
-    while (true) {
-      const header = await take(8, true);
-      if (!header) break;
-      const v = new DataView(header.buffer),
-        kl = v.getUint32(0, true),
-        len = v.getUint32(4, true);
-      if (kl > 256 || len > 32 * 1024 * 1024)
-        throw new Error("Native compiler frame exceeds cell budget");
-      const key = new TextDecoder().decode((await take(kl))!);
-      const bytes = (await take(len))!;
-      if (key === "metadata") {
-        if (metadata) throw new Error("Duplicate compiler metadata");
-        metadata = JSON.parse(new TextDecoder().decode(bytes));
-        continue;
-      }
-      const match =
-        /^routing\/(walking|cycling|driving)\/cells\/14\/(\d+)\/(\d+)$/.exec(
-          key,
-        );
-      if (!match || metadata) throw new Error("Invalid native compiler frame");
-      if (
-        new TextDecoder().decode(bytes.subarray(0, 4)) !==
-        (federation ? "RCL3" : "RCL2")
-      )
-        throw new Error(
-          "Native routing codec does not match the requested contract",
-        );
-      if (modes.includes(match[1] as TransportMode))
-        await writer.add({
-          key,
-          bytes,
-          features: new DataView(bytes.buffer).getUint32(24, true),
-        });
-    }
+    const metadata = await consumeRoutingOutput(
+      writer,
+      child.stdout!,
+      modes,
+      !!federation,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          child.stdin!.write(Uint8Array.of(1), (error) =>
+            error ? reject(error) : resolve(),
+          );
+        }),
+      signal,
+      async () => {
+        const exit = await exited;
+        signal.throwIfAborted();
+        return exit.code !== 0
+          ? await diagnostics.failure("Partitioned graph compiler")
+          : new Error("Truncated native compiler frame");
+      },
+    );
     const [{ code }] = await Promise.all([exited, stderr]);
     signal.throwIfAborted();
     if (code !== 0 || !metadata)

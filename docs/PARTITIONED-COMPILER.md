@@ -28,6 +28,33 @@ A segment may touch at most 4,096 cells and its global ordinal must fit u32.
 Unsupported conditional/via-way restrictions continue to exclude incoming ways
 and are counted. This is not a navigation-grade restrictions model.
 
+## Bounded native routing output
+
+The CLI opts into compiler IPC version 1 with `ATLAS_GRAPH_OUTPUT_ACK=1`.
+The native process announces a 1 MiB output window, emits complete cell frames,
+and requests a one-byte acknowledgment before sending the next batch. The CLI
+acknowledges only after all preceding archive writes finish. One larger cell can
+occupy a batch by itself, subject to the existing 32 MiB IPC payload guard.
+This bounds producer run-ahead even when the runtime eagerly drains child pipes
+and the archive is written to slow NAS storage. Standalone native invocations
+without the flag keep the original stream. CLI and native binary must be updated
+together; an old binary produces a rebuild instruction.
+
+The North Sea recovery on 5 November 2026 reproduced an invalid frame with the
+old reader and a real NAS archive writer. Input chunks grew to nearly 2 GB;
+a read-only replay of the same checkpoint passed all 483,555 cells. The largest
+cell was 925,192 bytes, well below the payload guard. Increasing the cell limit
+would therefore hide a transport problem rather than repair an oversized cell.
+Changing only the process-stream API still allowed approximately 19 GB resident
+memory. Explicit producer acknowledgments avoid depending on runtime pipe
+backpressure. Header errors now include the stream position and previous key.
+
+This changes only temporary compiler IPC, not `.atlas`, RCL2/RCL3 cell bytes,
+source identity or checkpoint versions. Completed graph cells can be replayed
+from the existing SQLite checkpoint without repeating graph construction.
+Regression checks exercise delayed writers, fragmented frames, missing credits,
+truncation, cancellation and unchanged standalone native output.
+
 ## Search and nearest street
 
 - `search/locations`: `{schema:"locations-paged-v1",records,pages,names:true}`.
