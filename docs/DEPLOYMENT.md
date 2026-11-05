@@ -402,3 +402,34 @@ Validation: 409 tests and typechecking passed; browser tests covered a measured
 pass becoming unmeasured, a growing counter with unknown total, previous counts
 after refresh, and desktop/mobile layout. The deployed live feed and UI show both
 completed object counts.
+
+
+## North Sea routing-output recovery — 5 November 2026
+
+Release `20261105T074242218Z-1f6d27ad557e-fc1a0d22` deploys commit `1f6d27a`.
+No preparation was active during activation. Candidate UI, WASM, catalog,
+byte-range and preparation-prerequisite smoke checks passed. The North Sea job
+`a4a4a7c9-4b2c-4256-a97d-c935f0fb8c16` was resumed through its normal admin API.
+The completed Lower Rhine maps and satellite archives were left in place.
+
+The misleading “Native compiler frame exceeds cell budget” failure reproduced
+when an unbounded native pipe ran ahead of the NAS archive writer. The largest
+saved cell was only 925,192 bytes. The fix acknowledges batches after writing,
+without raising the 32 MiB frame guard or changing map/checkpoint identities.
+The saved PBF and all 483,555 encoded graph cells are reused; checksum validation
+still runs. See [bounded native routing output](PARTITIONED-COMPILER.md#bounded-native-routing-output).
+
+Validation: TypeScript, 53 Rust tests, byte-identical comparison of all 242
+fixture routing cells, and six forced-stop/recovery checks passed. The Bun suite
+passed 414 tests; two disk-placement tests hit the Mac’s real 11 GiB free-space
+condition against a 12 GiB floor. Those tests and the routing-output/native
+process regressions passed on the Linux server (14 tests, Bun 1.3.13). The
+production recovery is being observed separately; restarting a job does not
+mean the complete North Sea map has finished.
+
+At 07:52 UTC, the resumed production run had packed 39,680 / 483,555 cells,
+past the failing NAS reproduction at cell 36,132. Worker RSS was 217,800 KiB
+and native compiler RSS 28,816 KiB; the worker's high-water mark including input
+verification was 356,832 KiB. The job remained running, with roughly 30 minutes
+estimated for the rest of this pass. This observation verifies bounded run-ahead
+on the real NAS path; later compilation and final publication remain pending.
