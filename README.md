@@ -4,6 +4,12 @@ An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → by
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. The consumer uses its own WASM renderer and reads Atlas files directly. The host preview uses OpenFreeMap; source preparation supports regional or cached planet PBFs.
 
+## Visual field guide
+
+Open [the Atlas field guide](docs/atlas-overview.html) in a browser for an interactive
+overview of the format, architecture, features, AI tools and multi-host composition.
+It is a self-contained HTML document with no build step or external assets.
+
 ## Task-local AI tools
 
 Prepare a bounded data workspace across selected maps, then query it locally with
