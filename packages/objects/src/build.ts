@@ -1,4 +1,5 @@
 import { measuredProgress } from "../../provisioning/src/compiler-progress";
+import type { ObjectStaging } from "./staging";
 import { PayloadPacker } from "./packing";
 import { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
@@ -25,6 +26,74 @@ export class ObjectWriter {
     return archiveKey(kind, n);
   };
   private closed = false;
+  private packer: PayloadPacker;
+  private state: any = {
+    phase: "ingest",
+    input: {},
+    packed: 0,
+    indexed: 0,
+    terms: 0,
+  };
+  get inputState() {
+    return this.state.input;
+  }
+  get ingestComplete() {
+    return this.state.phase !== "ingest";
+  }
+  async checkpoint(input = this.state.input) {
+    await this.packer.finish();
+    this.state.input = input;
+    if (this.staging)
+      await this.staging.checkpoint({
+        ...this.state,
+        report: this.report,
+        ordinals: [...this.ordinals],
+      });
+    else this.db.run("COMMIT; BEGIN");
+  }
+  private async saveProgress(
+    progress: (s: string) => void,
+    stage: string,
+    message: string,
+    done: number,
+    total: number,
+    unit = "objects",
+  ) {
+    await this.checkpoint();
+    if (this.staging)
+      progress(
+        "ATLAS_PROGRESS " +
+          JSON.stringify({
+            stage,
+            message,
+            completed: done,
+            total,
+            unit,
+            checkpointAt: Date.now() / 1000,
+            stagingBytes: this.staging.payloadBytes,
+            indexBytes:
+              this.db
+                .query<{ page_count: number }, []>("PRAGMA page_count")
+                .get()!.page_count *
+              this.db
+                .query<{ page_size: number }, []>("PRAGMA page_size")
+                .get()!.page_size,
+          }),
+      );
+  }
+  private remember(kind: string, page: Page) {
+    this.db
+      .query("INSERT INTO index_pages(kind,key,json) VALUES(?,?,?)")
+      .run(kind, page.key, JSON.stringify(page));
+  }
+  private remembered(kind: string): Page[] {
+    return this.db
+      .query<{ json: string }, [string]>(
+        "SELECT json FROM index_pages WHERE kind=? ORDER BY seq",
+      )
+      .all(kind)
+      .map((p) => JSON.parse(p.json));
+  }
   readonly report: RetentionReport = {
     schema: "retention-v1",
     profile: "tagged-objects-and-way-dependencies",
@@ -52,14 +121,30 @@ export class ObjectWriter {
   constructor(
     private writer: BlockWriter,
     private path = `${tmpdir()}/atlas-object-index-${crypto.randomUUID()}.sqlite`,
+    private staging?: ObjectStaging,
+    private signal?: AbortSignal,
   ) {
-    // This is disposable staging, never a resume checkpoint.
-    rmSync(path, { force: true });
-    this.db = new Database(path);
-    this.db.run(
-      "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE; PRAGMA cache_size=-16384; CREATE TABLE records(id TEXT PRIMARY KEY,cell INTEGER,bucket TEXT,json TEXT,geometry BLOB,topology BLOB,page TEXT); CREATE TABLE tags(term TEXT,id TEXT,PRIMARY KEY(term,id)) WITHOUT ROWID; CREATE TABLE pages(key TEXT PRIMARY KEY,json TEXT); BEGIN",
-    );
+    if (staging) this.db = staging.db;
+    else {
+      rmSync(path, { force: true });
+      this.db = new Database(path);
+      this.db.run(
+        "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE; PRAGMA cache_size=-16384; BEGIN",
+      );
+    }
+    this.db
+      .run(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY,cell INTEGER,bucket TEXT,data BLOB,page TEXT);
+      CREATE TABLE IF NOT EXISTS tags(term TEXT,page TEXT,PRIMARY KEY(term,page)) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS pages(key TEXT PRIMARY KEY,json TEXT);
+      CREATE TABLE IF NOT EXISTS index_pages(seq INTEGER PRIMARY KEY,kind TEXT,key TEXT UNIQUE,json TEXT);`);
+    if (staging?.state) {
+      this.state = staging.state;
+      Object.assign(this.report, this.state.report);
+      this.ordinals = new Map(this.state.ordinals);
+    }
+    this.packer = new PayloadPacker(writer, this.next);
   }
+
   private bump(a: Record<string, number>, k: string) {
     a[k] = (a[k] ?? 0) + 1;
   }
@@ -94,9 +179,6 @@ export class ObjectWriter {
         : null;
     this.report.geometryBytes += geometry?.length ?? 0;
     this.report.topologyBytes += topology?.length ?? 0;
-    const json = JSON.stringify(row);
-    if (encode(row).length > 256 * 1024)
-      throw new Error(`Source object ${v.id} metadata exceeds 256 KiB`);
     const b = bounds[0],
       cell = b
         ? Math.floor((b[0] + 180) * 8) * 1441 + Math.floor((b[1] + 90) * 8)
@@ -123,12 +205,24 @@ export class ObjectWriter {
       "type",
     ].find((k) => Object.hasOwn(v.tags, k));
     const bucket = primary ? tagTerm(primary, v.tags[primary]!) : "";
+    if (geometry)
+      row.geometry = await this.packer.add(
+        "geometry",
+        geometry,
+        bucket + "/" + cell,
+      );
+    if (topology)
+      row.topology = await this.packer.add(
+        "topology",
+        topology,
+        bucket + "/" + cell,
+      );
+    const bytes = encode(row);
+    if (bytes.length > 256 * 1024)
+      throw new Error(`Source object ${v.id} metadata exceeds 256 KiB`);
     this.db
-      .query("INSERT INTO records VALUES(?,?,?,?,?,?,NULL)")
-      .run(v.id, cell, bucket, json, geometry, topology);
-    const insert = this.db.query("INSERT INTO tags VALUES(?,?)");
-    for (const [key, value] of Object.entries(v.tags))
-      insert.run(tagTerm(key, value), v.id);
+      .query("INSERT INTO records VALUES(?,?,?,?,NULL)")
+      .run(v.id, cell, bucket, Bun.gzipSync(bytes));
     this.bump(this.report.encountered, v.id.split("/")[0]!);
     this.bump(this.report.counts, v.id.split("/")[0]!);
     this.bump(this.report.geometryStatus, v.geometryStatus);
@@ -136,6 +230,7 @@ export class ObjectWriter {
     for (const k of Object.keys(v.tags)) this.bump(this.report.tagKeys, k);
   }
   private async page(kind: string, rows: any[]): Promise<Page> {
+    this.signal?.throwIfAborted();
     const key = this.next(kind),
       bounds = rows.flatMap((r) => r.bounds ?? []);
     // A conservative page envelope; records keep dateline-split extents.
@@ -194,19 +289,24 @@ export class ObjectWriter {
         (a, b) => a + b,
         0,
       );
-      progress(
-        "ATLAS_PROGRESS " +
-          JSON.stringify({
-            stage: "semantic-object-index",
-            message: "Indexing source objects for packing",
-            completed: 0,
-            total: 0,
-            unit: "objects",
-          }),
-      );
-      this.db.run(
-        "COMMIT; CREATE INDEX records_spatial ON records(bucket,cell,id); BEGIN",
-      );
+      if (this.state.phase === "done") return this.report;
+      if (this.state.phase === "ingest") {
+        progress(
+          "ATLAS_PROGRESS " +
+            JSON.stringify({
+              stage: "semantic-object-index",
+              message: "Indexing compact source attributes",
+              completed: 0,
+              total: 0,
+              unit: "objects",
+            }),
+        );
+        this.db.run(
+          "CREATE INDEX IF NOT EXISTS records_spatial ON records(bucket,cell,id)",
+        );
+        this.state.phase = "packing";
+        await this.checkpoint();
+      }
       const packingProgress = measuredProgress(
         progress,
         "semantic-object-packing",
@@ -214,66 +314,88 @@ export class ObjectWriter {
         count,
         "objects",
       );
-      const packer = new PayloadPacker(this.writer, this.next);
-      let packed = 0,
+      let packed = this.state.packed,
         lastBucket: string | undefined;
       let batch: ObjectRecord[] = [],
         size = 0;
-      const pages: Page[] = [];
+
       const flush = async () => {
         if (!batch.length) return;
         const p = await this.page("records", batch);
-        pages.push(p);
+
         this.db
           .query("INSERT INTO pages VALUES(?,?)")
           .run(p.key, JSON.stringify(p));
-        for (const row of batch)
+        const tags = new Set<string>();
+        for (const row of batch) {
           this.db
             .query("UPDATE records SET page=? WHERE id=?")
             .run(p.key, row.id);
+          for (const [key, value] of Object.entries(row.tags))
+            tags.add(tagTerm(key, value));
+        }
+        for (const term of tags)
+          this.db.query("INSERT INTO tags VALUES(?,?)").run(term, p.key);
         batch = [];
         size = 0;
       };
-      for (const row of this.db
-        .query<
-          {
-            json: string;
-            bucket: string;
-            geometry: Uint8Array | null;
-            topology: Uint8Array | null;
-          },
-          []
-        >(
-          "SELECT json,bucket,geometry,topology FROM records ORDER BY bucket,cell,id",
-        )
-        .iterate()) {
-        const v: ObjectRecord = JSON.parse(row.json);
-        if (row.geometry)
-          v.geometry = await packer.add("geometry", row.geometry);
-        if (row.topology)
-          v.topology = await packer.add("topology", row.topology);
-        if (encode(v).length > 256 * 1024)
-          throw new Error(`Object ${v.id} metadata exceeds 256 KiB`);
-        if (
-          batch.length &&
-          (lastBucket !== row.bucket ||
-            batch.length >= 128 ||
-            size + row.json.length > 192 * 1024 ||
-            Boolean(batch[0]?.bounds.length) !== Boolean(v.bounds.length))
-        )
-          await flush();
-        lastBucket = row.bucket;
-        batch.push(v);
-        size += row.json.length;
-        if (++packed % 10000 === 0) {
-          packingProgress(packed);
-          await new Promise((r) => setTimeout(r, 0));
+      if (this.state.phase === "packing")
+        for (const row of this.db
+          .query<
+            { id: string; cell: number; bucket: string; data: Uint8Array },
+            [string, number, string]
+          >("SELECT id,cell,bucket,data FROM records WHERE (bucket,cell,id)>(?,?,?) ORDER BY bucket,cell,id")
+          .iterate(
+            this.state.last?.bucket ?? "",
+            this.state.last?.cell ?? -2,
+            this.state.last?.id ?? "",
+          )) {
+          this.signal?.throwIfAborted();
+          const json = new TextDecoder().decode(
+            Bun.gunzipSync(row.data as Uint8Array<ArrayBuffer>),
+          );
+          const v: ObjectRecord = JSON.parse(json);
+          if (encode(v).length > 256 * 1024)
+            throw new Error(`Object ${v.id} metadata exceeds 256 KiB`);
+          if (
+            batch.length &&
+            (lastBucket !== row.bucket ||
+              batch.length >= 128 ||
+              size + json.length > 192 * 1024 ||
+              Boolean(batch[0]?.bounds.length) !== Boolean(v.bounds.length))
+          )
+            await flush();
+          lastBucket = row.bucket;
+          batch.push(v);
+          size += json.length;
+          this.state.last = { bucket: row.bucket, cell: row.cell, id: row.id };
+          if (++packed % 10000 === 0) {
+            await flush();
+            this.state.packed = packed;
+            await this.saveProgress(
+              progress,
+              "semantic-object-packing",
+              "Packing source objects",
+              packed,
+              count,
+            );
+            packingProgress(packed);
+            await new Promise((r) => setTimeout(r, 0));
+          }
         }
-      }
       await flush();
-      await packer.finish();
+      if (this.state.phase === "packing") {
+        this.state.packed = packed;
+        this.state.phase = "lookup";
+        await this.saveProgress(
+          progress,
+          "semantic-object-packing",
+          "Packing source objects",
+          packed,
+          count,
+        );
+      }
       packingProgress(packed);
-      this.db.run("COMMIT");
       const lookupProgress = measuredProgress(
         progress,
         "semantic-object-lookup",
@@ -281,23 +403,47 @@ export class ObjectWriter {
         count,
         "objects",
       );
-      let indexed = 0;
-      const lookup: Page[] = [];
+      let indexed = this.state.indexed;
       let ids: { id: string; page: string }[] = [];
-      for (const row of this.db
-        .query<
-          { id: string; page: string },
-          []
-        >("SELECT id,page FROM records ORDER BY id")
-        .iterate()) {
-        ids.push(row);
-        if (++indexed % 10000 === 0) lookupProgress(indexed);
-        if (ids.length === 256) {
-          lookup.push(await this.page("ids", ids));
-          ids = [];
+      if (this.state.phase === "lookup")
+        for (const row of this.db
+          .query<
+            { id: string; page: string },
+            [string]
+          >("SELECT id,page FROM records WHERE id>? ORDER BY id")
+          .iterate(this.state.lastId ?? "")) {
+          this.signal?.throwIfAborted();
+          ids.push(row);
+          if (++indexed % 10000 === 0) lookupProgress(indexed);
+          if (ids.length === 256) {
+            this.remember("ids", await this.page("ids", ids));
+            this.state.lastId = row.id;
+            this.state.indexed = indexed;
+            ids = [];
+            if (indexed % 10240 === 0) {
+              await this.saveProgress(
+                progress,
+                "semantic-object-lookup",
+                "Indexing source identities",
+                indexed,
+                count,
+              );
+              await new Promise((r) => setTimeout(r, 0));
+            }
+          }
         }
+      if (ids.length) this.remember("ids", await this.page("ids", ids));
+      if (this.state.phase === "lookup") {
+        this.state.indexed = indexed;
+        this.state.phase = "tags";
+        await this.saveProgress(
+          progress,
+          "semantic-object-lookup",
+          "Indexing source identities",
+          indexed,
+          count,
+        );
       }
-      if (ids.length) lookup.push(await this.page("ids", ids));
       lookupProgress(indexed);
       const tagProgress = measuredProgress(
         progress,
@@ -306,20 +452,23 @@ export class ObjectWriter {
         0,
         "terms",
       );
-      let indexedTerms = 0;
-      const tagPages: Page[] = [];
+      let indexedTerms = this.state.terms;
       let terms: { term: string; root?: Page; pages?: string[] }[] = [],
         termBytes = 0;
       let term: string | undefined,
         postings: Page[] = [];
       const flushTerms = async () => {
-        if (terms.length) tagPages.push(await this.page("tag-values", terms));
+        if (terms.length) {
+          this.remember("tags", await this.page("tag-values", terms));
+          this.state.lastTerm = terms.at(-1)!.term;
+          this.state.terms = indexedTerms;
+        }
         terms = [];
         termBytes = 0;
       };
       const flushTerm = async () => {
         if (term === undefined) return;
-        tagProgress(++indexedTerms);
+        tagProgress(indexedTerms);
         const entry =
             postings.length <= 8
               ? { term, pages: postings.map((p) => p.key) }
@@ -331,24 +480,51 @@ export class ObjectWriter {
         )
           await flushTerms();
         terms.push(entry);
+        indexedTerms++;
         termBytes += bytes;
         postings = [];
       };
-      // SQLite streams distinct attribute-page postings without loading all tag/object pairs in RAM.
-      for (const row of this.db
-        .query<
-          { term: string; json: string },
-          []
-        >("SELECT DISTINCT tags.term,records.page,pages.json FROM tags JOIN records ON records.id=tags.id JOIN pages ON pages.key=records.page ORDER BY tags.term,records.page")
-        .iterate()) {
-        if (row.term !== term) {
-          await flushTerm();
-          term = row.term;
+      // Postings are deduplicated per attribute page when that page is written. No
+      // object/tag join or dataset-sized DISTINCT/ORDER BY temporary sort is needed.
+      if (this.state.phase === "tags")
+        for (const row of this.db
+          .query<
+            { term: string; json: string },
+            [string]
+          >("SELECT tags.term,pages.json FROM tags JOIN pages ON pages.key=tags.page WHERE tags.term>? ORDER BY tags.term,tags.page")
+          .iterate(this.state.lastTerm ?? "")) {
+          this.signal?.throwIfAborted();
+          if (row.term !== term) {
+            await flushTerm();
+            if (indexedTerms && indexedTerms % 10000 === 0) {
+              await flushTerms();
+              await this.saveProgress(
+                progress,
+                "semantic-object-tags",
+                "Indexing exact tag values",
+                indexedTerms,
+                0,
+                "terms",
+              );
+              await new Promise((r) => setTimeout(r, 0));
+            }
+            term = row.term;
+          }
+          postings.push(JSON.parse(row.json));
         }
-        postings.push(JSON.parse(row.json));
-      }
       await flushTerm();
       await flushTerms();
+      if (this.state.phase === "tags") {
+        this.state.phase = "trees";
+        await this.saveProgress(
+          progress,
+          "semantic-object-tags",
+          "Indexing exact tag values",
+          indexedTerms,
+          0,
+          "terms",
+        );
+      }
       tagProgress(indexedTerms, true);
       progress(
         "ATLAS_PROGRESS " +
@@ -360,9 +536,15 @@ export class ObjectWriter {
             unit: "blocks",
           }),
       );
-      const tagTree = await this.tree("tag-index", tagPages);
-      const spatial = await this.tree("spatial", pages),
-        idTree = await this.tree("lookup", lookup);
+      const tagTree = await this.tree("tag-index", this.remembered("tags"));
+      const spatial = await this.tree(
+          "spatial",
+          this.db
+            .query<{ json: string }, []>("SELECT json FROM pages ORDER BY key")
+            .all()
+            .map((p) => JSON.parse(p.json)),
+        ),
+        idTree = await this.tree("lookup", this.remembered("ids"));
       await this.writer.add({
         key: "objects/index",
         bytes: encode({
@@ -375,13 +557,15 @@ export class ObjectWriter {
         }),
         features: count,
       });
+      this.state.phase = "done";
+      await this.checkpoint();
       return this.report;
     } finally {
       this.close();
     }
   }
   close() {
-    if (!this.closed) {
+    if (!this.closed && !this.staging) {
       this.db.close();
       rmSync(this.path, { force: true });
       this.closed = true;

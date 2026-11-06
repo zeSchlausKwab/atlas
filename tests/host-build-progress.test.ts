@@ -165,3 +165,12 @@ test("previous n/x remain visible while the current pass has no measurement", ()
     },
   ]);
 });
+
+test("source payload and local index usage remain separately visible", () => {
+  const j = job();
+  j.progress.stagingBytes = 3 * 1024 ** 3;
+  j.progress.indexBytes = 512 * 1024 ** 2;
+  const m = buildProgressModel(j);
+  expect(m.staging).toBe("3 GiB");
+  expect(m.index).toBe("512 MiB");
+});

@@ -1,6 +1,6 @@
 import type { BlockWriter } from "../../cli/src/stream-writer";
 import { PACK_BYTES, CHUNK_BYTES, type PayloadRef } from "./model";
-/** Two bounded buffers; references are stable before the buffers are flushed. */
+/** At most 128 spatially grouped buffers (8 MiB); references stay stable before flush. */
 export class PayloadPacker {
   private buffers = new Map<
     string,
@@ -10,7 +10,7 @@ export class PayloadPacker {
     private writer: BlockWriter,
     private next: (kind: string) => string,
   ) {}
-  async add(kind: string, bytes: Uint8Array): Promise<PayloadRef> {
+  async add(kind: string, bytes: Uint8Array, group = ""): Promise<PayloadRef> {
     if (bytes.length > PACK_BYTES) {
       const blocks: string[] = [];
       for (let at = 0; at < bytes.length; at += CHUNK_BYTES) {
@@ -23,18 +23,21 @@ export class PayloadPacker {
       }
       return { blocks, bytes: bytes.length };
     }
-    let buffer = this.buffers.get(kind);
+    const slot = kind + ":" + group;
+    let buffer = this.buffers.get(slot);
     if (buffer && buffer.used + bytes.length > PACK_BYTES) {
-      await this.flush(kind);
+      await this.flush(slot);
       buffer = undefined;
     }
     if (!buffer) {
+      if (this.buffers.size >= 128)
+        await this.flush(this.buffers.keys().next().value!);
       buffer = {
         key: this.next(kind),
         bytes: new Uint8Array(PACK_BYTES),
         used: 0,
       };
-      this.buffers.set(kind, buffer);
+      this.buffers.set(slot, buffer);
     }
     const offset = buffer.used;
     buffer.bytes.set(bytes, offset);

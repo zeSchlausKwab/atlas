@@ -307,3 +307,52 @@ invalidates semantic packing (v5 introduced paged selectable features), backs up
 the old receipt as `partitioned.json.v4`, and atomically publishes the new one.
 Every retained file still passes its normal size/SHA-256 verification before use.
 Other versions, changed input and changed recipes remain rejected.
+
+## Recoverable source-object staging (6 November 2026)
+
+The source-object pass no longer expands all geometry and topology into a second
+SQLite database. It emits compressed payload blocks while reading the source,
+using at most 128 spatial/class buffers of 64 KiB each. The append-only
+`source-objects-stage.payload` follows the selected artifact workspace (NAS for
+NAS-assisted builds). `source-objects-stage.sqlite` stays on the local compiler
+disk and contains compressed attributes, payload references, block descriptors,
+identity/page indexes and checkpoint state. These indexes still grow with the
+number of objects and tags; this is bounded payload buffering, not constant
+whole-build disk usage.
+
+The native source's `(cell,rowid)` index supplies an exact resume cursor without
+a whole-source sort. Source ingestion and attribute packing commit every 10,000
+objects; identity indexing commits every 10,240 identities; tag indexing commits
+every 10,000 complete terms. Extra ocean objects checkpoint every 1,000 objects.
+Payload buffers are flushed and the payload file is synced **before** SQLite
+commits its transaction with the cursor, counters, block keys and output length.
+SQLite uses DELETE journaling and FULL synchronization. Reopen recovers its
+journal and truncates the uncommitted payload tail. The full recipe/source
+fingerprint must match. Blocks are checksum-verified when copied to the archive.
+
+Exact-tag postings are inserted once per attribute page, rather than once per
+object. An ordered postings scan replaces the old tag/object/page join and
+large DISTINCT sort. Spatial grouping keeps unrelated distant geometry out of
+the same small payload pack.
+
+A separately verified `source-objects.atlas` stage finishes **before** the
+search, labels and selectable-feature spools are allocated. Its staging files
+are reclaimed only after the archive has a size/SHA-256 receipt. The final
+package merges feature kinds and capabilities and still contains everything in
+one `.atlas` file. Existing completed v8 transport, source, display and semantic
+artifacts remain reusable; no source snapshot or routing identity changes.
+
+Recovery retains committed ingestion, packing, identity and tag batches. Spatial
+sort creation and final tree assembly may repeat if interrupted; archive copying
+and prefix finalization can also repeat, reading the completed checkpoint store.
+The host reports workspace payload bytes and local index bytes separately,
+alongside pass counts, ETA and checkpoint time. Free-space guards remain active.
+
+Validation: the source-object suite covers exact geometry, relationship roles,
+Unicode/empty tags, excerpt pruning and shared payloads. Recovery tests interrupt
+all four passes and kill a subprocess with a hot journal and uncommitted payload.
+The real Liechtenstein PBF integration produces one file with all capabilities,
+including searchable explicit addresses and readable source objects. Its 63,373
+source objects used 23.06 MiB of local index and 5.78 MiB of compressed workspace
+payload at the end of ingestion; this small fixture is not a continent-size
+forecast.

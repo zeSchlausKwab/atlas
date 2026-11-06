@@ -59,3 +59,13 @@ test("unknown totals retain a real counter without creating a percentage", () =>
   expect(p?.total).toBe(0);
   expect(p?.stagePercent).toBeUndefined();
 });
+
+test("source staging reports actual workspace payload and local index sizes", () => {
+  expect(
+    compilerProgress(line({ stagingBytes: 4096, indexBytes: 8192 })),
+  ).toMatchObject({ stagingBytes: 4096, indexBytes: 8192 });
+  expect(
+    compilerProgress(line({ stagingBytes: -1, indexBytes: null }))
+      ?.stagingBytes,
+  ).toBeUndefined();
+});

@@ -152,6 +152,9 @@ export function buildProgressModel(
         ? new Date(p.checkpointAt).toLocaleTimeString()
         : undefined,
     saved: storageSize(p.writtenBytes),
+    staging:
+      p.stagingBytes === undefined ? undefined : storageSize(p.stagingBytes),
+    index: p.indexBytes === undefined ? undefined : storageSize(p.indexBytes),
     substep:
       p.stageIndex && p.stageCount
         ? `Routing pass ${p.stageIndex} of ${p.stageCount}`
@@ -243,6 +246,8 @@ export function buildProgressPanel(
   else if (m.observed) metric("Observed this pass", m.observed);
   metric(job.cachedSource ? "Saved stage data" : "Atlas written", m.saved);
   if (m.checkpoint) metric("Last checkpoint", m.checkpoint);
+  if (m.staging) metric("Source payload · workspace", m.staging);
+  if (m.index) metric("Source index · local disk", m.index);
   panel.append(
     metrics,
     element(

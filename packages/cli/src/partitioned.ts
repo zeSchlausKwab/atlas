@@ -2,6 +2,7 @@ import { routingAuthority } from "./routing-authority";
 import type { PreparedOcean } from "../../provisioning/src/ocean-source";
 import { oceanObjects } from "../../objects/src/ocean";
 import { appendOcean } from "./ocean-spool";
+import { ObjectStaging } from "../../objects/src/staging";
 import { writeSourceObjects } from "../../objects/src/source-build";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import { reconcilePartitionedState } from "./partitioned-state";
@@ -335,7 +336,12 @@ export async function compilePartitioned(o: PartitionedOptions) {
       s.streetNames ||
       s.pois ||
       s.peaks;
+    const separateObjects =
+      s.featureKinds.includes("objects") &&
+      (!state.completed["semantics.atlas"] ||
+        !!state.completed["source-objects.atlas"]);
     const needsSource =
+      (separateObjects && !state.completed["source-objects.atlas"]) ||
       (needsSem && !state.completed["semantics.atlas"]) ||
       (s.layers.length && !state.completed["display.atlas"]);
     let source: Database | undefined;
@@ -377,6 +383,64 @@ export async function compilePartitioned(o: PartitionedOptions) {
       );
     }
     try {
+      // Finish and receipt source objects before allocating search/label/feature spools.
+      // Only the compact, transactional index is on SSD; the append-only payload
+      // follows the selected artifact workspace (NAS for assisted builds).
+      if (separateObjects) {
+        const indexPath = join(o.work, "source-objects-stage.sqlite");
+        const payloadPath = join(artifactRoot, "source-objects-stage.payload");
+        artifacts.push(
+          await stage("source-objects.atlas", (path) =>
+            archive(path, async (writer) => {
+              const staging = await new ObjectStaging(
+                indexPath,
+                payloadPath,
+                identity,
+              ).open();
+              try {
+                await writeSourceObjects(
+                  source!,
+                  staging,
+                  {
+                    type: "Polygon",
+                    coordinates: [[...s.polygon, s.polygon[0]!]],
+                  },
+                  signal,
+                  progress,
+                  o.ocean
+                    ? oceanObjects(o.ocean.data, o.ocean.source.sha256)
+                    : [],
+                  staging,
+                );
+                let report: ((done: number) => void) | undefined;
+                await staging.copyTo(writer, signal, (done, total) => {
+                  report ??= measuredProgress(
+                    progress,
+                    "semantic-object-archive",
+                    "Writing source object archive",
+                    total,
+                    "blocks",
+                  );
+                  report(done);
+                });
+                return {
+                  ...base,
+                  featureKinds: ["objects"],
+                  featureZoom: FEATURE_ZOOM,
+                  featureSchema: 2,
+                  capabilities: ["feature-extraction", "source-objects"],
+                };
+              } finally {
+                await staging.close();
+              }
+            }),
+          ),
+        );
+        // Only reclaim staging after the finished archive has a verified receipt.
+        await rm(indexPath, { force: true });
+        await rm(indexPath + "-journal", { force: true });
+        await rm(payloadPath, { force: true });
+      }
       if (needsSem)
         artifacts.push(
           await stage("semantics.atlas", (path) =>
@@ -562,17 +626,6 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 featureProgress(count);
                 if (s.featureKinds.includes("boundaries"))
                   await boundaries.finish();
-                if (s.featureKinds.includes("objects"))
-                  await writeSourceObjects(
-                    source!,
-                    writer,
-                    region,
-                    signal,
-                    progress,
-                    o.ocean
-                      ? oceanObjects(o.ocean.data, o.ocean.source.sha256)
-                      : [],
-                  );
                 const groupsProgress = measuredProgress(
                   progress,
                   "semantic-streets",
@@ -629,7 +682,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : undefined,
                   featureZoom: s.featureKinds.length ? FEATURE_ZOOM : undefined,
                   featureSchema: s.featureKinds.length ? 2 : undefined,
-                  featureKinds: s.featureKinds,
+                  featureKinds: s.featureKinds.filter((k) => k !== "objects"),
                   semantics: s.search ? SEMANTIC_RETENTION : undefined,
                   capabilities: [
                     ...(s.search
@@ -645,9 +698,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : []),
                     ...(s.peaks ? ["peak-query"] : []),
                     ...(s.featureKinds.length ? ["feature-extraction"] : []),
-                    ...(s.featureKinds.includes("objects")
-                      ? ["source-objects"]
-                      : []),
+
                     ...(s.featureKinds.includes("boundaries")
                       ? ["administrative-boundaries"]
                       : []),
@@ -774,7 +825,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
     // Stream every directory leaf and payload. Never collect all block descriptors.
     await archive(o.output, async (writer) => {
       let manifest = { ...base },
-        caps = new Set<string>();
+        caps = new Set<string>(),
+        featureKinds = new Set<NonNullable<Manifest["featureKinds"]>[number]>();
       const totalBytes = artifacts.reduce(
         (sum, path) => sum + state.completed[path.split("/").at(-1)!]!.size,
         0,
@@ -796,6 +848,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
           const { snapshot, ...m } = reader.index.manifest;
           manifest = { ...manifest, ...m, capabilities: [] };
           for (const c of m.capabilities) caps.add(c);
+          for (const kind of m.featureKinds ?? []) featureKinds.add(kind);
           // Optional fields from earlier artifacts survive Object.assign (absent fields are omitted in JSON).
           for await (const block of reader.iterateBlocks()) {
             signal.throwIfAborted();
@@ -829,6 +882,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       )
         caps.add("land-sea-surfaces");
       manifest.capabilities = [...caps];
+      if (featureKinds.size) manifest.featureKinds = [...featureKinds];
       manifest.features = writer.featureCount("tile/");
       manifest.featureCountKind = "tile-records";
       return manifest;

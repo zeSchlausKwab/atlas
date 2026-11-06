@@ -31,6 +31,12 @@ export function compilerProgress(
       unit: p.unit,
       stagePercent: p.total ? (100 * p.completed) / p.total : undefined,
       stage: p.stage,
+      ...(Number.isSafeInteger(p.stagingBytes) && p.stagingBytes >= 0
+        ? { stagingBytes: p.stagingBytes }
+        : {}),
+      ...(Number.isSafeInteger(p.indexBytes) && p.indexBytes >= 0
+        ? { indexBytes: p.indexBytes }
+        : {}),
       stageIndex: p.stageIndex,
       stageCount: p.stageCount,
       etaSeconds:

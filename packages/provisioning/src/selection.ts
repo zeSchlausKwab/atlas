@@ -72,6 +72,10 @@ export interface PreparationProgress {
   elapsedSeconds?: number;
   etaSeconds?: number;
   checkpointAt?: string;
+  /** Compressed source-object payload on the selected workspace volume. */
+  stagingBytes?: number;
+  /** Compact transactional source-object indexes on the compiler disk. */
+  indexBytes?: number;
   stagePercent?: number;
   message: string;
   completed: number;

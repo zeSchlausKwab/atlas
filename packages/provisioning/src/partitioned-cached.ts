@@ -42,10 +42,24 @@ export async function importPartitionedCached(
     area = join(cp.directory, name),
     partial = area + ".part.osm.pbf";
   let completed = 0;
+  let lastMeasured: Partial<PreparationProgress> | undefined;
   const progress = (
     message: string,
     phase: PreparationProgress["phase"] = "compiling",
-  ) =>
+  ) => {
+    const measured = compilerProgress(message);
+    if (measured && measured.stage === lastMeasured?.stage) {
+      for (const key of [
+        "checkpointAt",
+        "stagingBytes",
+        "indexBytes",
+        "etaSeconds",
+        "elapsedSeconds",
+      ] as const)
+        if (measured[key] === undefined && lastMeasured?.[key] !== undefined)
+          (measured as any)[key] = lastMeasured[key];
+    }
+    lastMeasured = measured;
     report({
       phase,
       message,
@@ -54,8 +68,9 @@ export async function importPartitionedCached(
       unit: "stages",
       readBytes: 0,
       writtenBytes: cp.savedBytes,
-      ...compilerProgress(message),
+      ...measured,
     });
+  };
   const abort = new AbortController();
   let failure: Error | undefined;
   const check = async () => {
