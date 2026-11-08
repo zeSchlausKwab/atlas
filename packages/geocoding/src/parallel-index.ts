@@ -1,3 +1,4 @@
+import { decodePostingChunk, type PostingChunk } from "./posting-spool";
 import { compilerWorkers } from "../../compiler/src/settings";
 import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -179,9 +180,9 @@ export async function parallelNameIndex(
       };
       for (const row of merge
         .query<
-          { bucket: number; term: string; rid: number },
+          PostingChunk & { bucket: number; term: string },
           []
-        >(select("bucket,term,rid", "postings") + " ORDER BY bucket,term,rid")
+        >(select("bucket,term,first,count,data", "postings") + " ORDER BY bucket,term,first")
         .iterate()) {
         if (!term || term.term !== row.term || bucket !== row.bucket) {
           await finishTerm();
@@ -196,12 +197,15 @@ export async function parallelNameIndex(
           }
           term = { term: row.term, count: 0, start: postingPage, pages: 0 };
         }
-        term.count++;
-        ids.push(row.rid);
-        if (ids.length === POSTINGS_PER_PAGE) await page();
-        if (++posted % 10000 === 0) {
-          signal?.throwIfAborted();
-          postingReport(posted);
+        signal?.throwIfAborted();
+        for (const rid of decodePostingChunk(row)) {
+          term.count++;
+          ids.push(rid);
+          if (ids.length === POSTINGS_PER_PAGE) await page();
+          if (++posted % 10000 === 0) {
+            signal?.throwIfAborted();
+            postingReport(posted);
+          }
         }
       }
       await finishTerm();

@@ -356,3 +356,26 @@ including searchable explicit addresses and readable source objects. Its 63,373
 source objects used 23.06 MiB of local index and 5.78 MiB of compressed workspace
 payload at the end of ingestion; this small fixture is not a continent-size
 forecast.
+
+## Compact search-name staging (8 November 2026)
+
+Both serial and parallel name indexing accumulate bounded batches of
+`term → sorted record IDs`. The temporary SQLite spool stores one row per
+term/batch with delta-encoded, optionally gzip-compressed uint32 IDs. A single
+ordered primary key replaces the former row-per-gram table and duplicate sorting
+index. Parallel shards cover disjoint ordinal ranges; their ordered chunk merge
+recreates the same `postings-v1` pages and term catalog. No file format or reader
+migration is required. The accumulator flushes after at most 262,144 postings
+plus the current record; decoding holds at most one posting chunk at a time.
+
+Temporary databases remain local, including during NAS-assisted builds. This
+reduces index amplification; it does not make whole-build disk use constant.
+Search/label/feature staging is still disposable and repeats after interruption.
+Completed source-object, source-geometry and routing receipts remain reusable.
+
+A repeated-address regression fixture with 20,000 records and 4,226,200 postings
+used 157,794,304 bytes before this change and 4,898,816 bytes afterward (including
+record pages). Worker time on the development Mac fell from 4.13 s to 0.54 s.
+These fixture numbers are not a forecast for a continent. An independent
+comparison against the previous compiler produced identical bytes for all 6,299
+blocks of a multilingual 8,193-record fixture, with both one and four workers.

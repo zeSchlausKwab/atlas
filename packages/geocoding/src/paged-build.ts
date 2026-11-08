@@ -1,13 +1,16 @@
+import {
+  PostingSpool,
+  decodePostingChunk,
+  type PostingChunk,
+} from "./posting-spool";
 import { writeSearchCell } from "./cell-build";
 import { parallelNameIndex } from "./parallel-index";
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 import type { BlockWriter } from "../../cli/src/stream-writer";
 import { project } from "../../format/src/index";
-import { normalize, validPosition, type Location, type Street } from "./model";
+import { validPosition, type Location, type Street } from "./model";
 import {
-  grams,
-  termBucket,
   termKey,
   ordinalKey,
   RECORDS_PER_PAGE,
@@ -29,7 +32,6 @@ export class PagedSearchBuilder {
       CREATE TABLE locations(id TEXT PRIMARY KEY, cell INTEGER NOT NULL, json TEXT NOT NULL) WITHOUT ROWID;
       CREATE INDEX locations_cell ON locations(cell,id);
       CREATE TABLE streets(cell INTEGER, id TEXT, json TEXT, PRIMARY KEY(cell,id)) WITHOUT ROWID;
-      CREATE TABLE postings(bucket INTEGER, term TEXT, rid INTEGER, PRIMARY KEY(bucket,term,rid)) WITHOUT ROWID;
       BEGIN;`);
   }
   private tick() {
@@ -134,7 +136,7 @@ export class PagedSearchBuilder {
         );
         this.db.run("BEGIN");
         let chunk: Location[] = [];
-        const insert = this.db.query("INSERT INTO postings VALUES(?,?,?)");
+        const postings = new PostingSpool(this.db);
         for (const { json } of this.db
           .query<{ json: string }, []>("SELECT json FROM locations ORDER BY id")
           .iterate()) {
@@ -142,16 +144,7 @@ export class PagedSearchBuilder {
           const r: Location = JSON.parse(json);
           if (records >= 2 ** 32)
             throw new Error("Search record identity overflow");
-          const terms = grams(
-            [r.name, ...r.aliases, r.context ?? ""].map(normalize).join(" "),
-          );
-          for (const term of terms) insert.run(termBucket(term), term, records);
-          for (const gram of grams(
-            [r.name, ...r.aliases].map(normalize).join(" "),
-          )) {
-            const term = "n:" + gram;
-            insert.run(termBucket(term), term, records);
-          }
+          postings.add(r, records);
           records++;
           if (records % 10000 === 0) recordProgress(records);
           chunk.push(r);
@@ -170,6 +163,7 @@ export class PagedSearchBuilder {
             { schema: "locations-v1", records: chunk },
             chunk.length,
           );
+        postings.flush();
         recordProgress(records);
         this.db.run("COMMIT");
         const postingProgress = measuredProgress(
@@ -177,7 +171,10 @@ export class PagedSearchBuilder {
           "search-postings",
           "Packing search postings",
           this.db
-            .query<{ n: number }, []>("SELECT count(*) AS n FROM postings")
+            .query<
+              { n: number },
+              []
+            >("SELECT coalesce(sum(count),0) AS n FROM postings")
             .get()!.n,
           "records",
         );
@@ -190,7 +187,7 @@ export class PagedSearchBuilder {
           .query<
             { bucket: number; term: string; count: number },
             []
-          >("SELECT bucket,term,count(*) AS count FROM postings GROUP BY bucket,term ORDER BY bucket,term")
+          >("SELECT bucket,term,sum(count) AS count FROM postings GROUP BY bucket,term ORDER BY bucket,term")
           .iterate()) {
           if (bucket !== row.bucket) {
             if (bucket >= 0)
@@ -208,20 +205,23 @@ export class PagedSearchBuilder {
             pages: 0,
           };
           let ids: number[] = [];
-          for (const { rid } of this.db
+          for (const chunk of this.db
             .query<
-              { rid: number },
+              PostingChunk,
               [number, string]
-            >("SELECT rid FROM postings WHERE bucket=? AND term=? ORDER BY rid")
+            >("SELECT first,count,data FROM postings WHERE bucket=? AND term=? ORDER BY first")
             .iterate(bucket, row.term)) {
-            ids.push(rid);
-            if (ids.length === POSTINGS_PER_PAGE) {
-              await write(ordinalKey("postings", postingPage++), {
-                schema: "postings-v1",
-                ids,
-              });
-              term.pages++;
-              ids = [];
+            signal?.throwIfAborted();
+            for (const rid of decodePostingChunk(chunk)) {
+              ids.push(rid);
+              if (ids.length === POSTINGS_PER_PAGE) {
+                await write(ordinalKey("postings", postingPage++), {
+                  schema: "postings-v1",
+                  ids,
+                });
+                term.pages++;
+                ids = [];
+              }
             }
           }
           if (ids.length) {
