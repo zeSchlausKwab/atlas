@@ -38,3 +38,23 @@ verified by the normal resume path:
 The 10 GiB runtime reserve and stopping buffer remain unchanged. A successful
 restart does not establish that the remaining display and assembly stages fit;
 those stages retain their disk checks.
+
+## Validation and deployment
+
+- TypeScript checking and 53 Rust tests passed.
+- All 428 Bun tests passed: 422 in the isolated Linux full-suite run, followed
+  by the six client/server tests after replacing validation-only dependency and
+  WASM symlinks with a clean locked install and local WASM copies. Bun's bundler
+  reported `EISDIR` for files outside that temporary checkout. The Mac full run
+  was unsuitable for storage tests: only about 8.7 GiB was free, below the normal
+  reserve. Production storage checks were not relaxed to make tests pass.
+- Independent old/new comparison: identical bytes for 6,299 published blocks
+  from 8,193 multilingual records, for both serial and four-worker compilation.
+- Fix commit: `cac6eda`. Deployed release:
+  `20261108T164723022Z-cac6eda59ca6-85bc82b0`.
+- Candidate UI, catalog, WASM, byte-range, API and preparation smoke checks
+  passed. The existing North Sea job was resumed through its normal API, with
+  no storage-risk override. It entered checksum verification on the new release.
+
+The reduction measured on the repeated-address fixture is about 97% (158 MB
+to 4.9 MB); this is not a promised reduction for all North Sea intermediate data.
