@@ -115,6 +115,7 @@ export async function watchMaps(
     relay.close();
     signal.throwIfAborted();
   }
+  let closed = false;
   const seen = new Map<string, Event>();
   const withdrawn = new Map<string, number>();
   const deletedEvents = new Set<string>();
@@ -134,6 +135,7 @@ export async function watchMaps(
     ],
     {
       onevent(event) {
+        if (closed) return;
         try {
           if (!authors.includes(event.pubkey)) return;
           if (event.kind === 5) {
@@ -217,6 +219,7 @@ export async function watchMaps(
         }
       },
       oneose() {
+        if (closed) return;
         options.ready?.();
         report(
           "Listening for signed map offers. Choose discovered maps below.",
@@ -225,14 +228,20 @@ export async function watchMaps(
     },
   );
   const close = () => {
-    sub.close();
+    if (closed) return;
+    closed = true;
+    signal.removeEventListener("abort", close);
+    relay.onclose = null;
+    // This subscription owns the socket, so a wire CLOSE is unnecessary.
+    // nostr-tools defers send() through a promise; sub.close() followed by
+    // relay.close() otherwise writes that frame after the socket has closed.
+    sub.oneose = undefined;
+    sub.receivedEose();
+    sub.closed = true;
     relay.close();
   };
   signal.addEventListener("abort", close, { once: true });
-  return () => {
-    signal.removeEventListener("abort", close);
-    close();
-  };
+  return close;
 }
 export async function publishAnnouncement(
   url: string,

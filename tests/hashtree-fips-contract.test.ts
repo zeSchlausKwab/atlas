@@ -420,3 +420,47 @@ test("relay publication times out when a relay accepts a connection but never ac
     server.stop(true);
   }
 }, 1000);
+
+test("discovery abort and repeated cleanup never send on a closing relay socket", async () => {
+  const relay = localRelay();
+  const abort = new AbortController();
+  const ready = Promise.withResolvers<void>();
+  const reports: string[] = [];
+  const original = WebSocket.prototype.send;
+  let lateSends = 0;
+  const send = spyOn(WebSocket.prototype, "send").mockImplementation(function (
+    this: WebSocket,
+    data,
+  ) {
+    if (this.readyState !== WebSocket.OPEN) lateSends++;
+    return original.call(this, data);
+  });
+  let stop: (() => void) | undefined;
+  try {
+    stop = await watchMaps(
+      relay.url,
+      [root],
+      () => {},
+      abort.signal,
+      (message) => reports.push(message),
+      undefined,
+      { ready: ready.resolve },
+    );
+    await ready.promise;
+    abort.abort();
+    stop();
+    stop();
+    // Flush the nostr-tools send promise that used to run after socket.close().
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(lateSends).toBe(0);
+    expect(reports.some((message) => message.includes("disconnected"))).toBe(
+      false,
+    );
+  } finally {
+    stop?.();
+    abort.abort();
+    send.mockRestore();
+    relay.close();
+  }
+});
