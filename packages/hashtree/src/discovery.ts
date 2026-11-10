@@ -1,93 +1,10 @@
-import { VIEW_KIND, parseViewAnnouncement } from "../../views/src/announcement";
-import { finalizeEvent, verifyEvent, type Event } from "nostr-tools/pure";
-import { Relay } from "nostr-tools/relay";
-import { parseCatalog, type MapOffer } from "../../format/src/catalog";
-import { HASH } from "./source";
-export const MAP_KIND = 30064;
-export function relayUrl(value: string) {
-  const u = new URL(value);
-  if (
-    !["ws:", "wss:"].includes(u.protocol) ||
-    u.username ||
-    u.password ||
-    u.hash
-  )
-    throw new Error("Invalid relay URL");
-  return u.href;
-}
-export function mapAnnouncement(
-  offer: MapOffer,
-  secret: Uint8Array,
-  time = Math.floor(Date.now() / 1000),
-): Event {
-  if (!offer.hashtree) throw new Error("Index this map with Hashtree first");
-  const event = finalizeEvent(
-    {
-      kind: MAP_KIND,
-      created_at: time,
-      tags: [
-        ["d", `atlas/${offer.id}`],
-        ["l", "hashtree"],
-        ["t", "atlas-map"],
-        ["hash", offer.hashtree.root],
-        ["expiration", String(time + 7 * 86400)],
-      ],
-      content: JSON.stringify({
-        version: 1,
-        map: { ...offer, manifest: { ...offer.manifest, places: [] } },
-      }),
-    },
-    secret,
-  );
-  parseAnnouncement(event, time);
-  return event;
-}
-export function parseAnnouncement(
-  event: unknown,
-  now = Math.floor(Date.now() / 1000),
-): { event: Event; offer: MapOffer } {
-  if (JSON.stringify(event).length > 256 * 1024)
-    throw new Error("Oversized map announcement");
-  // Caller-owned nostr-tools objects may carry a cached verification symbol.
-  const e = JSON.parse(JSON.stringify(event)) as Event;
-  if (
-    !e ||
-    e.kind !== MAP_KIND ||
-    !verifyEvent(e) ||
-    e.created_at > now + 300 ||
-    !e.tags.some((t) => t[0] === "l" && t[1] === "hashtree") ||
-    !e.tags.some((t) => t[0] === "t" && t[1] === "atlas-map")
-  )
-    throw new Error("Invalid signed map announcement");
-  const tag = (key: string) => {
-    const ts = e.tags.filter((t) => t[0] === key);
-    if (ts.length !== 1) throw new Error(`Invalid ${key} tag`);
-    return ts[0]![1]!;
-  };
-  const expiration = Number(tag("expiration"));
-  if (
-    !Number.isSafeInteger(expiration) ||
-    expiration <= now ||
-    expiration > e.created_at + 7 * 86400
-  )
-    throw new Error("Expired map announcement");
-  if (
-    e.tags.some((t) =>
-      ["key", "encryptedKey", "selfEncryptedKey"].includes(t[0]!),
-    )
-  )
-    throw new Error("Encrypted map offers are not supported yet");
-  const content = JSON.parse(e.content);
-  if (content.version !== 1) throw new Error("Unsupported map announcement");
-  const offer = parseCatalog({ maps: [content.map] }, content.map.url)[0]!;
-  if (
-    !offer.hashtree ||
-    offer.hashtree.root !== tag("hash") ||
-    tag("d") !== `atlas/${offer.id}`
-  )
-    throw new Error("Map root or identity mismatch");
-  return { event: e, offer };
-}
+import { VIEW_KIND, parseViewAnnouncement } from '../../views/src/announcement';
+import { finalizeEvent, verifyEvent, type Event } from 'nostr-tools/pure';
+import { Relay } from 'nostr-tools/relay';
+import { parseCatalog, type MapOffer } from '../../format/src/catalog';
+import { HASH } from './source';
+export { MAP_KIND, relayUrl, mapAnnouncement, parseAnnouncement } from './announcement';
+import { MAP_KIND, relayUrl, parseAnnouncement } from './announcement';
 /** Keep subscriptions open after EOSE; silence is never evidence of global absence. */
 export async function watchMaps(
   url: string,
@@ -103,12 +20,8 @@ export async function watchMaps(
     withdrawn?: (id: string, publisher: string, event: Event) => void;
   } = {},
 ) {
-  if (
-    !authors.length ||
-    authors.length > 16 ||
-    !authors.every((a) => HASH.test(a))
-  )
-    throw new Error("Choose 1–16 publisher public keys");
+  if (!authors.length || authors.length > 16 || !authors.every((a) => HASH.test(a)))
+    throw new Error('Choose 1–16 publisher public keys');
   const relay = await Relay.connect(relayUrl(url), {
     timeout: 10_000,
     abort: signal,
@@ -123,14 +36,14 @@ export async function watchMaps(
   const deletedEvents = new Set<string>();
   relay.onclose = () =>
     report(
-      "Discovery relay disconnected; existing map snapshots remain pinned. Reconnect to discover updates.",
+      'Discovery relay disconnected; existing map snapshots remain pinned. Reconnect to discover updates.',
     );
   const sub = relay.subscribe(
     [
       {
         kinds: acceptView ? [MAP_KIND, VIEW_KIND] : [MAP_KIND],
         authors,
-        "#t": acceptView ? ["atlas-map", "atlas-view"] : ["atlas-map"],
+        '#t': acceptView ? ['atlas-map', 'atlas-view'] : ['atlas-map'],
         limit: 100,
       },
       { kinds: [5], authors, limit: 100 },
@@ -143,30 +56,20 @@ export async function watchMaps(
           if (event.kind === 5) {
             if (JSON.stringify(event).length > 256 * 1024) return;
             const deletion = JSON.parse(JSON.stringify(event)) as Event;
-            if (
-              !verifyEvent(deletion) ||
-              deletion.created_at > Math.floor(Date.now() / 1000) + 300
-            )
+            if (!verifyEvent(deletion) || deletion.created_at > Math.floor(Date.now() / 1000) + 300)
               return;
             options.deleted?.(deletion);
             const keys = new Map<string, boolean>();
             for (const tag of deletion.tags) {
-              if (
-                tag[0] === "a" &&
-                tag[1]?.startsWith(`${MAP_KIND}:${deletion.pubkey}:atlas/`)
-              )
+              if (tag[0] === 'a' && tag[1]?.startsWith(`${MAP_KIND}:${deletion.pubkey}:atlas/`))
                 keys.set(
                   `${deletion.pubkey}:${tag[1].slice(`${MAP_KIND}:${deletion.pubkey}:`.length)}`,
                   true,
                 );
-              if (tag[0] === "e" && HASH.test(tag[1] ?? "")) {
+              if (tag[0] === 'e' && HASH.test(tag[1] ?? '')) {
                 deletedEvents.add(`${deletion.pubkey}:${tag[1]}`);
                 for (const [key, old] of seen)
-                  if (
-                    old.kind === MAP_KIND &&
-                    old.pubkey === deletion.pubkey &&
-                    old.id === tag[1]
-                  )
+                  if (old.kind === MAP_KIND && old.pubkey === deletion.pubkey && old.id === tag[1])
                     if (!keys.has(key)) keys.set(key, false);
               }
             }
@@ -202,7 +105,7 @@ export async function watchMaps(
             return;
           }
           const parsed = parseAnnouncement(event),
-            key = `${event.pubkey}:${event.tags.find((t) => t[0] === "d")![1]}`;
+            key = `${event.pubkey}:${event.tags.find((t) => t[0] === 'd')![1]}`;
           if (
             (withdrawn.get(key) ?? -1) >= event.created_at ||
             deletedEvents.has(`${event.pubkey}:${event.id}`)
@@ -224,16 +127,14 @@ export async function watchMaps(
       oneose() {
         if (closed) return;
         options.ready?.();
-        report(
-          "Listening for signed map offers. Choose discovered maps below.",
-        );
+        report('Listening for signed map offers. Choose discovered maps below.');
       },
     },
   );
   const close = () => {
     if (closed) return;
     closed = true;
-    signal.removeEventListener("abort", close);
+    signal.removeEventListener('abort', close);
     relay.onclose = null;
     // This subscription owns the socket, so a wire CLOSE is unnecessary.
     // nostr-tools defers send() through a promise; sub.close() followed by
@@ -243,7 +144,7 @@ export async function watchMaps(
     sub.closed = true;
     relay.close();
   };
-  signal.addEventListener("abort", close, { once: true });
+  signal.addEventListener('abort', close, { once: true });
   return close;
 }
 export async function publishAnnouncement(
@@ -253,7 +154,7 @@ export async function publishAnnouncement(
   signal?: AbortSignal,
 ) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
-    throw new Error("Invalid relay publication timeout");
+    throw new Error('Invalid relay publication timeout');
   signal?.throwIfAborted();
   const relay = new Relay(relayUrl(url), { enableReconnect: false });
   const started = performance.now();
@@ -261,11 +162,9 @@ export async function publishAnnouncement(
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => {
       relay.close();
-      reject(
-        signal?.reason ?? new DOMException("Publication aborted", "AbortError"),
-      );
+      reject(signal?.reason ?? new DOMException('Publication aborted', 'AbortError'));
     };
-    signal?.addEventListener("abort", onAbort, { once: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
   try {
     await Promise.race([
@@ -273,15 +172,12 @@ export async function publishAnnouncement(
       (async () => {
         await relay.connect({ timeout: timeoutMs });
         signal?.throwIfAborted();
-        relay.publishTimeout = Math.max(
-          1,
-          timeoutMs - (performance.now() - started),
-        );
+        relay.publishTimeout = Math.max(1, timeoutMs - (performance.now() - started));
         await relay.publish(event);
       })(),
     ]);
   } finally {
-    if (onAbort) signal?.removeEventListener("abort", onAbort);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
     relay.close();
   }
 }

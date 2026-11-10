@@ -24,6 +24,7 @@ import {
 import {
   AtlasReader,
   HttpSource,
+  RemoteSource,
   type DataPurpose,
 } from "../../../packages/format/src/reader";
 import type {
@@ -158,7 +159,7 @@ export class OperationSession {
         `/members/${reader.source.member.id}`,
       );
     else if (
-      reader.source instanceof HttpSource &&
+      reader.source instanceof RemoteSource &&
       /^https?:/.test(reader.source.url)
     )
       this.remote = new RemoteOperations(

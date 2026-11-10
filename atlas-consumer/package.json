@@ -8,11 +8,12 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "type-check": "tsc --noEmit",
-    "verify": "pnpm test:guidance && pnpm test:recovery && pnpm type-check && pnpm build",
+    "verify": "pnpm test:guidance && pnpm test:recovery && pnpm test:resources && pnpm type-check && pnpm build",
     "test:guidance": "node --test tests/guidance.test.mjs",
     "test:recovery": "node --test tests/recovery.test.mjs",
     "test:conformance": "pnpm build && napplet-conformance ./dist",
-    "test:conformance:ui": "napplet-conformance --ui . --exec \"vite build --watch\""
+    "test:conformance:ui": "napplet-conformance --ui . --exec \"vite build --watch\"",
+    "test:resources": "bun test tests/resources.test.ts"
   },
   "dependencies": {
     "@napplet/sdk": "^0.24.4"

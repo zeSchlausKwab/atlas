@@ -33,7 +33,10 @@
   "preview": {
     "delayMs": 1500
   },
-  "requires": [],
+  "requires": [
+    "outbox",
+    "resource"
+  ],
   "relays": [],
   "servers": [],
   "license": "MIT",

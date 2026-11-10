@@ -13,7 +13,7 @@ import type {
 } from "../../routing/src/index";
 import { MAP_LAYERS, LAYER_MASKS, type Peak } from "../../format/src/index";
 import { FLAT_SCENE, parseScene, type MapScene } from "./style";
-import init, { Renderer } from "../pkg/atlas_renderer";
+import { Renderer } from "../pkg/atlas_renderer";
 import { TileScheduler } from "./tile-scheduler";
 import { MapInput } from "./input";
 import { MapLabels } from "./labels";
@@ -430,7 +430,7 @@ export class CompositionMap implements WorkspaceMap {
     stats: (s: CompositionStats) => void,
     error: (id: string, e: string) => void,
   ) {
-    await init({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
+    // The caller initializes the renderer with its chosen WASM source.
     const map = new CompositionMap(canvas, stats, error);
     map.renderer = new Renderer(canvas);
     map.setStyle(PAPER);

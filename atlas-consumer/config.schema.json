@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$version": 1,
+  "$version": 2,
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -30,6 +30,30 @@
       "description": "Allow selecting interface text. Text inputs always remain selectable.",
       "default": false,
       "x-napplet-section": "Interaction"
+    },
+    "publisher": {
+      "type": "string",
+      "title": "Trusted map publisher",
+      "description": "Nostr public key in lowercase hex. Applies after restarting this napplet.",
+      "default": "eb0d114743da12e854bbe723393b97c5e8beddc38ebb47a3a6fd4bd63274a191",
+      "maxLength": 64,
+      "x-napplet-section": "Discovery"
+    },
+    "discoveryRelays": {
+      "type": "string",
+      "title": "Discovery relay hints",
+      "description": "Whitespace-separated WSS URLs. The shell owns routing and approval. Restart to apply.",
+      "default": "wss://relay.primal.net/ wss://relay.snort.social/",
+      "maxLength": 8192,
+      "x-napplet-section": "Discovery"
+    },
+    "preferredMaps": {
+      "type": "string",
+      "title": "Preferred map IDs",
+      "description": "Optional whitespace-separated IDs. Empty follows the signed default view. Restart to apply.",
+      "default": "",
+      "maxLength": 4096,
+      "x-napplet-section": "Discovery"
     }
   }
 }
