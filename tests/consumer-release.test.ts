@@ -3,13 +3,17 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import ts from 'typescript';
 import { prepareConsumerRelease } from '../scripts/prepare-consumer-release';
 
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
-async function fixture(importPath = '../../packages/view/src/index') {
+async function fixture(
+  importPath = '../../packages/view/src/index',
+  sharedSource = 'export const view = "committed";',
+) {
   const root = await mkdtemp(join(tmpdir(), 'atlas-consumer-export-'));
   roots.push(root);
   const repo = join(root, 'repo');
@@ -32,7 +36,7 @@ async function fixture(importPath = '../../packages/view/src/index') {
     'atlas-consumer/src/main.ts': `import { view } from '${importPath}';\nconsole.log(view);`,
     'atlas-consumer/LICENSE': 'Upstream starter license',
     'packages/view/src/index.ts': 'export { view } from "./value.js";',
-    'packages/view/src/value.ts': 'export const view = "committed";',
+    'packages/view/src/value.ts': sharedSource,
     'crates/renderer/src/lib.rs': 'pub fn render() {}',
     'crates/routing/src/lib.rs': 'pub fn route() {}',
     'crates/routing-wasm/src/lib.rs': 'pub fn route_wasm() {}',
@@ -107,4 +111,39 @@ test('publication export fails before writing when a committed relative dependen
   const f = await fixture('../../packages/missing/src/index');
   await expect(prepareConsumerRelease(f)).rejects.toThrow('Missing committed dependency');
   await expect(readdir(f.output)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+test('shared consumer source keeps the same compiler semantics inside an unrelated checkout', async () => {
+  const f = await fixture(undefined,
+    'class Base { value = "inherited"; }\nclass View extends Base { value!: string; }\nexport const view = new View().value;',
+  );
+  const enclosing = join(f.root, 'unrelated-checkout'), nested = join(enclosing, 'export');
+  await mkdir(enclosing);
+  await writeFile(join(enclosing, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { target: 'ES2022', useDefineForClassFields: true },
+  }));
+  await prepareConsumerRelease(f);
+  await prepareConsumerRelease({ ...f, output: nested });
+  const compiled: string[] = [];
+  for (const output of [f.output, nested]) {
+    const path = join(output, 'packages/view/src/value.ts');
+    const configPath = ts.findConfigFile(dirname(path), ts.sys.fileExists);
+    expect(configPath).toBe(join(output, 'tsconfig.json'));
+    const config = ts.readConfigFile(configPath!, ts.sys.readFile);
+    expect(config.error).toBeUndefined();
+    const parsed = ts.convertCompilerOptionsFromJson(config.config.compilerOptions, output);
+    expect(parsed.errors).toHaveLength(0);
+    const js = ts.transpileModule(await readFile(path, 'utf8'), {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.CommonJS,
+        ...parsed.options,
+      },
+    }).outputText;
+    compiled.push(js);
+    const exports: { view?: string } = {};
+    new Function('exports', js)(exports);
+    expect(exports.view).toBe('inherited');
+  }
+  expect(compiled[0]).toBe(compiled[1]);
 });
