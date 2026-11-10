@@ -79,6 +79,14 @@ A deployment can be staged with `bun run deploy --stage-only`. On the server, ru
 
 ## Verification and remaining boundaries
 
-The test suite exercises two root-pinned maps through real FIPS/TCP stacks on an isolated local carrier, selective reads and cache reuse, provider failover, signed relay discovery/withdrawal, optional HTTP, binary RPC, custom operation execution and host revocation. A visible Brave smoke test loaded two signed maps, applied the signed default layer selection, and ran server search through FIPS without HTTP map/catalog requests. The repeatable acceptance setup used a loopback WebSocket mesh; public seed availability and throughput remain external dependencies.
+The test suite exercises two root-pinned maps through real FIPS/TCP stacks on an isolated local carrier, selective reads and cache reuse, provider failover, signed relay discovery/withdrawal, optional HTTP, binary RPC, custom operation execution and host revocation. A visible Brave smoke test loaded two signed maps, applied the signed default layer selection, and ran server search through FIPS without HTTP map/catalog requests. The repeatable acceptance setup used a loopback WebSocket mesh. A live deployment check also discovered both Lower Rhine maps from public relays and rendered them through the integrated FIPS provider, with HTTP map delivery disabled. Public seed availability and throughput remain external dependencies.
 
 The standalone Atlas browser contains this runtime directly. The Soyli napplet preview still uses its temporary shell bridge; production napplet.soy/Soyli bridge support is a separate integration. This does not implement a generic NAP networking API, access-controlled private maps, anonymous discovery, guaranteed relay availability, or automatic replay of stateful operations between providers.
+
+## Live demo deployment — 10 November 2026
+
+The mini PC runs release `20261110T115215681Z-6d4a3512f79f-5fc971c0` (revision `54af0042c2a7`). Its six indexed maps use the existing publisher and provider identities. The old `atlas-fips-preview.service` is stopped and disabled; its identity file is retained and used by the integrated provider. HTTP map delivery is off; LAN administration remains available.
+
+The persisted discovery relays are `wss://relay.primal.net/` and `wss://relay.snort.social/`. Both acknowledged and returned all six signed map offers. The initial relays were unsuitable during this check: Damus intermittently returned HTTP 503 during WebSocket upgrade, and nos.lol accepted a connection but did not acknowledge or return these announcements. Relay choice is configurable in the FIPS tab and does not require restarting a build.
+
+Validation before activation: 474 core tests passed, plus visible Brave checks for signed default views, rendering, server search, zooming, cache purge and reopen without HTTP map/catalog reads. North Sea was paused with approval for activation, then resumed with its saved stages; its unfinished final assembly pass must run again after checkpoint verification.
