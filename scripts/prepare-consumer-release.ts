@@ -139,6 +139,10 @@ export async function prepareConsumerRelease(options: {
   );
   const json = (path: string, value: unknown) =>
     files.set(path, Buffer.from(`${JSON.stringify(value, null, 2)}\n`));
+  // Shared packages sit outside app/tsconfig.json. Bound compiler discovery here
+  // so a containing checkout cannot change their field semantics or bundle bytes.
+  // Preserve the reviewed standalone build; never copy parent/private settings.
+  json('tsconfig.json', { compilerOptions: { useDefineForClassFields: false } });
   // Keep both dependency graphs unchanged; script changes do not alter either lockfile.
   json('package.json', {
     ...atlas,
@@ -156,7 +160,7 @@ export async function prepareConsumerRelease(options: {
       kind: 'command',
       command: ['bun', 'scripts/build-consumer.ts'],
       timeoutSeconds: 300,
-      watch: ['app/src', 'app/index.html', 'app/vite.config.ts', 'packages'],
+      watch: ['app/src', 'app/index.html', 'app/vite.config.ts', 'app/tsconfig.json', 'packages', 'tsconfig.json'],
     },
   });
   files.set(
@@ -218,7 +222,7 @@ export async function prepareConsumerRelease(options: {
       'renderer/routing Rust source and manifests',
       'bun.lock',
     ],
-    generated: ['root publication configuration, source entry, command wrappers and README'],
+    generated: ['root publication and compiler configuration, source entry, command wrappers and README'],
     prebuiltArtifacts: artifacts,
     rebuild: 'bun run build:wasm && bun run verify',
   });
