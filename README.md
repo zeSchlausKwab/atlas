@@ -1,6 +1,6 @@
 # Atlas
 
-An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
+An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → selective Hashtree/FIPS delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. The consumer uses its own WASM renderer and reads Atlas files directly. The host preview uses OpenFreeMap; source preparation supports regional or cached planet PBFs.
 
@@ -30,12 +30,20 @@ Publish a map from the host console, discover its signed offer in the client
 composer, and fetch verified chunks from one or more providers. The `.atlas`
 remains a standalone file. See [Hashtree setup, measurements and current limits](docs/HASHTREE.md).
 
+## FIPS hosting and consumption
+
+The host and standalone browser now support FIPS-first delivery, signed Nostr
+discovery, host default views and map operations without a public HTTP map origin.
+HTTP delivery is an explicit option. Existing Atlas files need no rebuild.
+See [FIPS hosting, configuration and protocol boundaries](docs/FIPS-HOSTING.md).
+
 ## FIPS napplet preview
 
 The experimental [Atlas consumer napplet](atlas-consumer/README.md) reads a real
 hosted archive through FIPS and Hashtree, using a temporary Soyli preview bridge.
-The provider runs independently of the Atlas HTTP server; the browser verifies
-blobs by hash and renders locally. There is no HTTP map fallback in this demo.
+The original preview uses a separate provider sidecar; the integrated host can
+replace it while preserving its provider identity. The browser verifies blobs by
+hash and renders locally. There is no HTTP map fallback in this demo.
 See [setup and transport boundaries](experiments/fips-preview/README.md).
 This preview is not yet a production Soyli/NAP integration.
 
@@ -80,9 +88,9 @@ To run the two apps separately after setup:
 
 ```sh
 # Terminal 1: map server and host console
-ATLAS_FILE=data/local-demo.atlas bun run server
-# Terminal 2: client, defaults to the local server
-bun run dev
+ATLAS_FILE=data/local-demo.atlas ATLAS_FIPS_ENABLED=0 ATLAS_HTTP_DELIVERY=1 ATLAS_DISCOVERY_RELAYS= bun run server
+# Terminal 2: explicitly use the local HTTP server
+ATLAS_CLIENT_TRANSPORT=http bun run dev
 ```
 
 `dev` rebuilds the client before serving; after frontend edits run

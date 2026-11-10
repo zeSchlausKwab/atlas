@@ -120,6 +120,9 @@ async function smoke(target: string, settings: Settings, id: string) {
         ATLAS_RELEASE: id,
         ATLAS_CVM_SECRET: "",
         ATLAS_DISCOVERY_AUTO: "0",
+        ATLAS_FIPS_ENABLED: "0",
+        ATLAS_HTTP_DELIVERY: "1",
+        ATLAS_DISCOVERY_RELAYS: "",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -390,7 +393,8 @@ async function main() {
     }
     return;
   }
-  if (command !== "deploy") throw new Error("Unknown remote action");
+  if (!["deploy", "prepare"].includes(command))
+    throw new Error("Unknown remote action");
   const metadata = (await Bun.file(
     join(release, "deploy/manifest.json"),
   ).json()) as Metadata;
@@ -502,6 +506,16 @@ async function main() {
     await chmod(envFile, 0o600);
   }
   await smoke(release, settings, metadata.id);
+  if (command === "prepare") {
+    console.log(
+      JSON.stringify({
+        prepared: metadata.id,
+        activated: false,
+        smoke: "passed",
+      }),
+    );
+    return;
+  }
   const health = await activate(release, settings, metadata.id, async () => {
     const hosted = join(root, "shared/data/hosted");
     await mkdir(hosted, { recursive: true });

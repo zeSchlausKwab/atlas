@@ -84,7 +84,7 @@ Examples:
 
 Includes tracked modifications and non-ignored new files; no commit required.
 Excludes source data, dependencies, native Mac binaries and environment secrets.
-Uses a user service. No sudo, firewall changes or public announcements.
+Uses a user service. No sudo or firewall changes. The activated host uses its configured discovery publication policy.
 `);
     return;
   }
