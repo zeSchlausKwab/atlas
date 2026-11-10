@@ -57,13 +57,14 @@ lockfiles, build wrappers, source provenance and an explicit file inventory. It
 excludes the host, administration, map compiler, private configuration and Git
 history. Output must be empty; the source checkout is never rewritten.
 
-The repository is private and has no root license. An export is a **private
-release candidate**, not permission to disclose or relicense the selected Atlas
-code. Review `SOURCE-INVENTORY.json`, set the intended source license and obtain
-the owner's publication decision before uploading either source or the napplet.
-The starter's MIT license does not automatically license the surrounding Atlas
-implementation. After that review, initialize and commit a separate publication
-repository, capture a loaded map, and use ordinary `soyli check`/`soyli publish`.
+The owner approved publication of the **consumer-only export under MIT** on
+10 November 2026. The exporter supplies that license and preserves upstream
+notices. This grant applies to the exported consumer and its required source;
+it does not change the private Atlas repository or license the excluded server,
+compiler, administration or deployment code. Review `SOURCE-INVENTORY.json`
+before each publication, especially after dependency changes. Initialize and
+commit a separate publication repository, capture a loaded map, and use ordinary
+`soyli check`/`soyli publish`.
 
 Exported builds use a documented custom command recipe. A fresh source archive
 needs `bun run setup` before `soyli build`; a browser or hosted Studio builder

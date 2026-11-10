@@ -90,7 +90,9 @@ test('publication export preserves the committed dependency closure and excludes
   expect(await readFile(join(f.output, 'Cargo.toml'), 'utf8')).not.toContain('osm-import');
   const project = JSON.parse(await readFile(join(f.output, 'napplet.json'), 'utf8'));
   expect(project.build.command).toEqual(['bun', 'scripts/build-consumer.ts']);
-  expect(project.license).toBe('LicenseRef-Atlas-Review-Required');
+  expect(project.license).toBe('MIT');
+  expect(await readFile(join(f.output, 'LICENSE'), 'utf8')).toContain('MIT License');
+  expect(await readFile(join(f.output, 'app/LICENSE'), 'utf8')).toBe('Upstream starter license');
   const provenance = JSON.parse(await readFile(join(f.output, 'SOURCE-PROVENANCE.json'), 'utf8'));
   expect(provenance.prebuiltArtifacts).toHaveLength(8);
   expect(

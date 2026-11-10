@@ -151,7 +151,7 @@ export async function prepareConsumerRelease(options: {
   });
   json('napplet.json', {
     ...project,
-    license: 'LicenseRef-Atlas-Review-Required',
+    license: 'MIT',
     build: {
       kind: 'command',
       command: ['bun', 'scripts/build-consumer.ts'],
@@ -197,19 +197,21 @@ export async function prepareConsumerRelease(options: {
   files.set(
     'LICENSE',
     Buffer.from(
-      'Private release candidate: publication and licensing review required.\n\nThe source Atlas repository is private and provides no root license. Its selected\nsource is included for owner review only; this export does not grant a license or\nauthorize public distribution. app/LICENSE and other bundled notices retain their\noriginal scope for upstream components. Set the intended license and review the\nfull inventory before publishing source or a built napplet.\n',
+      "MIT License\n\nCopyright (c) 2026 Schlaus Kwab and Atlas contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n\n",
     ),
   );
   files.set(
     'README.md',
     Buffer.from(
-      `# Atlas map viewer\n\nStandalone publication source exported from Atlas commit \`${commit}\`.\nThe complete consumer, shared TypeScript, Rust source and reviewed prebuilt WASM\nare included; no sibling checkout or Atlas server administration is needed.\n\n## Build and preview\n\nRequires Bun 1.3+ and Git. Setup installs the root Bun lockfile and the app's\npinned ${pnpm} lockfile; no unpinned project dependencies are resolved.\n\n\`\`\`sh\nbun run setup\nbun run verify\nsoyli check\nsoyli dev\n\`\`\`\n\nThis is a custom command build: soyli setup does not install its dependencies.\nHosted Studio/browser builders require an Atlas-capable toolchain; use the local\nflow above when that profile is unavailable.\n\n## Renderer source and provenance\n\nSOURCE-PROVENANCE.json records the source revision and SHA-256 of the supplied\nWASM and generated bindings. They are reviewed release inputs, not a claim of\nbit-for-bit compiler reproducibility. To regenerate them, install stable Rust,\nthe wasm32-unknown-unknown target and wasm-pack, then run \`bun run build:wasm\`\nand \`bun run verify\`. Cargo.toml, Cargo.lock and every workspace crate are included.\n\n## Publish\n\nCreate a new Git repository in this exported directory, review all files, and\ncommit before using soyli publish. Do not publish from Atlas's nested consumer\ndirectory: its source references the surrounding monorepo. The exported source\narchive is self-contained; the original Atlas repository and history are unchanged.\nCapture a representative loaded map before publishing. Shell support is experimental\n\`soy.fips/1\`; compatible shell/soyLI must ship before this napplet.\n\nRead app/README.md for signed discovery, consent, controls and verification limits.\n`,
+      `# Atlas map viewer\n\nStandalone publication source exported from Atlas commit \`${commit}\`.\nThe complete consumer, shared TypeScript, Rust source and reviewed prebuilt WASM\nare included; no sibling checkout or Atlas server administration is needed.\n\n## License\n\nThis consumer-only export is MIT licensed by its owner (10 November 2026).\nBundled third-party notices retain their original scope. This grant does not\nlicense the private Atlas repository or the excluded server/compiler code.\n\n## Build and preview\n\nRequires Bun 1.3+ and Git. Setup installs the root Bun lockfile and the app's\npinned ${pnpm} lockfile; no unpinned project dependencies are resolved.\n\n\`\`\`sh\nbun run setup\nbun run verify\nsoyli check\nsoyli dev\n\`\`\`\n\nThis is a custom command build: soyli setup does not install its dependencies.\nHosted Studio/browser builders require an Atlas-capable toolchain; use the local\nflow above when that profile is unavailable.\n\n## Renderer source and provenance\n\nSOURCE-PROVENANCE.json records the source revision and SHA-256 of the supplied\nWASM and generated bindings. They are reviewed release inputs, not a claim of\nbit-for-bit compiler reproducibility. To regenerate them, install stable Rust,\nthe wasm32-unknown-unknown target and wasm-pack, then run \`bun run build:wasm\`\nand \`bun run verify\`. Cargo.toml, Cargo.lock and every workspace crate are included.\n\n## Publish\n\nCreate a new Git repository in this exported directory, review all files, and\ncommit before using soyli publish. Do not publish from Atlas's nested consumer\ndirectory: its source references the surrounding monorepo. The exported source\narchive is self-contained; the original Atlas repository and history are unchanged.\nCapture a representative loaded map before publishing. Shell support is experimental\n\`soy.fips/1\`; compatible shell/soyLI must ship before this napplet.\n\nRead app/README.md for signed discovery, consent, controls and verification limits.\n`,
     ),
   );
   json('SOURCE-PROVENANCE.json', {
     schema: 'atlas-consumer-source/v1',
     repository: 'https://github.com/zeSchlausKwab/atlas',
     commit,
+    license: 'MIT',
+    licenseScope: 'consumer export only; owner authorization 2026-11-10',
     exports: [
       'atlas-consumer/ → app/',
       'transitive consumer source/type imports only',
