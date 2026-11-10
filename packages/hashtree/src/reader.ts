@@ -71,6 +71,10 @@ export class HashtreeReader extends RemoteSource {
       this.cache.delete(key);
     }
   }
+  /** Adapters that already count individual provider failures can suppress double counting. */
+  protected recordBlobFailure(_error: unknown) {
+    this.failovers++;
+  }
   private async blob(hash: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
     const cached = this.cache.get(hash);
@@ -87,13 +91,22 @@ export class HashtreeReader extends RemoteSource {
     this.requests++;
     const timeout = AbortSignal.timeout(this.options.requestTimeoutMs ?? 10000);
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    const bytes = await this.options.fetchBlob(hash, requestSignal);
-    requestSignal.throwIfAborted();
-    if (!bytes) throw new Error('Blob unavailable');
-    if (bytes.length > MAX_BLOB_BYTES) throw new Error('Oversized blob');
-    this.networkBytes += bytes.length;
-    if ((await sha256(bytes)) !== hash) throw new Error('Blob hash mismatch');
-    requestSignal.throwIfAborted();
+    let bytes: Uint8Array;
+    try {
+      const received = await this.options.fetchBlob(hash, requestSignal);
+      requestSignal.throwIfAborted();
+      if (!received) throw new Error('Blob unavailable');
+      if (received.length > MAX_BLOB_BYTES) throw new Error('Oversized blob');
+      this.networkBytes += received.length;
+      if ((await sha256(received)) !== hash) throw new Error('Blob hash mismatch');
+      requestSignal.throwIfAborted();
+      bytes = received;
+    } catch (error) {
+      // Caller cancellation is not a failed provider attempt. A transport deadline is.
+      signal?.throwIfAborted();
+      this.recordBlobFailure(error);
+      throw error;
+    }
     this.remember(hash, bytes);
     await this.options.store?.put('hashtree-v1', this.descriptor(hash), bytes);
     return bytes;

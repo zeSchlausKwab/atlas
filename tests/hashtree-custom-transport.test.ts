@@ -236,7 +236,7 @@ test("custom transport enforces an explicitly short deadline without HTTP fallba
           }),
       },
     );
-    await expect(source.read(0, 1)).rejects.toThrow("TimeoutError");
+    await expect(source.read(0, 1)).rejects.toHaveProperty("name", "TimeoutError");
     expect(source.requests).toBe(1);
     expect(source.failovers).toBe(1);
     expect(source.networkBytes).toBe(0);

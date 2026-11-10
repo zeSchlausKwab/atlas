@@ -1,8 +1,10 @@
 import { sha256 } from '../../format/src/index';
 import { HashtreeReader } from './reader';
-import { MAX_BLOB_BYTES, type TreeOffer, type FipsProvider } from './offer';
+import { MAX_BLOB_BYTES, parseTree, type TreeOffer, type FipsProvider } from './offer';
 import type { BlockStore } from '../../format/src/store';
 export * from './offer';
+/** Each failed provider attempt has already been counted by the standalone adapter. */
+class ProviderFailures extends TypeError {}
 async function boundedResponse(response: Response, signal?: AbortSignal) {
   if (!response.ok || !response.body) throw new Error(`Blob HTTP ${response.status}`);
   if (Number(response.headers.get('content-length')) > MAX_BLOB_BYTES)
@@ -57,7 +59,9 @@ export class HashtreeSource extends HashtreeReader {
   ) {
     if (options.transport !== undefined && !['fips', 'http'].includes(options.transport))
       throw new Error('Invalid Hashtree transport selection');
-    super(url, tree, api, {
+    // Only an explicitly supplied transport can replace the offer's providers.
+    // Our internal HTTP/FIPS adapter must not bypass the standalone offer check.
+    super(url, parseTree(tree, tree.bytes, !!options.fetchBlob), api, {
       ...options,
       fetchBlob:
         options.fetchBlob ??
@@ -101,10 +105,13 @@ export class HashtreeSource extends HashtreeReader {
                 this.failovers++;
               }
             }
-          throw new TypeError(
+          throw new ProviderFailures(
             `Hashtree network fetch failed (${errors.join('; ') || 'No provider for the selected Hashtree transport'})`,
           );
         }),
     });
+  }
+  protected override recordBlobFailure(error: unknown) {
+    if (!(error instanceof ProviderFailures)) super.recordBlobFailure(error);
   }
 }
