@@ -2,7 +2,15 @@ import { Acquisitions, type AcquisitionPin } from "./acquisitions";
 import { StorageWarning } from "../../packages/provisioning/src/capacity";
 import { mkdir, rename, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { parseAnnouncement } from "../../packages/hashtree/src/discovery";
+import {
+  parseAnnouncement,
+  relayUrl,
+  watchMaps,
+} from "../../packages/hashtree/src/discovery";
+import {
+  getFipsClient,
+  FIPS_REQUEST_TIMEOUT_MS,
+} from "../../packages/fips/src/client";
 import { HashtreeSource } from "../../packages/hashtree/src/source";
 import { verifyPublishedMap } from "../../packages/hashtree/src/published-map";
 import { AtlasReader, FileSource } from "../../packages/format/src/reader";
@@ -55,6 +63,7 @@ export class Federation {
     done: Promise<void>;
   };
   private closing = false;
+  private lifetime = new AbortController();
   private inspecting = false;
   private mirrorStarting = false;
   status = "Refresh to inspect the local library and saved publishers.";
@@ -91,9 +100,46 @@ export class Federation {
     await Bun.write(p + ".tmp", JSON.stringify(value));
     await rename(p + ".tmp", p);
   }
-  private async announcements(url: string) {
+  private async announcements(url: string, pubkey?: string) {
+    const signal = AbortSignal.any([
+      this.lifetime.signal,
+      AbortSignal.timeout(15000),
+    ]);
+    if (/^wss?:/.test(url)) {
+      if (!pubkey || !/^[a-f0-9]{64}$/.test(pubkey))
+        throw Error(
+          "A relay requires the publisher's 64-character public key.",
+        );
+      const events = new Map<string, unknown>();
+      const ready = Promise.withResolvers<void>();
+      // A timeout can fire while the WebSocket connection is still opening.
+      void ready.promise.catch(() => {});
+      const aborted = () => ready.reject(signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+      let close: (() => void) | undefined;
+      try {
+        signal.throwIfAborted();
+        close = await watchMaps(
+          url,
+          [pubkey],
+          (offer, event) => events.set(offer.id, event),
+          signal,
+          undefined,
+          undefined,
+          {
+            ready: () => ready.resolve(),
+            withdrawn: (id) => events.delete(id),
+          },
+        );
+        await ready.promise;
+        return { pubkey, publications: [...events.values()] };
+      } finally {
+        signal.removeEventListener("abort", aborted);
+        close?.();
+      }
+    }
     const r = await fetch(new URL("/discovery", url), {
-      signal: AbortSignal.timeout(15000),
+      signal,
       redirect: "error",
       credentials: "omit",
     });
@@ -116,12 +162,20 @@ export class Federation {
       );
     return data as { pubkey: string; publications: unknown[] };
   }
-  async addPeer(value: string) {
+  async addPeer(value: string, publisher?: string) {
     if (this.work || this.inspecting)
       throw Error("Wait for the current inspection or refresh to finish.");
-    const url = new URL(httpUrl(value)).origin;
-    const identity = await this.announcements(url),
-      existing = this.peers.find((p) => p.url === url);
+    this.lifetime.signal.throwIfAborted();
+    const isRelay = /^wss?:/.test(value);
+    const url = isRelay ? relayUrl(value) : new URL(httpUrl(value)).origin;
+    const identity = await this.announcements(url, publisher),
+      existing = this.peers.find(
+        (p) => p.url === url && (!isRelay || p.pubkey === publisher),
+      );
+    if (publisher && publisher !== identity.pubkey)
+      throw Error(
+        "The discovered publisher does not match the supplied public key.",
+      );
     if (existing && existing.pubkey !== identity.pubkey)
       throw Error(
         "Publisher key changed. Remove and explicitly add this host again to trust its new key.",
@@ -204,7 +258,7 @@ export class Federation {
       if (this.closing) return;
       this.status = `Reading signed offers from ${peer.url}…`;
       try {
-        const data = await this.announcements(peer.url);
+        const data = await this.announcements(peer.url, peer.pubkey);
         if (data.pubkey !== peer.pubkey)
           throw Error("Pinned publisher key changed");
         const offers = new Map<string, ReturnType<typeof parseAnnouncement>>();
@@ -239,12 +293,25 @@ export class Federation {
           const reader = new AtlasReader(
             new HashtreeSource(offer.url, offer.hashtree!, offer.api, {
               memoryBytes: 512 * 1024,
+              requestTimeoutMs: offer.hashtree!.fips?.length
+                ? FIPS_REQUEST_TIMEOUT_MS
+                : undefined,
+              fetchFipsBlob: (hash, providers, signal) =>
+                getFipsClient().fetchBlob(hash, providers, signal),
             }),
             undefined,
             { directoryBudget: 1024 ** 2 },
           );
-          const timer = setTimeout(() => reader.dispose(), 30000);
+          const dispose = () => reader.dispose();
+          this.lifetime.signal.addEventListener("abort", dispose, {
+            once: true,
+          });
+          const timer = setTimeout(
+            dispose,
+            offer.hashtree!.fips?.length ? FIPS_REQUEST_TIMEOUT_MS : 30000,
+          );
           try {
+            this.lifetime.signal.throwIfAborted();
             await reader.open();
             entry.manifest = verifyPublishedMap(offer, reader);
             entry.verified = true;
@@ -256,6 +323,7 @@ export class Federation {
             this.entries.set(id, entry);
           } finally {
             clearTimeout(timer);
+            this.lifetime.signal.removeEventListener("abort", dispose);
           }
         }
         delete peer.error;
@@ -420,6 +488,13 @@ export class Federation {
           m.offer.url,
           m.offer.hashtree!,
           m.offer.api,
+          {
+            requestTimeoutMs: m.offer.hashtree!.fips?.length
+              ? FIPS_REQUEST_TIMEOUT_MS
+              : undefined,
+            fetchFipsBlob: (hash, providers, signal) =>
+              getFipsClient().fetchBlob(hash, providers, signal),
+          },
         );
         while (m.offset < m.offer.bytes) {
           abort.signal.throwIfAborted();
@@ -515,13 +590,16 @@ export class Federation {
         return json(this.view(), 202);
       }
       if (action === "/peer") {
-        await this.addPeer(body.url);
+        await this.addPeer(body.url, body.pubkey || undefined);
         return json(this.view());
       }
       if (action === "/remove-peer") {
         if (this.work || this.inspecting)
           throw Error("Wait for inspection or refresh to finish");
-        this.peers = this.peers.filter((p) => p.url !== body.url);
+        this.peers = this.peers.filter(
+          (p) =>
+            p.url !== body.url || (body.pubkey && p.pubkey !== body.pubkey),
+        );
         await this.save("peers.json", this.peers);
         const publishers = new Set(this.peers.map((p) => p.pubkey));
         for (const [id, e] of this.entries)
@@ -583,8 +661,9 @@ export class Federation {
   }
   async close() {
     this.closing = true;
-    await this.acquisitions.close();
+    this.lifetime.abort();
     this.download?.abort.abort();
+    await this.acquisitions.close();
     for (const r of this.readers.values()) r.dispose();
     await Promise.all([this.work, this.download?.done]);
   }

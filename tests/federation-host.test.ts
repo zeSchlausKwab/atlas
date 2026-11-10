@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { Federation } from "../apps/server/federation";
@@ -11,6 +11,20 @@ import { encodePackage } from "../packages/format/src/writer";
 import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { packComposition } from "../packages/provisioning/src/composition";
 import type { MapOffer } from "../packages/format/src/catalog";
+import {
+  generateSecretKey,
+  getPublicKey,
+  finalizeEvent,
+} from "nostr-tools/pure";
+import { buildTreeIndex, IndexedTree } from "../packages/hashtree/src/build";
+import {
+  mapAnnouncement,
+  publishAnnouncement,
+  MAP_KIND,
+} from "../packages/hashtree/src/discovery";
+import { getFipsClient } from "../packages/fips/src/client";
+import * as storage from "../apps/server/storage";
+import { localRelay } from "./helpers/nostr-relay";
 async function until(check: () => boolean) {
   const end = Date.now() + 20000;
   while (!check()) {
@@ -320,5 +334,212 @@ test("area API requires partial-coverage review and imports a portable file that
     expect(s.host.stats().rawRequests).toBe(0);
   } finally {
     await s.close();
+  }
+}, 30000);
+
+async function fipsPublisher(s: Awaited<ReturnType<typeof setup>>) {
+  await buildTreeIndex(s.path, s.dir + "/fips.sqlite");
+  const index = IndexedTree.open(s.dir + "/fips.sqlite");
+  const key = generateSecretKey();
+  const relay = localRelay();
+  const offer: MapOffer = {
+    ...s.host.offer,
+    url: `htree://${index.info.root}`,
+    api: undefined,
+    hashtree: {
+      version: 1,
+      root: index.info.root,
+      bytes: index.info.bytes,
+      chunkBytes: index.info.chunkBytes,
+      providers: [],
+      fips: [
+        {
+          peerId: "02" + "b".repeat(64),
+          seedUrls: ["wss://fixture.invalid/fips"],
+        },
+      ],
+    },
+  };
+  const event = mapAnnouncement(offer, key);
+  await publishAnnouncement(relay.url, event);
+  return {
+    offer,
+    event,
+    relay,
+    key,
+    pubkey: getPublicKey(key),
+    index,
+    close() {
+      index.close();
+      relay.close();
+    },
+  };
+}
+
+test("server discovers a pinned publisher over a relay and verifies, mirrors and acquires FIPS-only maps", async () => {
+  const s = await setup();
+  const p = await fipsPublisher(s);
+  // These tiny fixtures exercise transport, not the workstation's storage reserve.
+  const space = spyOn(storage, "readStorage").mockResolvedValue({
+    availableBytes: 100 * 1024 ** 3,
+    totalBytes: 200 * 1024 ** 3,
+    checkedAt: new Date().toISOString(),
+  });
+  const transport = spyOn(getFipsClient(), "fetchBlob").mockImplementation(
+    async (hash, providers, signal) => {
+      signal?.throwIfAborted();
+      expect(providers[0]!.peerId).toBe(p.offer.hashtree!.fips![0]!.peerId);
+      return p.index.get(hash);
+    },
+  );
+  try {
+    expect((await s.call("/peer", { url: p.relay.url })).status).toBe(400);
+    expect(
+      (await s.call("/peer", { url: p.relay.url, pubkey: p.pubkey })).status,
+    ).toBe(200);
+    await s.federation.settled();
+    const source = s.federation.view().sources[0]!;
+    expect(source.verified).toBe(true);
+    expect(source.root).toBe(p.index.info.root);
+    expect(s.host.stats()).toEqual({ blobRequests: 0, rawRequests: 0 });
+    const beforeArea = transport.mock.calls.length;
+    const planned = await s.call("/area-plan", {
+      name: "FIPS coastline excerpt",
+      polygon,
+      families: ["features"],
+      minZoom: 0,
+      maxZoom: 0,
+      paddingCells: 0,
+      sourceIds: [source.id],
+    });
+    expect(planned.status).toBe(202);
+    const areaId = (await planned.json()).id;
+    await until(() =>
+      ["review", "failed"].includes(s.federation.view().acquisitions[0]!.state),
+    );
+    expect(s.federation.view().acquisitions[0]!.error).toBeUndefined();
+    expect(
+      (await s.call("/area-resume", { id: areaId, acceptPartial: true }))
+        .status,
+    ).toBe(202);
+    await until(() =>
+      ["ready", "failed"].includes(s.federation.view().acquisitions[0]!.state),
+    );
+    expect(s.federation.view().acquisitions[0]!.error).toBeUndefined();
+    const downloaded = await s.call(`/area-file/${areaId}`);
+    const area = await new AtlasReader(
+      new FileSource(await downloaded.blob()),
+    ).open();
+    expect(area.index.manifest.capabilities).toContain("feature-extraction");
+    area.dispose();
+    expect(transport.mock.calls.length).toBeGreaterThan(beforeArea);
+
+    const beforeMirror = transport.mock.calls.length;
+    const mirror = await s.call("/mirror", { id: source.id });
+    expect(mirror.status).toBe(202);
+    const mirrorId = (await mirror.json()).id;
+    await until(() =>
+      ["queued-import", "failed"].includes(
+        s.federation.view().mirrors[0]!.state,
+      ),
+    );
+    expect(s.federation.view().mirrors[0]!.error).toBeUndefined();
+    expect(s.federation.view().mirrors[0]!.offset).toBe(s.bytes.length);
+    // Import owns this staged file now; its existing tests cover final publication.
+    expect(
+      new Uint8Array(
+        await Bun.file(
+          `${s.dir}/hosted/${mirrorId}.work/input.atlas`,
+        ).arrayBuffer(),
+      ),
+    ).toEqual(s.bytes);
+    expect(transport.mock.calls.length).toBeGreaterThan(beforeMirror);
+    expect(s.host.stats()).toEqual({ blobRequests: 0, rawRequests: 0 });
+
+    const second = getPublicKey(generateSecretKey());
+    expect(
+      (await s.call("/peer", { url: p.relay.url, pubkey: second })).status,
+    ).toBe(200);
+    await s.federation.settled();
+    expect(s.federation.view().peers).toHaveLength(2);
+    expect(
+      (await s.call("/remove-peer", { url: p.relay.url + "/", pubkey: second }))
+        .status,
+    ).toBe(200);
+    expect(s.federation.view().peers).toHaveLength(1);
+    expect(s.federation.view().sources[0]!.verified).toBe(true);
+    await s.restart();
+    s.federation.refresh();
+    await s.federation.settled();
+    expect(s.federation.view().sources[0]!.verified).toBe(true);
+    const deletion = finalizeEvent(
+      {
+        kind: 5,
+        created_at: p.event.created_at + 1,
+        content: "",
+        tags: [
+          ["a", `${MAP_KIND}:${p.pubkey}:atlas/${p.offer.id}`],
+          ["e", p.event.id],
+        ],
+      },
+      p.key,
+    );
+    await publishAnnouncement(p.relay.url, deletion);
+    s.federation.refresh();
+    await s.federation.settled();
+    expect(s.federation.view().sources).toHaveLength(0);
+  } finally {
+    await s.close();
+    transport.mockRestore();
+    space.mockRestore();
+    p.close();
+  }
+}, 30000);
+
+test("server FIPS verification never silently falls back to HTTP and shutdown aborts pending reads", async () => {
+  const s = await setup();
+  const p = await fipsPublisher(s);
+  const dual = mapAnnouncement(
+    {
+      ...p.offer,
+      hashtree: {
+        ...p.offer.hashtree!,
+        providers: s.host.offer.hashtree!.providers,
+      },
+    },
+    p.key,
+    p.event.created_at + 1,
+  );
+  await publishAnnouncement(p.relay.url, dual);
+  const transport = spyOn(getFipsClient(), "fetchBlob").mockRejectedValue(
+    Error("FIPS fixture unavailable"),
+  );
+  try {
+    await s.call("/peer", { url: p.relay.url, pubkey: p.pubkey });
+    await s.federation.settled();
+    expect(s.federation.view().sources[0]!.verified).toBe(false);
+    expect(s.federation.view().sources[0]!.error).toContain(
+      "FIPS fixture unavailable",
+    );
+    expect(s.host.stats()).toEqual({ blobRequests: 0, rawRequests: 0 });
+    const waiting = Promise.withResolvers<AbortSignal>();
+    transport.mockImplementation(
+      (_hash, _providers, signal) =>
+        new Promise((_resolve, reject) => {
+          waiting.resolve(signal!);
+          signal!.addEventListener("abort", () => reject(signal!.reason), {
+            once: true,
+          });
+        }),
+    );
+    s.federation.refresh();
+    const signal = await waiting.promise;
+    await s.federation.close();
+    expect(signal.aborted).toBe(true);
+    expect(s.host.stats()).toEqual({ blobRequests: 0, rawRequests: 0 });
+  } finally {
+    await s.close();
+    transport.mockRestore();
+    p.close();
   }
 }, 30000);

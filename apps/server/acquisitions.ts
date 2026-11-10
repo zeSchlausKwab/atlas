@@ -12,6 +12,10 @@ import { AtlasReader, FileSource } from "../../packages/format/src/reader";
 import { openMembers } from "../../packages/format/src/composition";
 import type { MapOffer } from "../../packages/format/src/catalog";
 import { HashtreeSource } from "../../packages/hashtree/src/source";
+import {
+  getFipsClient,
+  FIPS_REQUEST_TIMEOUT_MS,
+} from "../../packages/fips/src/client";
 import { verifyPublishedMap } from "../../packages/hashtree/src/published-map";
 import { preparePackage } from "../../packages/provisioning/src/prepare";
 import { packComposition } from "../../packages/provisioning/src/composition";
@@ -291,6 +295,11 @@ export class Acquisitions {
                   store: cache,
                   memoryBytes: 1024 ** 2,
                   offline: () => offline,
+                  requestTimeoutMs: pin.offer.hashtree!.fips?.length
+                    ? FIPS_REQUEST_TIMEOUT_MS
+                    : undefined,
+                  fetchFipsBlob: (hash, providers, signal) =>
+                    getFipsClient().fetchBlob(hash, providers, signal),
                 },
               )
             : new FileSource(Bun.file(pin.path!));
