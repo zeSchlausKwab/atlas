@@ -9,6 +9,7 @@ export function workbenchIcon(section: string) {
       '<path d="m6 7 12 10M6 7l12-2M6 7l-1 12 13-2M18 5v12"/><g fill="var(--paper)"><circle cx="6" cy="7" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="17" r="3"/><circle cx="5" cy="19" r="3"/></g>',
     storage:
       '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/>',
+    fips: '<path d="M5 12h14M8 8l-4 4 4 4m8-8 4 4-4 4"/><circle cx="12" cy="12" r="9"/>',
     operations:
       '<circle cx="12" cy="12" r="9"/><path d="m16 8-2 6-6 2 2-6z"/><path d="m10 10 4 4"/>',
   };

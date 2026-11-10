@@ -61,3 +61,35 @@ Stop or inspect independently:
 ssh user@server 'systemctl --user stop atlas-fips-preview.service'
 ssh user@server 'journalctl --user -u atlas-fips-preview.service -n 20 --no-pager'
 ```
+
+## Live status in the Atlas host console
+
+The provider atomically writes a public `fips-status.json` snapshot every five
+seconds. The default destination is `ATLAS_SOURCE_ROOT/dist/host/fips-status.json`.
+The optional `ATLAS_FIPS_STATUS_PATH` overrides that destination; use the stable
+current-release link so later Atlas releases receive status automatically:
+
+```ini
+ATLAS_FIPS_STATUS_PATH=/home/user/atlas/current/dist/host/fips-status.json
+ATLAS_FIPS_MAP_NAME=Lower Rhine West
+```
+
+These settings belong in the provider's `preview.env`. The deployment helper
+regenerates that file, so reapply optional overrides after a provider deployment
+before restarting **only** `atlas-fips-preview.service`. With `--source-root`
+pointing to `/home/user/atlas/current`, the default status destination already
+follows the current-release link. The destination directory must exist.
+
+Snapshots contain only public connection details and aggregate counters, with
+seed credentials/query fragments removed. They omit filesystem paths, private
+keys and individual connected peer identities. Write failures are logged without
+stopping blob delivery; overlapping writes are coalesced. The host UI marks
+snapshots older than 30 seconds as stale and exposes only local display controls:
+refresh, auto-refresh interval, and copying the public descriptor.
+
+The host server reads its built static assets for each request. A tested host-only
+asset update can therefore make the FIPS tab available without restarting Atlas
+or interrupting map preparation. Build assets away from the active release, back
+up the existing `dist/host`, and replace only `index.html`, `host.js`, its map, and
+`workbench.css` atomically. Do not run `build:host` inside the live release: its
+build step deletes the output directory. Keep `fips-status.json` in place.

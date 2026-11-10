@@ -975,3 +975,136 @@
 .build-pass-history li { display: grid; gap: 4px; margin: 0 0 10px; }
 .build-pass-history span { font-size: 10px; color: #627586; }
 .build-pass-history strong { font: 11px/1.6 var(--mono); color: #314b60; }
+
+/* FIPS provider: the same map-workbench surfaces, with readable identity fields. */
+.fips-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.fips-heading h2 {
+  margin: 5px 0 0;
+}
+#fips-state::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 10px 2px 0;
+  border-radius: 50%;
+  background: #9babb5;
+}
+#fips[data-state="connected"] #fips-state::before {
+  background: #50814b;
+  box-shadow: 0 0 0 4px #e4efdd;
+}
+#fips[data-state="stale"] #fips-state::before,
+#fips[data-state="connecting"] #fips-state::before {
+  background: #bc8a43;
+  box-shadow: 0 0 0 4px #fff0d3;
+}
+.fips-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0 0 24px;
+}
+.fips-metrics article {
+  border: 1px solid var(--line);
+  background: #fffefa;
+  border-radius: 8px;
+  padding: 20px;
+}
+.fips-metrics span {
+  display: block;
+  color: #536573;
+  font-size: 13px;
+  margin-bottom: 9px;
+}
+.fips-metrics strong {
+  display: block;
+  color: #344f61;
+  font-size: clamp(19px, 2vw, 29px);
+  line-height: 1.2;
+}
+.fips-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.fips-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: #fffefa;
+  border-radius: 8px;
+  padding: 24px;
+}
+.fips-card h3 {
+  margin-top: 0;
+}
+.fips-card dl {
+  margin: 24px 0;
+}
+.fips-card dt {
+  color: #536573;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 19px;
+}
+.fips-card dd {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+#fips-root,
+#fips-identity {
+  font:
+    12px/1.7 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+#fips-json {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+#fips-descriptor {
+  margin-top: 18px;
+}
+.fips-controls {
+  margin-top: 24px;
+  align-items: center;
+}
+.fips-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.fips-controls input[type="checkbox"] {
+  width: auto;
+}
+.fips-controls select {
+  width: auto;
+}
+@media (max-width: 1100px) {
+  .fips-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fips-panels {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 650px) {
+  .fips-heading {
+    display: block;
+  }
+  .fips-metrics article,
+  .fips-card {
+    padding: 16px;
+  }
+}

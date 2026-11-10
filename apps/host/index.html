@@ -916,6 +916,92 @@
           step 1. Deleting a prepared map never deletes its source PBF.
         </p>
       </details>
+      <section id="fips" aria-label="FIPS provider">
+        <div class="fips-heading">
+          <div>
+            <p class="eyebrow">LIVE PROVIDER</p>
+            <h2 id="fips-state">Waiting for status…</h2>
+          </div>
+          <p id="fips-updated" class="quiet" role="status">
+            Open this tab to check the provider.
+          </p>
+        </div>
+        <div class="fips-metrics">
+          <article>
+            <span>Connected peers</span><strong id="fips-peers">—</strong>
+          </article>
+          <article>
+            <span>Blob lookups</span><strong id="fips-lookups">—</strong>
+          </article>
+          <article>
+            <span>Blob bytes read</span><strong id="fips-blob-bytes">—</strong>
+          </article>
+          <article>
+            <span>Uptime</span><strong id="fips-uptime">—</strong>
+          </article>
+        </div>
+        <div class="fips-panels">
+          <article class="fips-card">
+            <h3>Published map</h3>
+            <p id="fips-map">Provider status has not arrived yet.</p>
+            <dl>
+              <dt>Root hash</dt>
+              <dd id="fips-root">—</dd>
+              <dt>Provider identity</dt>
+              <dd id="fips-identity">—</dd>
+              <dt>Block size / service port</dt>
+              <dd id="fips-blocks">—</dd>
+            </dl>
+            <button id="fips-copy" type="button" disabled>
+              Copy connection descriptor
+            </button>
+            <details id="fips-descriptor">
+              <summary>Connection descriptor</summary>
+              <pre id="fips-json"></pre>
+            </details>
+            <p id="fips-copy-status" class="quiet" role="status"></p>
+          </article>
+          <article class="fips-card">
+            <h3>Connections &amp; traffic</h3>
+            <dl>
+              <dt>Bootstrap seeds</dt>
+              <dd id="fips-seeds">—</dd>
+              <dt>FIPS traffic sent / received</dt>
+              <dd id="fips-traffic">—</dd>
+              <dt>Frames sent / received</dt>
+              <dd id="fips-frames">—</dd>
+              <dt>Reconnects / rejected frames</dt>
+              <dd id="fips-reconnects">—</dd>
+              <dt>Last blob lookup</dt>
+              <dd id="fips-activity">—</dd>
+            </dl>
+            <p id="fips-policy" class="quiet"></p>
+            <p class="quiet">
+              Blob bytes count data read for peer requests. FIPS traffic
+              includes protocol overhead. Counters reset when the provider
+              restarts.
+            </p>
+          </article>
+        </div>
+        <div class="host-actions fips-controls">
+          <button id="fips-refresh" type="button">Refresh now</button>
+          <label
+            ><input id="fips-auto" type="checkbox" checked />
+            Auto-refresh</label
+          >
+          <label
+            >Refresh every
+            <select id="fips-interval" aria-label="FIPS refresh interval">
+              <option value="5">5 seconds</option>
+              <option value="15">15 seconds</option>
+              <option value="30">30 seconds</option>
+            </select></label
+          >
+        </div>
+        <p id="fips-message" class="quiet" role="status">
+          The provider runs independently of Atlas map preparation.
+        </p>
+      </section>
       <section id="operations">
         <section class="host-package">
           <div>

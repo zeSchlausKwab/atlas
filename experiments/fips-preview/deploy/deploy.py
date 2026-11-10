@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 SERVICE = "atlas-fips-preview.service"
 FILES = (
-    "serve-atlas.ts", "fips-service.ts", "package.json", "package-lock.json", ".npmrc",
+    "serve-atlas.ts", "fips-service.ts", "public-status.ts", "package.json", "package-lock.json", ".npmrc",
     "deploy/atlas-fips-preview.service.in", "deploy/validate-provider.ts",
 )
 

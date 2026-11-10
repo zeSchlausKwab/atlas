@@ -66,6 +66,13 @@ export function startWorkbench() {
       sections: ["federation", "discovery"],
     },
     {
+      id: "fips",
+      title: "FIPS",
+      heading: "Map bytes, peer to peer.",
+      note: "See this host’s independent FIPS provider, inspect its traffic and copy the connection details for a client.",
+      sections: ["fips"],
+    },
+    {
       id: "storage",
       title: "Storage",
       heading: "Room to build.",

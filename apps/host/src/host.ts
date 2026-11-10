@@ -5,6 +5,7 @@ import { startFederation } from "./host-federation";
 import { startImports } from "./host-imports";
 import { startImagery } from "./host-imagery";
 import { startDiscovery } from "./host-discovery";
+import { startFips } from "./host-fips";
 import { startSources } from "./host-sources";
 import { openClient } from "./client-link";
 import { startBuilder } from "./host-builder";
@@ -108,6 +109,7 @@ async function start() {
       startImports(),
       startSources(),
       startDiscovery(),
+      startFips(),
       startFederation(),
     ]);
   } catch (error) {
