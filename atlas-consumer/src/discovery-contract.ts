@@ -18,7 +18,13 @@ export interface ConsumerStatus {
   catalog: Array<{ key: string; offer: MapOffer; publisher: string }>;
   defaultView?: ViewRecipe;
   preferredMapIds: string[];
-  discovery: { publishers: string[]; relayUrls: string[]; messages: string[]; ready: boolean };
+  discovery: {
+    publishers: string[]; relayUrls: string[]; messages: string[];
+    /** The current query completed without incomplete relay results. */
+    ready: boolean;
+    /** The query has finished; independently verified offers may be usable even when incomplete. */
+    settled: boolean;
+  };
   stats: PreviewStats;
   requestTimeoutMs: number;
   error?: string;
