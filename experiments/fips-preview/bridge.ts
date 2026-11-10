@@ -1,6 +1,6 @@
-import { FipsNode, generateIdentity } from '@fips/core';
+import { FipsNode, generateIdentity, type PeerEvent } from '@fips/core';
 import { WebSocketTransport } from '@fips/transport-websocket';
-import { TcpBlobTransport } from '@hashtree/fips-transport';
+import { TcpBlobTransport } from './vendor/hashtree-fips-transport/tcpBlobTransport';
 import { fromHex, toHex } from '@hashtree/core';
 import { ACTIVE_TRANSFERS, MAX_PENDING_BLOBS, TRANSFER_ATTEMPTS, TRANSFER_RETRY_DELAY_MS, blobRequestTimeoutMs, parsePreviewConfig,
   type PreviewStats, type PreviewStatus } from './protocol';
@@ -14,7 +14,7 @@ const pending = new Map<string, { frame: Window; cancelled: boolean }>();
 const cache = new Map<string, Uint8Array>();
 const transfers = new Map<string, Promise<Uint8Array>>();
 const connected = new Set<string>();
-const transferQueue = new TransferQueue(ACTIVE_TRANSFERS);
+const transferQueue = new TransferQueue(config.maxConcurrentTransfers ?? ACTIVE_TRANSFERS);
 const stats: PreviewStats = {
   requests: 0, networkRequests: 0, retries: 0, fipsBytes: 0, verifiedBlobs: 0,
   cacheHits: 0, errors: 0, cancelledRequests: 0, pending: 0,
@@ -59,8 +59,9 @@ const ready = (async () => {
       transports: [new WebSocketTransport({ seedUrls: config.seedUrls })],
       forwarding: false, routingMode: 'reply_learned' });
     node.on('peer', (event) => {
-      if (event.state === 'connected') connected.add(event.remotePubkey);
-      else connected.delete(event.remotePubkey);
+      const peer = event as PeerEvent;
+      if (peer.state === 'connected') connected.add(peer.remotePubkey);
+      else connected.delete(peer.remotePubkey);
       changed();
     });
     await node.start();

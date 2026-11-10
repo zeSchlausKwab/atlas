@@ -51,13 +51,21 @@ function update(status: Partial<PreviewStatus>) {
 }
 function fail(message: string) {
   failed = true;
-  el('status').textContent = 'Map loading paused · try the connection again';
+  el('status').textContent = map ? 'Some map data could not load · you can keep exploring' : 'Could not open the map · try the connection again';
+  el('retry').textContent = map ? 'Retry map loading' : 'Try connection';
   el('error').textContent = message; el('error').hidden = false;
   el('retry').hidden = false; document.body.dataset.state = 'error';
 }
 function renderStats(s: MapStats) {
   el('zoom').textContent = `z${s.zoom.toFixed(1)}`;
-  el('render-status').textContent = `${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${s.loading ? ' · receiving…' : ' · ready'}`;
+  const loading = s.loading + s.labels.loading;
+  const complete = s.wanted > 0 && s.tiles === s.wanted && s.missing === 0 && loading === 0 && s.labels.missing === 0;
+  el('render-status').textContent = `${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${loading ? ' · receiving…' : complete ? ' · ready' : ' · partial view'}`;
+  if (failed && complete && latest.state === 'ready') {
+    failed = false;
+    el('error').hidden = true; el('retry').hidden = true;
+    update({});
+  }
 }
 async function start() {
   if (opening) return;
@@ -68,7 +76,9 @@ async function start() {
   document.body.dataset.state = 'starting';
   el('status').textContent = 'Connecting to the preview’s FIPS node…';
   try {
-    const status = await bridge.status(); update(status);
+    const status = await bridge.status();
+    if (run !== generation) return;
+    update(status);
     if (status.state === 'error') throw new Error(status.error);
     const identity = `fips://${status.providerPeerId}/${status.map.rootHash}`;
     const source = new HashtreeSource(identity, {
@@ -81,12 +91,16 @@ async function start() {
       requestTimeoutMs: status.requestTimeoutMs + 1000,
       fetchBlob: (hash, signal) => bridge.blob(hash, status.providerPeerId, signal),
     });
-    reader = new AtlasReader(source, () => update({}), { purposes: ['map', 'labels'] });
+    reader = new AtlasReader(source, () => { if (run === generation) update({}); }, { purposes: ['map', 'labels'] });
     await reader.open();
     const binary = Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0));
     await init({ module_or_path: binary });
     if (run !== generation) return;
-    const createdMap = await AtlasMap.create(el<HTMLCanvasElement>('map'), reader, renderStats, fail,
+    let createdMap: AtlasMap | undefined;
+    const current = () => run === generation && createdMap !== undefined && map === createdMap;
+    createdMap = await AtlasMap.create(el<HTMLCanvasElement>('map'), reader,
+      (stats) => { if (current()) renderStats(stats); },
+      (message) => { if (current()) fail(message); },
       { placeNames: true, streetNames: true, pois: false });
     if (run !== generation) { createdMap.destroy(); return; }
     map = createdMap;
@@ -98,6 +112,10 @@ async function start() {
 el('zoom-in').addEventListener('click', () => map?.zoomBy(1));
 el('zoom-out').addEventListener('click', () => map?.zoomBy(-1));
 el('fit').addEventListener('click', () => map?.fit());
-el('retry').addEventListener('click', () => { void start(); });
+el('retry').addEventListener('click', () => {
+  if (!map) { void start(); return; }
+  map.retryLoads();
+  el('status').textContent = 'Retrying missing map data…';
+});
 window.addEventListener('pagehide', () => { generation++; map?.destroy(); reader?.dispose(); bridge.dispose(); }, { once: true });
 void start();

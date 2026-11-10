@@ -1,6 +1,6 @@
 /** Private, temporary preview interface. This is not a NAP domain. */
 export const MAX_PENDING_BLOBS = 32;
-export const ACTIVE_TRANSFERS = 8;
+export const ACTIVE_TRANSFERS = 2;
 export const TRANSFER_ATTEMPTS = 2;
 export const TRANSFER_RETRY_DELAY_MS = 750;
 
@@ -15,11 +15,13 @@ export interface PreviewConfig {
     descriptor?: unknown;
   };
   timeoutMs?: number;
+  /** Simultaneous blob streams; keep low on constrained relayed links. */
+  maxConcurrentTransfers?: number;
 }
 
 /** Includes a full accepted queue plus the transport's existing retry budget. */
-export function blobRequestTimeoutMs(config: Pick<PreviewConfig, 'timeoutMs'>): number {
-  return Math.ceil(MAX_PENDING_BLOBS / ACTIVE_TRANSFERS) *
+export function blobRequestTimeoutMs(config: Pick<PreviewConfig, 'timeoutMs' | 'maxConcurrentTransfers'>): number {
+  return Math.ceil(MAX_PENDING_BLOBS / (config.maxConcurrentTransfers ?? ACTIVE_TRANSFERS)) *
     ((config.timeoutMs ?? 30000) * TRANSFER_ATTEMPTS + TRANSFER_RETRY_DELAY_MS * (TRANSFER_ATTEMPTS - 1)) + 10000;
 }
 
@@ -71,5 +73,9 @@ export function parsePreviewConfig(value: unknown): PreviewConfig {
     throw new Error('Invalid pinned Atlas map configuration');
   if (config.timeoutMs !== undefined && (!Number.isSafeInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 60000))
     throw new Error('Preview timeout must be between 1 and 60 seconds');
-  return { seedUrls, providerPeerId: config.providerPeerId, map, timeoutMs: config.timeoutMs ?? 30000 };
+  if (config.maxConcurrentTransfers !== undefined && (!Number.isSafeInteger(config.maxConcurrentTransfers) ||
+      config.maxConcurrentTransfers < 1 || config.maxConcurrentTransfers > 8))
+    throw new Error('Preview maxConcurrentTransfers must be an integer between 1 and 8');
+  return { seedUrls, providerPeerId: config.providerPeerId, map, timeoutMs: config.timeoutMs ?? 30000,
+    maxConcurrentTransfers: config.maxConcurrentTransfers ?? ACTIVE_TRANSFERS };
 }

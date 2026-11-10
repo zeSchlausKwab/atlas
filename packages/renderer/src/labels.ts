@@ -170,6 +170,7 @@ export class MapLabels {
   private keys: Set<string>;
   private directorySignature = "";
   private directoryLoading = false;
+  private directoryFailed = false;
   private hits: { box: Box; poi: Location }[] = [];
   constructor(
     readonly reader: AtlasReader,
@@ -194,6 +195,7 @@ export class MapLabels {
   }
   retry() {
     this.directorySignature = "";
+    this.directoryFailed = false;
     this.failed.clear();
   }
   pick(x: number, y: number) {
@@ -239,6 +241,7 @@ export class MapLabels {
     ) {
       this.directorySignature = directorySignature;
       this.directoryLoading = true;
+      this.directoryFailed = false;
       void (async () => {
         const keys = new Set(
           this.reader.index.blocks
@@ -258,14 +261,16 @@ export class MapLabels {
         if (!this.dead) this.keys = keys;
       })()
         .catch((e) => {
-          if (!this.dead) this.error(String(e));
+          if (!this.dead) {
+            this.directoryFailed = true;
+            this.error(String(e));
+          }
         })
         .finally(() => {
           this.directoryLoading = false;
           if (!this.dead) this.invalidate();
         });
     }
-    if (this.directoryLoading) stats.loading++;
     this.wanted = [];
     for (
       let x = Math.max(0, Math.floor(west * n));
@@ -319,8 +324,10 @@ export class MapLabels {
           if (!this.dead) this.invalidate();
         });
     }
-    stats.loading = this.pending.size;
-    stats.missing = this.wanted.filter((k) => !this.blocks.has(k)).length;
+    stats.loading = this.pending.size + (this.directoryLoading ? 1 : 0);
+    stats.missing =
+      this.wanted.filter((k) => !this.blocks.has(k)).length +
+      (this.directoryFailed ? 1 : 0);
     const toScreen = worldProjector(camera);
     const screen = (p: Position) => toScreen(project(...p));
     const signature = this.wanted

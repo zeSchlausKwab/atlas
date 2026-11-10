@@ -450,6 +450,11 @@ export class AtlasMap {
   }
   setOffline(offline: boolean) {
     this.reader.offline = offline;
+    this.retryLoads();
+  }
+  /** Retry missing data while preserving the camera, reader and resident meshes. */
+  retryLoads() {
+    if (this.dead) return;
     this.tiles.retry();
     this.raster.retry();
     this.labels.retry();
@@ -582,10 +587,7 @@ export class AtlasMap {
       features: this.featureOverlay,
       places: this.visiblePlaces(),
       placesLoading: this.placesLoading,
-      placesMissing:
-        this.placeNames &&
-        !this.places &&
-        this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY),
+      placesMissing: this.placeNames && (this.placesView?.missing ?? false),
       state: {
         routingCells: this.routingCells,
         reachable: this.reachable,

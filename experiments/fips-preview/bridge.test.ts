@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
 import vm from 'node:vm';
+import { TcpBlobTransport as InstalledTcpBlobTransport } from '@hashtree/fips-transport';
 import { ACTIVE_TRANSFERS, MAX_PENDING_BLOBS, blobRequestTimeoutMs, parsePreviewConfig } from './protocol';
 import { configFromDescriptor } from './config-from-descriptor';
 
 const config = {
+  timeoutMs: 30000, maxConcurrentTransfers: 2,
   seedUrls: ['ws://127.0.0.1:9'], providerPeerId: '02' + '1'.repeat(64),
   map: { name: 'Test map', rootHash: '2'.repeat(64), size: 1234, chunkBytes: 65536 },
 };
@@ -17,16 +19,16 @@ export function toHex(bytes){return Array.from(bytes,b=>b.toString(16).padStart(
 `;
 const build = await Bun.build({
   entrypoints: [new URL('./bridge.ts', import.meta.url).pathname],
-  target: 'browser', format: 'iife', define: { ATLAS_PREVIEW_CONFIG: JSON.stringify(config) },
+  target: 'browser', format: 'iife', define: { ATLAS_PREVIEW_CONFIG: 'globalThis.__previewConfig' },
   plugins: [{ name: 'transport-test-double', setup(build) {
-    build.onResolve({ filter: /^@(fips|hashtree)\// }, () => ({ path: 'transport', namespace: 'mock' }));
+    build.onResolve({ filter: /^(?:@(fips|hashtree)\/|\.\/vendor\/hashtree-fips-transport\/tcpBlobTransport$)/ }, () => ({ path: 'transport', namespace: 'mock' }));
     build.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: mockModule, loader: 'js' }));
   } }],
 });
 if (!build.success) throw new Error(build.logs.join('\n'));
 const script = await build.outputs[0].text();
 
-function harness(get: (hash: Uint8Array) => Promise<Uint8Array | null>) {
+function harness(get: (hash: Uint8Array) => Promise<Uint8Array | null>, previewConfig = config) {
   const replies: Array<Record<string, unknown>> = [];
   const handlers = new Map<string, (event: unknown) => void>();
   const waiters = new Map<string, (reply: Record<string, unknown>) => void>();
@@ -42,7 +44,7 @@ function harness(get: (hash: Uint8Array) => Promise<Uint8Array | null>) {
     removeEventListener: (type: string) => handlers.delete(type),
   };
   vm.runInNewContext(script, { window, document: { querySelector: () => ({ contentWindow: frame }) },
-    crypto, URL, Uint8Array, ArrayBuffer, Error, AggregateError, console, setTimeout, clearTimeout, __get: get });
+    crypto, URL, Uint8Array, ArrayBuffer, Error, AggregateError, console, setTimeout, clearTimeout, __get: get, __previewConfig: previewConfig });
   return {
     replies,
     waitForReply: (id: string) => {
@@ -126,6 +128,67 @@ test('a transient FIPS connection failure retries and returns one verified blob'
   } finally { h.close(); }
 });
 
+type TimeoutPhase = 'connect' | 'read' | 'write';
+
+// Exercise the pinned dependency's timeout throw sites and public get() error wrapper.
+// An expired deadline removes timing/network noise; only fetchFromPeer dispatch is stubbed.
+async function installedTimeoutError(phase: TimeoutPhase): Promise<AggregateError> {
+  const transport = new InstalledTcpBlobTransport({
+    endpoint: { registerService: () => () => {}, sendDatagram: async () => {} },
+    localStore: { get: async () => null, put: async () => false,
+      has: async () => false, delete: async () => false },
+  });
+  const internal = transport as unknown as {
+    fetchFromPeer: () => Promise<Uint8Array | null>;
+    waitEstablished: (connection: number, deadline: number) => Promise<void>;
+    readExact: (connection: number, size: number, deadline: number) => Promise<Uint8Array>;
+    writeAll: (connection: number, data: Uint8Array, deadline: number) => Promise<void>;
+  };
+  let sessions = 0;
+  internal.fetchFromPeer = async () => {
+    sessions++;
+    if (phase === 'connect') await internal.waitEstablished(0, 0);
+    else if (phase === 'read') await internal.readExact(0, 1, 0);
+    else await internal.writeAll(0, new Uint8Array([1]), 0);
+    throw new Error('Expected the installed transport deadline to throw');
+  };
+  try {
+    await transport.get(new Uint8Array(32), [config.providerPeerId], 0);
+    throw new Error('Expected the installed transport to aggregate its exhausted attempts');
+  } catch (error) {
+    expect(sessions).toBe(2);
+    expect(error).toBeInstanceOf(AggregateError);
+    const aggregate = error as AggregateError;
+    expect(aggregate.message).toBe('TCP/FIPS blob availability is uncertain');
+    expect(aggregate.errors).toHaveLength(1);
+    expect(aggregate.errors[0]).toBeInstanceOf(Error);
+    expect(aggregate.errors[0].message).toBe(`TCP/FIPS ${phase} timed out`);
+    return aggregate;
+  } finally { await transport.close(); }
+}
+
+test.each(['connect', 'read', 'write'] as const)(
+  'the installed transport %s timeout error retries through the bridge', async (phase) => {
+    const timeoutError = await installedTimeoutError(phase);
+    const bytes = new Uint8Array([7, 11, 13]);
+    const hash = await hashOf(bytes);
+    let calls = 0;
+    const h = harness(async () => {
+      calls++;
+      if (calls === 1) throw timeoutError;
+      return bytes;
+    });
+    try {
+      h.dispatch({ type: 'atlas-preview.getBlob', id: phase, hash });
+      const reply = await h.waitForReply(phase);
+      expect(reply.type).toBe('atlas-preview.getBlob.result');
+      expect(calls).toBe(2);
+      expect(h.replies.filter((value) => value.id === phase)).toHaveLength(1);
+      expect(new Uint8Array(reply.bytes as ArrayBuffer)).toEqual(bytes);
+      expect(reply.stats).toMatchObject({ networkRequests: 2, retries: 1, errors: 0, verifiedBlobs: 1 });
+    } finally { h.close(); }
+  });
+
 test('transient FIPS failures stop after two attempts and return one terminal error', async () => {
   let calls = 0;
   const h = harness(async () => { calls++; throw transientConnectionError(); });
@@ -195,41 +258,55 @@ test('configuration accepts compressed FIPS keys and rejects a different address
   expect(() => parsePreviewConfig({ ...config, seedUrls: ['ws://example.com/fips'] })).toThrow('loopback');
 });
 
-test('status budgets the full accepted queue and transport deadline', () => {
-  expect(MAX_PENDING_BLOBS).toBe(32);
-  expect(ACTIVE_TRANSFERS).toBe(8);
-  expect(blobRequestTimeoutMs(config)).toBe(253000);
-  expect(blobRequestTimeoutMs({ timeoutMs: 1000 })).toBe(21000);
-  expect(blobRequestTimeoutMs({ timeoutMs: 60000 })).toBe(493000);
-  const h = harness(async () => null);
-  h.dispatch({ type: 'atlas-preview.status', id: 'budget' });
-  expect(h.replies.find((r) => r.id === 'budget')).toMatchObject({ requestTimeoutMs: 253000 });
-  h.close();
+test('configuration defaults to two transfers and validates explicit limits', () => {
+  expect(parsePreviewConfig({ ...config, maxConcurrentTransfers: undefined }).maxConcurrentTransfers).toBe(2);
+  for (const maxConcurrentTransfers of [1, 2, 8])
+    expect(parsePreviewConfig({ ...config, maxConcurrentTransfers }).maxConcurrentTransfers).toBe(maxConcurrentTransfers);
+  for (const maxConcurrentTransfers of [0, -1, 9, 1.5, NaN, Infinity, null, '2'])
+    expect(() => parsePreviewConfig({ ...config, maxConcurrentTransfers })).toThrow('integer between 1 and 8');
 });
 
-test('tile and label bursts queue after eight transfers and all complete', async () => {
+test('status budgets the full accepted queue at the configured transfer limit', () => {
+  expect(MAX_PENDING_BLOBS).toBe(32);
+  expect(ACTIVE_TRANSFERS).toBe(2);
+  expect(blobRequestTimeoutMs(config)).toBe(982000);
+  expect(blobRequestTimeoutMs({ timeoutMs: 1000 })).toBe(54000);
+  expect(blobRequestTimeoutMs({ timeoutMs: 60000 })).toBe(1942000);
+  expect(blobRequestTimeoutMs({ maxConcurrentTransfers: 1 })).toBe(1954000);
+  expect(blobRequestTimeoutMs({ maxConcurrentTransfers: 8 })).toBe(253000);
+  for (const maxConcurrentTransfers of [1, 2, 8]) {
+    const custom = { ...config, maxConcurrentTransfers };
+    const h = harness(async () => null, custom);
+    h.dispatch({ type: 'atlas-preview.status', id: 'budget' });
+    expect(h.replies.find((r) => r.id === 'budget')).toMatchObject({ requestTimeoutMs: blobRequestTimeoutMs(custom) });
+    h.close();
+  }
+});
+
+test.each([1, 2, 8])('tile and label bursts respect the configured limit of %i transfers', async (limit) => {
   const payloads = Array.from({ length: 12 }, (_, i) => new Uint8Array([i, 42]));
   const hashes = await Promise.all(payloads.map(hashOf));
   const calls: Array<{ hash: string; resolve: (bytes: Uint8Array) => void }> = [];
   const h = harness((hash) => new Promise((resolve) => calls.push({
     hash: Array.from(hash, (b) => b.toString(16).padStart(2, '0')).join(''), resolve,
-  })));
-  hashes.forEach((hash, index) => h.dispatch({ type: 'atlas-preview.getBlob', id: `burst-${index}`, hash }));
-  expect(h.replies.at(-1)?.stats).toMatchObject({ pending: 12 });
-  await drain();
-  expect(calls).toHaveLength(8);
-  expect(h.replies.at(-1)?.stats).toMatchObject({ pending: 12, activeTransfers: 8, queuedTransfers: 4 });
-  expect(h.replies.some((r) => (r.stats as { queuedTransfers?: number } | undefined)?.queuedTransfers === 4)).toBe(true);
-  for (const call of calls.slice()) call.resolve(payloads[hashes.indexOf(call.hash)]!);
-  await drain();
-  expect(calls).toHaveLength(12);
-  expect(h.replies.at(-1)?.stats).toMatchObject({ pending: 4, activeTransfers: 4, queuedTransfers: 0 });
-  for (const call of calls.slice(8)) call.resolve(payloads[hashes.indexOf(call.hash)]!);
-  await drain();
-  expect(h.replies.filter((r) => r.type === 'atlas-preview.getBlob.result')).toHaveLength(12);
-  expect(h.replies.filter((r) => r.type === 'atlas-preview.getBlob.error')).toHaveLength(0);
-  expect(h.replies.at(-1)?.stats).toMatchObject({ pending: 0, activeTransfers: 0, queuedTransfers: 0 });
-  h.close();
+  })), { ...config, maxConcurrentTransfers: limit });
+  try {
+    hashes.forEach((hash, index) => h.dispatch({ type: 'atlas-preview.getBlob', id: `burst-${index}`, hash }));
+    expect(h.replies.at(-1)?.stats).toMatchObject({ pending: payloads.length });
+    await drain();
+    for (let completed = 0; completed < payloads.length; completed += limit) {
+      const active = Math.min(limit, payloads.length - completed);
+      expect(calls).toHaveLength(completed + active);
+      expect(h.replies.at(-1)?.stats).toMatchObject({ pending: payloads.length - completed,
+        activeTransfers: active, queuedTransfers: payloads.length - completed - active });
+      for (const call of calls.slice(completed, completed + active))
+        call.resolve(payloads[hashes.indexOf(call.hash)]!);
+      await drain();
+    }
+    expect(h.replies.filter((r) => r.type === 'atlas-preview.getBlob.result')).toHaveLength(payloads.length);
+    expect(h.replies.filter((r) => r.type === 'atlas-preview.getBlob.error')).toHaveLength(0);
+    expect(h.replies.at(-1)?.stats).toMatchObject({ pending: 0, activeTransfers: 0, queuedTransfers: 0 });
+  } finally { h.close(); }
 });
 
 test('public provider descriptors become pinned preview configuration including legacy chunk size', () => {
