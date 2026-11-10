@@ -238,19 +238,38 @@ export async function publishAnnouncement(
   url: string,
   event: Event,
   timeoutMs = 10_000,
+  signal?: AbortSignal,
 ) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error("Invalid relay publication timeout");
+  signal?.throwIfAborted();
   const relay = new Relay(relayUrl(url), { enableReconnect: false });
   const started = performance.now();
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      relay.close();
+      reject(
+        signal?.reason ?? new DOMException("Publication aborted", "AbortError"),
+      );
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
   try {
-    await relay.connect({ timeout: timeoutMs });
-    relay.publishTimeout = Math.max(
-      1,
-      timeoutMs - (performance.now() - started),
-    );
-    await relay.publish(event);
+    await Promise.race([
+      aborted,
+      (async () => {
+        await relay.connect({ timeout: timeoutMs });
+        signal?.throwIfAborted();
+        relay.publishTimeout = Math.max(
+          1,
+          timeoutMs - (performance.now() - started),
+        );
+        await relay.publish(event);
+      })(),
+    ]);
   } finally {
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
     relay.close();
   }
 }

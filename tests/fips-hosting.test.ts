@@ -1,14 +1,17 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { verifyEvent } from "nostr-tools/pure";
+import { verifyEvent, type Event } from "nostr-tools/pure";
 import { MapDiscovery } from "../apps/server/discovery";
 import {
   FipsHosting,
   parseHostingSettings,
   mapRpcHandler,
 } from "../apps/server/fips-hosting";
-import { parseAnnouncement } from "../packages/hashtree/src/discovery";
+import {
+  parseAnnouncement,
+  publishAnnouncement,
+} from "../packages/hashtree/src/discovery";
 import { defaultPresentation } from "../packages/views/src/index";
 import { workspaceFixture } from "./helpers/workspace-fixture";
 const peerId = "02" + "1".repeat(64);
@@ -24,7 +27,11 @@ const settings = {
   seedUrls: provider.seedUrls,
   relayUrls: [],
 };
-async function fixture() {
+async function fixture(
+  publishRelay?: NonNullable<
+    Parameters<typeof MapDiscovery.open>[3]
+  >["publishRelay"],
+) {
   const directory = await mkdtemp("/tmp/atlas-fips-host-"),
     a = await workspaceFixture(),
     b = await workspaceFixture(undefined, "37");
@@ -49,6 +56,7 @@ async function fixture() {
     join(directory, "discovery"),
     () => true,
     () => visible,
+    { publishRelay },
   );
   await discovery.setDelivery({
     origin: "http://localhost",
@@ -390,5 +398,148 @@ test("an indexed map with delivery off survives restart and publishes without re
     await d.close();
     fixture.reader.dispose();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("slow discovery relays never block startup/settings, and superseded publications are cancelled", async () => {
+  const sent: Array<{
+    event: Event;
+    signal: AbortSignal;
+    fail(error: Error): void;
+  }> = [];
+  const f = await fixture(async (_url, event, _timeout, signal) => {
+    await new Promise<void>((_resolve, reject) => {
+      sent.push({ event, signal: signal!, fail: reject });
+      if (signal!.aborted) reject(signal!.reason);
+      else
+        signal!.addEventListener("abort", () => reject(signal!.reason), {
+          once: true,
+        });
+    });
+  });
+  const remote = { ...settings, relayUrls: ["wss://unreachable.example"] };
+  const timely = async <T>(work: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Blocked behind relay network I/O")),
+            500,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const host = await timely(
+    FipsHosting.open({
+      directory: join(f.directory, "fips"),
+      origin: "http://localhost",
+      discovery: f.discovery,
+      access: () => true,
+      defaults: remote,
+      rpc: async () => ({ status: 200 }),
+      start: async () => ({
+        peerId,
+        status: () => ({
+          peerId,
+          connectedPeers: ["seed"],
+          requests: 0,
+          bytesServed: 0,
+        }),
+        stop: async () => {},
+      }),
+    }),
+  );
+  try {
+    expect(host.status().state).toBe("connected");
+    expect(f.discovery.publishedOffers()).toHaveLength(2);
+    expect(sent.filter((s) => s.event.kind === 30064)).toHaveLength(2);
+    const firstEvents = sent.filter((s) => s.event.kind === 30064);
+    const change = (enabled: boolean) =>
+      timely(
+        host.handle(
+          new Request("http://localhost/admin/fips", {
+            method: "POST",
+            headers: {
+              Origin: "http://localhost",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ ...remote, enabled }),
+          }),
+        ),
+      );
+    expect((await change(false))!.status).toBe(200);
+    expect(firstEvents.every((s) => s.signal.aborted)).toBe(true);
+    expect(f.discovery.publishedOffers()).toHaveLength(0);
+    expect(sent.some((s) => s.event.kind === 5)).toBe(true);
+    expect((await change(true))!.status).toBe(200);
+    expect(
+      sent.filter((s) => s.event.kind === 5).every((s) => s.signal.aborted),
+    ).toBe(true);
+    expect(f.discovery.publishedOffers()).toHaveLength(2);
+    for (const job of f.discovery.jobs.values()) {
+      expect(job.relayPending).toBe(true);
+      expect(job.relayErrors).toEqual([]);
+      expect(job.event!.created_at).toBeGreaterThan(
+        firstEvents.find((s) =>
+          s.event.tags.some((t) => t[0] === "d" && t[1] === `atlas/${job.id}`),
+        )!.event.created_at,
+      );
+    }
+    // Fail only obsolete sends: their delayed failures must not replace the new pending status.
+    for (const old of firstEvents)
+      old.fail(new Error("late old network error"));
+    await f.discovery.refreshAnnouncements();
+    expect(
+      [...f.discovery.jobs.values()].every((j) => !j.relayErrors?.length),
+    ).toBe(true);
+    await timely(host.close());
+    await timely(f.close());
+    expect(sent.every((s) => s.signal.aborted)).toBe(true);
+  } catch (error) {
+    await host.close();
+    await f.close();
+    throw error;
+  }
+});
+
+test("relay publication abort closes a real websocket without waiting for an acknowledgement timeout", async () => {
+  const f = await fixture();
+  let received!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request, srv) =>
+      srv.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+    websocket: {
+      message: (_ws, raw) => {
+        if (JSON.parse(String(raw))[0] === "EVENT") received();
+      },
+    },
+  });
+  const controller = new AbortController();
+  try {
+    const publication = publishAnnouncement(
+      `ws://127.0.0.1:${server.port}`,
+      f.discovery.jobs.get(f.maps[0]!.id)!.event!,
+      10_000,
+      controller.signal,
+    );
+    await waiting;
+    const started = performance.now();
+    controller.abort(new Error("Superseded publication"));
+    await expect(publication).rejects.toThrow("Superseded publication");
+    expect(performance.now() - started).toBeLessThan(500);
+  } finally {
+    controller.abort();
+    await server.stop(true);
+    await f.close();
   }
 });

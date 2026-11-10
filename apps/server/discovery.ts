@@ -48,6 +48,14 @@ interface Publication {
   offer?: MapOffer;
   lastEventAt?: number;
   relayErrors?: string[];
+  relayPending?: boolean;
+}
+interface RelayWork {
+  key: string;
+  event: Event;
+  urls: string[];
+  controller: AbortController;
+  finish: (errors: string[]) => Promise<void>;
 }
 /** This host's read-only Nostr relay. It never accepts or forwards third-party events. */
 export class MapDiscovery {
@@ -66,6 +74,9 @@ export class MapDiscovery {
   private lastRelayAttempt = 0;
   private announcementWrites: Promise<unknown> = Promise.resolve();
   private pendingWithdrawals = new Set<string>();
+  private pendingViews = new Set<string>();
+  private relayWork = new Map<string, RelayWork>();
+  private relayActive = new Map<RelayWork, Promise<void>>();
   private updateAnnouncements<T>(work: () => Promise<T>): Promise<T> {
     const next = this.announcementWrites.then(work);
     this.announcementWrites = next.catch(() => {});
@@ -114,7 +125,6 @@ export class MapDiscovery {
     );
   }
   async setDelivery(value: DiscoveryDelivery) {
-    await this.pending;
     await this.updateAnnouncements(async () => {
       this.delivery = value;
       await this.refreshAnnouncementsNow(true);
@@ -129,18 +139,108 @@ export class MapDiscovery {
       ) + 1,
     );
   }
-  private async relay(event: Event) {
-    const errors: string[] = [];
-    await Promise.all(
-      this.relayUrls.map(async (url) => {
-        try {
-          await publishAnnouncement(url, event);
-        } catch (error) {
-          errors.push(`${url}: ${String(error)}`);
-        }
-      }),
-    );
-    return errors;
+  /** Coalesce by address, cancel obsolete sends and keep network I/O off the mutation path. */
+  private queueRelay(key: string, event: Event, finish: RelayWork["finish"]) {
+    const previous = this.relayWork.get(key);
+    if (
+      previous?.event.id === event.id &&
+      JSON.stringify(previous.urls) === JSON.stringify(this.relayUrls) &&
+      !previous.controller.signal.aborted
+    )
+      return;
+    previous?.controller.abort();
+    const work: RelayWork = {
+      key,
+      event,
+      urls: [...this.relayUrls],
+      controller: new AbortController(),
+      finish,
+    };
+    this.relayWork.set(key, work);
+    queueMicrotask(() => this.pumpRelays());
+  }
+  private pumpRelays() {
+    if (this.abort.signal.aborted) return;
+    for (const work of this.relayWork.values()) {
+      if (this.relayActive.size >= 4) break;
+      if (this.relayActive.has(work)) continue;
+      const run = (async () => {
+        const errors: string[] = [];
+        await Promise.all(
+          work.urls.map(async (url) => {
+            try {
+              await this.publishRelay(
+                url,
+                work.event,
+                10_000,
+                work.controller.signal,
+              );
+            } catch (error) {
+              if (!work.controller.signal.aborted)
+                errors.push(`${url}: ${String(error)}`);
+            }
+          }),
+        );
+        // A newer offer or withdrawal supersedes this result; never persist stale status.
+        if (
+          this.relayWork.get(work.key) === work &&
+          !work.controller.signal.aborted
+        )
+          await this.updateAnnouncements(async () => {
+            if (
+              this.relayWork.get(work.key) === work &&
+              !work.controller.signal.aborted
+            )
+              await work.finish(errors);
+          });
+      })()
+        .catch((error) => console.error("Discovery relay publication:", error))
+        .finally(() => {
+          this.relayActive.delete(work);
+          if (this.relayWork.get(work.key) === work)
+            this.relayWork.delete(work.key);
+          this.pumpRelays();
+        });
+      this.relayActive.set(work, run);
+    }
+  }
+  private announceMap(job: Publication) {
+    const event = job.event!;
+    job.relayPending = this.relayUrls.length > 0;
+    job.relayErrors = [];
+    job.message = job.relayPending
+      ? "Published locally; sending signed discovery announcements…"
+      : "Published locally; no external discovery relays configured.";
+    this.queueRelay(`map:${job.id}`, event, async (errors) => {
+      if (this.jobs.get(job.id) !== job || job.event?.id !== event.id) return;
+      job.relayPending = false;
+      job.relayErrors = errors;
+      job.message = errors.length
+        ? "Published locally; discovery relay delivery will retry."
+        : "Published with the current delivery settings.";
+      await this.save(job);
+    });
+  }
+  private announceWithdrawal(id: string, event: Event) {
+    this.pendingWithdrawals.add(id);
+    this.queueRelay(`map:${id}`, event, async (errors) => {
+      if (this.withdrawals.get(id)?.id !== event.id) return;
+      if (!errors.length) this.pendingWithdrawals.delete(id);
+      const job = this.jobs.get(id);
+      if (job && !job.event) {
+        job.relayPending = false;
+        job.relayErrors = errors;
+        await this.save(job);
+      }
+    });
+  }
+  private announceView(event: Event) {
+    const id = parseViewAnnouncement(event).recipe.id;
+    this.pendingViews.add(id);
+    this.queueRelay(`view:${id}`, event, async (errors) => {
+      if (this.views.get(id)?.id !== event.id) return;
+      if (!errors.length) this.pendingViews.delete(id);
+    });
   }
   private offerFor(job: Publication, origin: string): MapOffer | undefined {
     const live = this.maps().find((m) => m.id === job.id);
@@ -204,9 +304,8 @@ export class MapDiscovery {
     this.withdrawals.set(job.id, event);
     await this.saveWithdrawals();
     this.broadcast(event);
-    job.relayErrors = await this.relay(event);
-    if (job.relayErrors.length) this.pendingWithdrawals.add(job.id);
-    else this.pendingWithdrawals.delete(job.id);
+    job.relayPending = this.relayUrls.length > 0;
+    this.announceWithdrawal(job.id, event);
   }
   /** Renew offers before their seven-day expiry, and retry failed relay delivery. */
   async refreshAnnouncements(force = false) {
@@ -238,26 +337,26 @@ export class MapDiscovery {
         this.pendingWithdrawals.delete(job.id);
         await this.saveWithdrawals();
         this.broadcast(job.event);
-        job.relayErrors = await this.relay(job.event);
-        job.message = job.relayErrors.length
-          ? "Published locally; discovery relay delivery will retry."
-          : "Published with the current delivery settings.";
+        this.announceMap(job);
         await this.save(job);
       } else if (retry && job.relayErrors?.length) {
-        job.relayErrors = await this.relay(job.event);
+        this.announceMap(job);
         await this.save(job);
       }
     }
     if (force) {
       await this.saveWithdrawals();
-      for (const event of this.views.values()) await this.relay(event);
+      for (const event of this.views.values()) this.announceView(event);
     }
+    if (retry && !force)
+      for (const id of this.pendingViews) {
+        const event = this.views.get(id);
+        if (event) this.announceView(event);
+      }
     if (force || retry) {
       for (const [id, event] of this.withdrawals) {
         if (!force && !this.pendingWithdrawals.has(id)) continue;
-        const errors = await this.relay(event);
-        if (errors.length) this.pendingWithdrawals.add(id);
-        else this.pendingWithdrawals.delete(id);
+        this.announceWithdrawal(id, event);
       }
     }
   }
@@ -294,6 +393,7 @@ export class MapDiscovery {
     private key: Uint8Array,
     private access: AdminAccess,
     private maps: () => Array<{ id: string; path: string; offer: MapOffer }>,
+    private publishRelay: typeof publishAnnouncement,
   ) {}
   get pubkey() {
     return getPublicKey(this.key);
@@ -302,6 +402,7 @@ export class MapDiscovery {
     directory: string,
     access: AdminAccess,
     maps: () => Array<{ id: string; path: string; offer: MapOffer }>,
+    options: { publishRelay?: typeof publishAnnouncement } = {},
   ) {
     await mkdir(directory, { recursive: true });
     const keyPath = join(directory, "host-key");
@@ -313,7 +414,13 @@ export class MapDiscovery {
       key = generateSecretKey();
       await writeFile(keyPath, toHex(key), { flag: "wx", mode: 0o600 });
     }
-    const d = new MapDiscovery(directory, key, access, maps);
+    const d = new MapDiscovery(
+      directory,
+      key,
+      access,
+      maps,
+      options.publishRelay ?? publishAnnouncement,
+    );
     for (const name of await readdir(directory)) {
       if (!/^(demo|[a-f0-9-]{36})\.json$/.test(name)) continue;
       try {
@@ -486,10 +593,10 @@ export class MapDiscovery {
     this.defaultView = defaultView;
     if (replacedDefault) {
       this.broadcast(replacedDefault);
-      if (publish) await this.relay(replacedDefault);
+      if (publish) this.announceView(replacedDefault);
     }
     this.broadcast(event);
-    if (publish) await this.relay(event);
+    if (publish) this.announceView(event);
     return event;
   }
   offer(id: string) {
@@ -549,10 +656,7 @@ export class MapDiscovery {
             this.withdrawals.delete(job.id);
             await this.saveWithdrawals();
             this.broadcast(job.event);
-            job.relayErrors = await this.relay(job.event);
-            job.message = job.relayErrors.length
-              ? "Published locally; discovery relay delivery will retry."
-              : "Published with the current delivery settings.";
+            this.announceMap(job);
           } else
             job.message = "Indexed; enable a delivery transport to publish.";
           await this.save(job);
@@ -804,6 +908,9 @@ export class MapDiscovery {
   async close() {
     clearInterval(this.automatic);
     this.abort.abort();
+    for (const work of this.relayWork.values()) work.controller.abort();
+    this.relayWork.clear();
+    await Promise.allSettled(this.relayActive.values());
     await this.pending;
     await this.viewWrites;
     await this.announcementWrites;

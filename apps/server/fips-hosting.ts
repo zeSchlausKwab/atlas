@@ -232,6 +232,7 @@ export class FipsHosting {
         bytes: m.bytes,
         fips: m.hashtree!.fips,
         publication: this.discovery.jobs.get(m.id)?.message,
+        relayPending: this.discovery.jobs.get(m.id)?.relayPending ?? false,
         relayErrors: this.discovery.jobs.get(m.id)?.relayErrors ?? [],
       })),
     };
