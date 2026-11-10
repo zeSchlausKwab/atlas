@@ -5,13 +5,13 @@ import { MAP_LAYERS, type Manifest } from "./index";
 export interface MapOffer {
   id: string;
   url: string;
-  api: string;
+  api?: string;
   bytes: number;
   manifest: Manifest;
   hashtree?: TreeOffer;
 }
-import { httpUrl } from "./urls";
-export { httpUrl } from "./urls";
+import { httpUrl, mapReference } from "./urls";
+export { httpUrl, mapReference } from "./urls";
 /** Offers are discovery hints. The reader validates the actual package, and its
  * snapshot must agree before a catalog offer can participate in a composition. */
 export function parseCatalog(value: unknown, base: string): MapOffer[] {
@@ -25,7 +25,7 @@ export function parseCatalog(value: unknown, base: string): MapOffer[] {
       !m ||
       typeof m.id !== "string" ||
       typeof m.url !== "string" ||
-      typeof m.api !== "string" ||
+      (m.api !== undefined && typeof m.api !== "string") ||
       !Number.isSafeInteger(m.bytes) ||
       m.bytes <= 0 ||
       !f ||
@@ -54,16 +54,21 @@ export function parseCatalog(value: unknown, base: string): MapOffer[] {
       throw new Error("Invalid map offer in catalog");
     validateRasters(f.rasters);
     validateTransportMetadata(f.transport, f.capabilities);
-    const url = httpUrl(m.url, base);
+    const hashtree = m.hashtree ? parseTree(m.hashtree, m.bytes) : undefined;
+    const url = mapReference(m.url, base, hashtree?.root);
+    if (url.startsWith("htree:") && !hashtree)
+      throw new Error(
+        "Content-addressed map offers require a Hashtree descriptor",
+      );
     if (seen.has(url)) throw new Error("Duplicate map URL in catalog");
     seen.add(url);
     return {
       id: m.id,
       url,
-      api: httpUrl(m.api, base),
+      ...(m.api !== undefined ? { api: httpUrl(m.api, base) } : {}),
       bytes: m.bytes,
       manifest: f,
-      ...(m.hashtree ? { hashtree: parseTree(m.hashtree, m.bytes) } : {}),
+      ...(hashtree ? { hashtree } : {}),
     };
   });
 }

@@ -1,5 +1,5 @@
 import { MAP_LAYERS, type MapLayer } from "../../format/src/index";
-import { httpUrl } from "../../format/src/urls";
+import { mapReference } from "../../format/src/urls";
 import {
   PAPER,
   FLAT_SCENE,
@@ -154,7 +154,7 @@ export function parseViewRecipe(value: unknown): ViewRecipe {
       }
     }
     return {
-      url: httpUrl(s.url, s.url),
+      url: mapReference(s.url, s.url, s.root),
       root: s.root,
       enabled: bool(s.enabled),
       layers: choices(s.layers, MAP_LAYERS),

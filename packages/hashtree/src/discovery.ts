@@ -48,7 +48,8 @@ export function parseAnnouncement(
 ): { event: Event; offer: MapOffer } {
   if (JSON.stringify(event).length > 256 * 1024)
     throw new Error("Oversized map announcement");
-  const e = event as Event;
+  // Caller-owned nostr-tools objects may carry a cached verification symbol.
+  const e = JSON.parse(JSON.stringify(event)) as Event;
   if (
     !e ||
     e.kind !== MAP_KIND ||
@@ -95,6 +96,10 @@ export async function watchMaps(
   signal: AbortSignal,
   report: (message: string) => void = () => {},
   acceptView?: (view: ReturnType<typeof parseViewAnnouncement>) => void,
+  options: {
+    ready?: () => void;
+    withdrawn?: (id: string, publisher: string, event: Event) => void;
+  } = {},
 ) {
   if (
     !authors.length ||
@@ -102,12 +107,17 @@ export async function watchMaps(
     !authors.every((a) => HASH.test(a))
   )
     throw new Error("Choose 1–16 publisher public keys");
-  const relay = await Relay.connect(relayUrl(url));
+  const relay = await Relay.connect(relayUrl(url), {
+    timeout: 10_000,
+    abort: signal,
+  });
   if (signal.aborted) {
     relay.close();
     signal.throwIfAborted();
   }
   const seen = new Map<string, Event>();
+  const withdrawn = new Map<string, number>();
+  const deletedEvents = new Set<string>();
   relay.onclose = () =>
     report(
       "Discovery relay disconnected; existing map snapshots remain pinned. Reconnect to discover updates.",
@@ -120,11 +130,58 @@ export async function watchMaps(
         "#t": acceptView ? ["atlas-map", "atlas-view"] : ["atlas-map"],
         limit: 100,
       },
+      { kinds: [5], authors, limit: 100 },
     ],
     {
       onevent(event) {
         try {
           if (!authors.includes(event.pubkey)) return;
+          if (event.kind === 5) {
+            if (JSON.stringify(event).length > 256 * 1024) return;
+            const deletion = JSON.parse(JSON.stringify(event)) as Event;
+            if (
+              !verifyEvent(deletion) ||
+              deletion.created_at > Math.floor(Date.now() / 1000) + 300
+            )
+              return;
+            const keys = new Map<string, boolean>();
+            for (const tag of deletion.tags) {
+              if (
+                tag[0] === "a" &&
+                tag[1]?.startsWith(`${MAP_KIND}:${deletion.pubkey}:atlas/`)
+              )
+                keys.set(
+                  `${deletion.pubkey}:${tag[1].slice(`${MAP_KIND}:${deletion.pubkey}:`.length)}`,
+                  true,
+                );
+              if (tag[0] === "e" && HASH.test(tag[1] ?? "")) {
+                deletedEvents.add(`${deletion.pubkey}:${tag[1]}`);
+                for (const [key, old] of seen)
+                  if (
+                    old.kind === MAP_KIND &&
+                    old.pubkey === deletion.pubkey &&
+                    old.id === tag[1]
+                  )
+                    if (!keys.has(key)) keys.set(key, false);
+              }
+            }
+            for (const [key, addressDeletion] of keys) {
+              const old = seen.get(key);
+              if (
+                (old && old.created_at > deletion.created_at) ||
+                (withdrawn.get(key) ?? -1) >= deletion.created_at
+              )
+                continue;
+              if (addressDeletion) withdrawn.set(key, deletion.created_at);
+              seen.delete(key);
+              options.withdrawn?.(
+                key.slice(`${deletion.pubkey}:atlas/`.length),
+                deletion.pubkey,
+                deletion,
+              );
+            }
+            return;
+          }
           if (event.kind === VIEW_KIND && acceptView) {
             const parsed = parseViewAnnouncement(event);
             const key = `${event.pubkey}:view:${parsed.recipe.id}`;
@@ -141,6 +198,11 @@ export async function watchMaps(
           }
           const parsed = parseAnnouncement(event),
             key = `${event.pubkey}:${event.tags.find((t) => t[0] === "d")![1]}`;
+          if (
+            (withdrawn.get(key) ?? -1) >= event.created_at ||
+            deletedEvents.has(`${event.pubkey}:${event.id}`)
+          )
+            return;
           const old = seen.get(key);
           if (
             old &&
@@ -155,6 +217,7 @@ export async function watchMaps(
         }
       },
       oneose() {
+        options.ready?.();
         report(
           "Listening for signed map offers. Choose discovered maps below.",
         );
@@ -171,9 +234,21 @@ export async function watchMaps(
     close();
   };
 }
-export async function publishAnnouncement(url: string, event: Event) {
-  const relay = await Relay.connect(relayUrl(url));
+export async function publishAnnouncement(
+  url: string,
+  event: Event,
+  timeoutMs = 10_000,
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
+    throw new Error("Invalid relay publication timeout");
+  const relay = new Relay(relayUrl(url), { enableReconnect: false });
+  const started = performance.now();
   try {
+    await relay.connect({ timeout: timeoutMs });
+    relay.publishTimeout = Math.max(
+      1,
+      timeoutMs - (performance.now() - started),
+    );
     await relay.publish(event);
   } finally {
     relay.close();
