@@ -52,6 +52,7 @@ export class PreviewBridge {
   private approving = false;
   private stats: PreviewStats = { ...emptyStats, requests: 0, pending: 0 };
   private ready = false;
+  private settled = false;
   private generation = 0;
   private messages: string[] = [];
   private error?: string;
@@ -65,25 +66,29 @@ export class PreviewBridge {
     } = {},
   ) {}
   private snapshot(): ConsumerStatus {
+    const catalog = this.library?.catalog() ?? { catalog: [], preferredMapIds: [] };
+    // A relay timeout does not invalidate the offers already verified by the library.
+    const error = catalog.catalog.length ? undefined : this.error;
     return {
       version: 2,
       state: this.lifetime.signal.aborted
         ? 'closed'
-        : this.error
+        : error
           ? 'error'
-          : this.ready
+          : this.settled
             ? 'ready'
             : 'discovering',
-      ...(this.library?.catalog() ?? { catalog: [], preferredMapIds: [] }),
+      ...catalog,
       discovery: {
         publishers: [this.library?.config.publisher ?? defaults.publisher],
         relayUrls: this.library?.config.relayUrls ?? defaults.relayUrls,
         messages: this.messages,
         ready: this.ready,
+        settled: this.settled,
       },
       stats: this.stats,
       requestTimeoutMs: this.timeoutMs,
-      ...(this.error ? { error: this.error } : {}),
+      ...(error ? { error } : {}),
     };
   }
   private update = () => {
@@ -146,6 +151,7 @@ export class PreviewBridge {
     const generation = ++this.generation,
       live = () => !this.lifetime.signal.aborted && generation === this.generation;
     this.ready = false;
+    this.settled = false;
     this.error = undefined;
     this.messages = ['Looking up signed offers through the shell OUTBOX'];
     this.update();
@@ -168,6 +174,7 @@ export class PreviewBridge {
       });
       this.live.on('closed', (reason) => {
         if (live()) {
+          this.ready = false;
           this.messages = [
             reason ??
               'Discovery closed; refresh to reconnect. Existing snapshots remain pinned until expiry.',
@@ -178,20 +185,25 @@ export class PreviewBridge {
       const result = await api.query(filters, options);
       if (live()) {
         for (const record of result.events) this.library.accept(record.event);
-        this.ready = !result.error;
-        this.messages = [
-          result.error ??
-            (result.incomplete
-              ? 'Some relays were unavailable. This library may be incomplete; refresh to retry.'
-              : 'Listening for signed map offers and withdrawals.'),
-        ];
-        this.error = result.error;
+        this.settled = true;
+        this.ready = !result.error && !result.incomplete;
+        this.error = result.error ?? (result.incomplete ? 'No complete discovery result was received; refresh to retry.' : undefined);
+        this.messages = this.ready
+          ? ['Listening for signed map offers and withdrawals.']
+          : [
+              ...(result.error ? [result.error] : []),
+              'Discovery may be incomplete; refresh to retry. Verified maps remain available.',
+            ];
         this.update();
       }
     } catch (error) {
       if (live()) {
+        this.settled = true;
         this.error = consumerError(error);
-        this.messages = [this.error];
+        this.messages = [
+          this.error,
+          'Discovery may be incomplete; refresh to retry. Verified maps remain available.',
+        ];
         this.update();
       }
     }

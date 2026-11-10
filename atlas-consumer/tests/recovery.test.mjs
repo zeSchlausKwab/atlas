@@ -29,7 +29,7 @@ const entry = (id, char = '1', raster = false) => ({ key: `${publisher}:${id}@${
 const stats = () => ({ networkRequests: 0, retries: 0, fipsBytes: 0, verifiedBlobs: 0, cacheHits: 0,
   errors: 0, cancelledRequests: 0, activeTransfers: 0, queuedTransfers: 0 });
 const status = (catalog, extra = {}) => ({ version: 2, state: 'ready', catalog, preferredMapIds: [],
-  discovery: { ready: true, publishers: [publisher], relayUrls: ['wss://example.test'], messages: [] },
+  discovery: { ready: true, settled: true, publishers: [publisher], relayUrls: ['wss://example.test'], messages: [] },
   requestTimeoutMs: 100000, stats: stats(), ...extra });
 const readyStats = () => ({ zoom: 14, tiles: 4, wanted: 4, missing: 0, triangles: 240, sources: 1,
   fallbackTiles: 0, drawMs: 2, loading: 0, labels: { roads: 0, pois: 0, missing: 0, loading: 0 } });
@@ -157,8 +157,8 @@ test('withdrawal and disposal reject late directory completions without reviving
   h.controller.retry(); assert.equal(h.map.retries, 0);
 });
 
-async function consumer() {
-  const h = harness(), elements = new Map(), listeners = {}, maps = [];
+async function consumer(initial = status([entry('west')])) {
+  const h = harness({ catalog: initial.catalog }), elements = new Map(), listeners = {}, maps = [], body = { dataset: {} };
   class Element {
     textContent = ''; hidden = false; disabled = false; checked = false; children = []; handlers = {};
     set id(value) { elements.set(value, this); }
@@ -171,8 +171,8 @@ async function consumer() {
   let bridge;
   class Bridge {
     constructor(changed) { this.changed = changed; bridge = this; }
-    async status() { return status([entry('west')]); }
-    async refresh() { return status([entry('west')]); }
+    async status() { return initial; }
+    async refresh() { return initial; }
     dispose() {}
   }
   class Renderer {
@@ -182,7 +182,7 @@ async function consumer() {
     }
   }
   moduleOf(mainSource, { Uint8Array, atob,
-    document: { getElementById: element, createElement: () => new Element(), createTextNode: value => value, body: { dataset: {} } },
+    document: { getElementById: element, createElement: () => new Element(), createTextNode: value => value, body },
     window: { addEventListener(type, listener) { listeners[type] = listener; } },
     require(specifier) {
       if (specifier === './composition') return h.exports;
@@ -194,7 +194,7 @@ async function consumer() {
       return h.imports(specifier);
     },
   });
-  await settle(); return { ...h, element, maps, bridge, listeners };
+  await settle(); return { ...h, element, maps, bridge, listeners, body };
 }
 
 test('recovery banner clears only after the selected composition finishes, not 0/0 or incomplete labels', async () => {
@@ -231,4 +231,49 @@ test('renderer retry keeps camera and retained sessions while clearing transfer 
   assert.deepEqual(retried, ['tiles', 'raster', 'labels', 'places', 'invalidate']);
   assert.equal(reader.offline, false); assert.equal(reader.cache.get('tile'), 'decoded');
   assert.deepEqual(map.center, [0.2, 0.3]); assert.equal(map.zoom, 14); assert.equal(session.placesFailed, false);
+});
+
+test('partial discovery selects and fits usable maps, shows ready UI, and retains its refresh warning', async () => {
+  const warning = 'OUTBOX_READ: Query timed out before EOSE. Discovery may be incomplete; refresh to retry.';
+  const partial = status([entry('west')]);
+  partial.discovery = { ...partial.discovery, ready: false, settled: true, messages: [warning] };
+  const ui = await consumer(partial);
+  assert.equal(ui.map.sources.length, 1);
+  assert.equal(ui.map.fits, 1);
+  ui.map.stats(readyStats());
+  assert.equal(ui.body.dataset.state, 'ready');
+  assert.equal(ui.element('map-name').textContent, 'west');
+  assert.equal(ui.element('error').hidden, true);
+  assert.match(ui.element('discovery').textContent, /discovery incomplete/);
+  assert.equal(ui.element('discovery-notes').textContent, warning);
+  assert.equal(ui.element('refresh').disabled, false);
+  ui.map.error(entry('west').key, 'Map transfer failed');
+  assert.equal(ui.element('error').hidden, false);
+  ui.element('retry').handlers.click(); await settle();
+  ui.map.stats(readyStats());
+  assert.equal(ui.element('error').hidden, true);
+  assert.equal(ui.body.dataset.state, 'ready');
+  assert.equal(ui.element('discovery-notes').textContent, warning);
+});
+test('an explicit selection fits while discovery is still pending', async () => {
+  const a = entry('west'), h = harness();
+  h.controller.setCatalog(status([a], { state: 'discovering', discovery: { ready: false, settled: false } }));
+  assert.equal(h.readers.length, 0);
+  h.controller.select(a, true); await settle();
+  assert.equal(h.map.sources.length, 1); assert.equal(h.map.fits, 1);
+});
+test('empty failed discovery remains fatal until verified offers become usable', async () => {
+  const empty = status([], { state: 'error', error: 'OUTBOX_READ: Query timed out before EOSE' });
+  empty.discovery = { ...empty.discovery, ready: false, settled: true, messages: [empty.error] };
+  const ui = await consumer(empty);
+  assert.equal(ui.map.sources.length, 0); assert.equal(ui.map.fits, 0);
+  assert.equal(ui.element('error').hidden, false);
+  assert.equal(ui.body.dataset.state, 'error');
+  const partial = status([entry('west')]);
+  partial.discovery = { ...empty.discovery, messages: ['Discovery may be incomplete; refresh to retry.'] };
+  ui.metadata.set(entry('west').offer.hashtree.root, entry('west').offer.manifest);
+  ui.bridge.changed(partial); await settle(); ui.map.stats(readyStats());
+  assert.equal(ui.map.sources.length, 1); assert.equal(ui.map.fits, 1);
+  assert.equal(ui.element('error').hidden, true);
+  assert.equal(ui.body.dataset.state, 'ready');
 });

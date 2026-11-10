@@ -1,4 +1,9 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
+import { encodePackage } from '../../packages/format/src/writer';
+import { AtlasReader, FileSource } from '../../packages/format/src/reader';
+import { sha256 } from '../../packages/format/src/index';
+import { MapComposition } from '../src/composition';
+import type { CompositionMap, CompositionMapSource } from '../../packages/renderer/src/composition';
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { mapAnnouncement } from '../../packages/hashtree/src/announcement';
 import { viewAnnouncement } from '../../packages/views/src/announcement';
@@ -145,7 +150,7 @@ test('signed default composition waits for both roots and vanishes on expiry or 
     clock.mockRestore();
   }
 });
-function harness(events = [mapAnnouncement(offer(), key)]) {
+function harness(events = [mapAnnouncement(offer(), key)], result: { incomplete: boolean; error?: string } = { incomplete: false }) {
   const opens: Parameters<FipsBinding['open']>[0][] = [],
     reads: string[] = [],
     releases: string[] = [];
@@ -187,7 +192,7 @@ function harness(events = [mapAnnouncement(offer(), key)]) {
     subscribe: () => () => {},
   };
   const outbox = {
-    query: async () => ({ events: events.map((event) => ({ event })), incomplete: false }),
+    query: async () => ({ events: events.map((event) => ({ event })), ...result }),
     subscribe: () => {
       const listeners = new Map();
       subscriptions.push(listeners);
@@ -298,4 +303,94 @@ test('closed discovery ignores late query results and a missing experimental pro
     },
   });
   await expect(blocked.bridge.status()).rejects.toThrow('Network settings');
+});
+
+const eoseError = 'OUTBOX_READ: Query timed out before EOSE';
+test('signed partial discovery loads and fits verified map bytes while retaining the refresh warning', async () => {
+  const { snapshot: _snapshot, ...manifest } = offer().manifest;
+  const bytes = await encodePackage(manifest, []);
+  const file = await new AtlasReader(new FileSource(new Blob([bytes]))).open();
+  let composition: MapComposition | undefined;
+  try {
+    expect(bytes.length).toBeLessThan(65536);
+    const tree = { root: await sha256(bytes), bytes: bytes.length, chunkBytes: 65536 };
+    const a: MapOffer = { ...offer(tree.root), bytes: tree.bytes, manifest: file.index.manifest,
+      hashtree: { ...offer().hashtree!, root: tree.root, bytes: tree.bytes, chunkBytes: tree.chunkBytes } };
+    const event = mapAnnouncement(a, key);
+    const unresolvedView = viewAnnouncement({ version: 1, id: 'missing', name: 'Missing map', coverage: false,
+      sources: [{ url: 'htree://' + 'f'.repeat(64), root: 'f'.repeat(64), enabled: true, layers: [], labels: false }],
+      presentation: defaultPresentation() }, key);
+    const h = harness([event, unresolvedView, { ...event, content: 'tampered' }], { incomplete: true, error: eoseError });
+    h.resources.bytes = async (_grant, hash) => {
+      h.reads.push(hash);
+      if (hash !== tree.root) throw new Error('Unknown fixture blob');
+      return bytes;
+    };
+    const state = await h.bridge.status();
+    expect(state.catalog).toHaveLength(1);
+    expect(state.defaultView).toBeUndefined();
+    expect(state.state).toBe('ready');
+    expect(state.discovery.ready).toBe(false);
+    expect(state.discovery.settled).toBe(true);
+    expect(state.discovery.messages.join(' ')).toContain(eoseError);
+    expect(state.discovery.messages.join(' ')).toMatch(/refresh/i);
+    expect(state.error).toBeUndefined();
+    expect(h.opens).toHaveLength(0);
+    expect(h.reads).toHaveLength(0);
+    const sources: CompositionMapSource[][] = [], failures: string[] = [];
+    let fits = 0;
+    const renderer = { setLabels() {}, setLayers() {}, setStyle() {}, setSources(value: CompositionMapSource[]) { sources.push(value); }, fit() { fits++; } };
+    composition = new MapComposition(renderer as unknown as CompositionMap, h.bridge, () => {}, message => failures.push(message), () => {});
+    composition.setCatalog(state);
+    for (let i = 0; i < 100 && composition.opening; i++) await Bun.sleep(1);
+    expect(failures).toEqual([]);
+    expect(composition.readyCount).toBe(1);
+    expect(composition.active[0]?.offer.hashtree?.root).toBe(tree.root);
+    expect(sources.at(-1)?.[0]?.manifest.snapshot).toBe(file.index.manifest.snapshot);
+    expect(fits).toBe(1);
+    expect(h.opens).toHaveLength(1);
+    expect(h.opens[0]?.[0]?.root).toBe(tree.root);
+    expect(h.reads.length).toBeGreaterThan(0);
+    expect((await h.bridge.status()).discovery.messages.join(' ')).toContain(eoseError);
+    h.subscriptions[0]!.get('event')!({ event: deletion([['e', event.id]]) });
+    const withdrawn = await h.bridge.status();
+    composition.setCatalog(withdrawn);
+    expect(withdrawn.state).toBe('error');
+    expect(withdrawn.catalog).toHaveLength(0);
+    expect(composition.readyCount).toBe(0);
+    expect(sources.at(-1)).toEqual([]);
+  } finally {
+    composition?.dispose(); file.dispose();
+  }
+});
+test('incomplete discovery without usable signed offers remains a fatal, retryable discovery failure', async () => {
+  const h = harness([mapAnnouncement(offer(), generateSecretKey())], { incomplete: true, error: eoseError });
+  const state = await h.bridge.status();
+  expect(state.catalog).toHaveLength(0);
+  expect(state.state).toBe('error');
+  expect(state.error).toBe(eoseError);
+  expect(state.discovery.ready).toBe(false);
+  expect(state.discovery.settled).toBe(true);
+  expect(state.discovery.messages.join(' ')).toMatch(/refresh/i);
+  expect(h.opens).toHaveLength(0);
+  expect(h.reads).toHaveLength(0);
+});
+
+test('an incomplete empty query and a rejected query retain actionable discovery failure', async () => {
+  const empty = harness([], { incomplete: true });
+  const state = await empty.bridge.status();
+  expect(state.state).toBe('error');
+  expect(state.error).toMatch(/refresh/i);
+  const streamed = harness();
+  streamed.outbox.query = async () => {
+    streamed.subscriptions[0]!.get('event')!({ event: mapAnnouncement(offer(), key) });
+    throw new Error(eoseError);
+  };
+  const partial = await streamed.bridge.status();
+  expect(partial.catalog).toHaveLength(1);
+  expect(partial.state).toBe('ready');
+  expect(partial.discovery.settled).toBe(true);
+  expect(partial.discovery.ready).toBe(false);
+  expect(partial.discovery.messages.join(' ')).toContain(eoseError);
+  expect(streamed.opens).toHaveLength(0);
 });

@@ -20,7 +20,8 @@ function bytes(value: number) {
 let map: CompositionMap | undefined;
 let composition: MapComposition | undefined;
 let latest: ConsumerStatus | undefined;
-let generation = 0, opening = false, failed = false, closed = false;
+let generation = 0, opening = false, closed = false;
+let failed: false | 'map' | 'discovery' = false;
 const bridge = new PreviewBridge(update);
 function diagnostics() {
   if (!latest) return;
@@ -35,11 +36,12 @@ function update(status: PreviewUpdate) {
   if ('catalog' in status) {
     latest = status;
     composition?.setCatalog(status);
-    el('discovery').textContent = `${status.catalog.length} signed maps · ${status.discovery.ready ? 'discovery current' : 'discovering…'}`;
+    el('discovery').textContent = `${status.catalog.length} signed maps · ${status.discovery.ready ? 'discovery current' : status.discovery.settled ? 'discovery incomplete' : 'discovering…'}`;
     el('publishers').textContent = status.discovery.publishers.join('\n');
     el('relays').textContent = status.discovery.relayUrls.join('\n');
     el('discovery-notes').textContent = status.discovery.messages.join(' · ');
-    if (status.state === 'error') fail(status.error ?? 'FIPS discovery failed');
+    if (status.state === 'error') fail(status.error ?? 'FIPS discovery failed', 'discovery');
+    else if (failed === 'discovery') clearFailure();
     if (status.state === 'closed') { fail('The resource session closed. Reopen the napplet to continue.'); shutdown(); }
   } else if (latest) latest.stats = status.stats;
   diagnostics(); connection();
@@ -55,11 +57,15 @@ function connection() {
     : 'Discovering signed maps through OUTBOX…';
   document.body.dataset.state = composition?.readyCount ? 'ready' : 'starting';
 }
-function fail(message: string) {
+function clearFailure() {
+  failed = false; el('error').hidden = true; el('retry').hidden = true;
+}
+function fail(message: string, kind: 'map' | 'discovery' = 'map') {
   if (closed) return;
-  failed = true;
-  el('status').textContent = composition?.readyCount ? 'Some map data could not load · you can keep exploring' : 'Could not open selected maps · retry or refresh discovery';
-  el('retry').textContent = map ? 'Retry map loading' : 'Try connection';
+  failed = kind;
+  el('status').textContent = kind === 'discovery' ? 'Could not discover signed maps · refresh to retry'
+    : composition?.readyCount ? 'Some map data could not load · you can keep exploring' : 'Could not open selected maps · retry or refresh discovery';
+  el('retry').textContent = kind === 'discovery' ? 'Refresh discovery' : map ? 'Retry map loading' : 'Try connection';
   el('error').textContent = message; el('error').hidden = false;
   el('retry').hidden = false; document.body.dataset.state = 'error';
 }
@@ -67,8 +73,8 @@ function renderStats(s: CompositionStats) {
   el('zoom').textContent = `z${s.zoom.toFixed(1)}`;
   const complete = s.wanted > 0 && s.tiles === s.wanted && s.missing === 0 && s.loading === 0 && s.labels.loading === 0 && s.labels.missing === 0;
   el('render-status').textContent = `${s.sources} sources in view · ${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${s.loading ? ' · receiving…' : complete ? ' · ready' : ' · partial view'}`;
-  if (failed && complete && !composition?.errors.length && !composition?.opening && latest?.state === 'ready') {
-    failed = false; el('error').hidden = true; el('retry').hidden = true; connection();
+  if (failed === 'map' && complete && !composition?.errors.length && !composition?.opening && latest?.state !== 'error') {
+    clearFailure(); connection();
   }
 }
 function renderCatalog() {
@@ -157,9 +163,9 @@ async function refresh() {
 }
 el('refresh').addEventListener('click', () => { void refresh(); });
 el('retry').addEventListener('click', () => {
+  if (failed === 'discovery') { void refresh(); return; }
   if (!map) { void start(); return; }
   composition?.retry();
-  if (latest?.state === 'error') void refresh();
   el('status').textContent = 'Retrying missing map data…';
 });
 function shutdown() {
