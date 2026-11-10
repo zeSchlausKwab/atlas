@@ -14,7 +14,11 @@ export interface TreeOffer {
   chunkBytes: number;
   providers: string[];
 }
-export function parseTree(value: unknown, bytes: number): TreeOffer {
+export function parseTree(
+  value: unknown,
+  bytes: number,
+  allowNoProviders = false,
+): TreeOffer {
   const v = value as TreeOffer;
   if (
     !v ||
@@ -27,7 +31,7 @@ export function parseTree(value: unknown, bytes: number): TreeOffer {
     v.chunkBytes < 16384 ||
     v.chunkBytes > MAX_BLOB_BYTES ||
     !Array.isArray(v.providers) ||
-    !v.providers.length ||
+    (!allowNoProviders && !v.providers.length) ||
     v.providers.length > 8
   )
     throw new Error("Invalid Hashtree offer");
@@ -86,10 +90,15 @@ export class HashtreeSource extends HttpSource {
       store?: BlockStore;
       offline?: () => boolean;
       memoryBytes?: number;
+      /** Replaces HTTP providers; failures and misses never fall back to HTTP. */
+      fetchBlob?: (
+        hash: string,
+        signal: AbortSignal,
+      ) => Promise<Uint8Array | null>;
     } = {},
   ) {
     super(url, api);
-    this.tree = parseTree(tree, tree.bytes);
+    this.tree = parseTree(tree, tree.bytes, !!options.fetchBlob);
   }
   addProviders(providers: string[]) {
     this.tree.providers = [
@@ -141,7 +150,10 @@ export class HashtreeSource extends HttpSource {
     if (this.options.offline?.())
       throw new Error(`Missing cached Hashtree blob ${hash}`);
     const errors: string[] = [];
-    for (const provider of this.tree.providers) {
+    const providers = this.options.fetchBlob
+      ? [undefined]
+      : this.tree.providers;
+    for (const provider of providers) {
       signal?.throwIfAborted();
       try {
         this.requests++;
@@ -149,15 +161,20 @@ export class HashtreeSource extends HttpSource {
         const requestSignal = signal
           ? AbortSignal.any([signal, timeout])
           : timeout;
-        const bytes = await boundedResponse(
-          await fetch(`${provider}/${hash}`, {
-            signal: requestSignal,
-            cache: "no-store",
-            credentials: "omit",
-            redirect: "error",
-          }),
-          requestSignal,
-        );
+        const bytes = this.options.fetchBlob
+          ? await this.options.fetchBlob(hash, requestSignal)
+          : await boundedResponse(
+              await fetch(`${provider}/${hash}`, {
+                signal: requestSignal,
+                cache: "no-store",
+                credentials: "omit",
+                redirect: "error",
+              }),
+              requestSignal,
+            );
+        requestSignal.throwIfAborted();
+        if (!bytes) throw new Error("Blob unavailable");
+        if (bytes.length > MAX_BLOB_BYTES) throw new Error("Oversized blob");
         this.networkBytes += bytes.length;
         if ((await sha256(bytes)) !== hash)
           throw new Error("Blob hash mismatch");
