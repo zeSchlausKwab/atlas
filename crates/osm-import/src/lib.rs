@@ -15,3 +15,5 @@ pub use transport_partitioned::import as import_transport_partitioned;
 mod source_checkpoint;
 mod source_store;
 pub use source_store::import as import_source_store;
+
+mod objects;

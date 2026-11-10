@@ -250,3 +250,213 @@ test("cancel and output-budget failure leave original and unrelated partial file
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("ocean compilation resumes durable fragments without duplicates, including interruption during replay", async () => {
+  const { BlockSpool } = await import("../packages/cli/src/block-spool");
+  const { appendOcean } = await import("../packages/cli/src/ocean-spool");
+  const dir = await mkdtemp("/tmp/atlas-ocean-resume-");
+  const input = {
+    data: ocean(),
+    clipHash: "a".repeat(64),
+    clipBytes: 100,
+    source: { url: "fixture", bytes: 100, sha256: "b".repeat(64) },
+  };
+  let spool = new BlockSpool(dir + "/resume.sqlite", "test");
+  const reference = new BlockSpool(dir + "/reference.sqlite", "test");
+  const collect = async (s: InstanceType<typeof BlockSpool>) => {
+    const result: InputBlock[] = [];
+    await s.write(
+      {
+        add: async (b) => {
+          result.push(b);
+        },
+      },
+      new AbortController().signal,
+      () => {},
+    );
+    return result;
+  };
+  try {
+    const stop = new AbortController();
+    let batches = 0;
+    await expect(
+      appendOcean(
+        spool,
+        input,
+        manifest,
+        stop.signal,
+        () => {
+          if (++batches === 3) stop.abort();
+        },
+        5,
+      ),
+    ).rejects.toThrow();
+    spool.close();
+    spool = new BlockSpool(dir + "/resume.sqlite", "test");
+    const replay = new AbortController();
+    await expect(
+      appendOcean(
+        spool,
+        input,
+        manifest,
+        replay.signal,
+        () => replay.abort(),
+        5,
+      ),
+    ).rejects.toThrow();
+    expect(
+      spool.db
+        .query<
+          { value: string },
+          []
+        >("SELECT value FROM state WHERE key='ocean-count'")
+        .get()!.value,
+    ).toBe("15");
+    spool.close();
+    spool = new BlockSpool(dir + "/resume.sqlite", "test");
+    await appendOcean(
+      spool,
+      input,
+      manifest,
+      new AbortController().signal,
+      () => {},
+      5,
+    );
+    await appendOcean(
+      reference,
+      { ...input, data: ocean() },
+      manifest,
+      new AbortController().signal,
+      () => {},
+      5,
+    );
+    expect(await collect(spool)).toEqual(await collect(reference));
+    await appendOcean(
+      spool,
+      input,
+      manifest,
+      new AbortController().signal,
+      () => {},
+      5,
+    );
+    expect(await collect(spool)).toEqual(await collect(reference));
+    await expect(
+      appendOcean(
+        spool,
+        { ...input, clipHash: "c".repeat(64) },
+        manifest,
+        new AbortController().signal,
+        () => {},
+      ),
+    ).rejects.toThrow("another input");
+  } finally {
+    spool.close();
+    reference.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ocean preflight reuses a verified clip and rejects changed provenance before compilation", async () => {
+  const { prepareOcean } = await import(
+    "../packages/provisioning/src/ocean-source"
+  );
+  const dir = await mkdtemp("/tmp/atlas-ocean-source-");
+  const sourcePath = dir + "/provider.zip",
+    clipPath = dir + "/ocean.geojson";
+  const hash = (s: string) =>
+    new Bun.CryptoHasher("sha256").update(s).digest("hex");
+  const body = "provider-fixture",
+    clip = JSON.stringify(ocean());
+  const selection = {
+    ocean: { sha256: hash(body) },
+    polygon: [
+      [-20, -20],
+      [20, -20],
+      [20, 20],
+      [-20, 20],
+    ],
+  } as import("../packages/provisioning/src/selection").PackageSelection;
+  const identity = hash(
+    JSON.stringify({
+      version: 2,
+      source: hash(body),
+      polygon: selection.polygon,
+    }),
+  );
+  try {
+    await Bun.write(sourcePath, body);
+    await Bun.write(
+      sourcePath + ".source.json",
+      JSON.stringify({
+        url: "https://example.test/ocean.zip",
+        bytes: body.length,
+        sha256: hash(body),
+      }),
+    );
+    await Bun.write(clipPath, clip);
+    await Bun.write(
+      clipPath + ".receipt.json",
+      JSON.stringify({ identity, sha256: hash(clip) }),
+    );
+    const prepared = await prepareOcean(
+      selection,
+      dir,
+      new AbortController().signal,
+      () => {},
+      sourcePath,
+    );
+    expect(prepared!.data.features.length).toBe(1);
+    expect(prepared!.clipHash).toBe(hash(clip));
+    await Bun.write(clipPath, clip + " ");
+    await expect(
+      prepareOcean(
+        selection,
+        dir,
+        new AbortController().signal,
+        () => {},
+        sourcePath,
+      ),
+    ).rejects.toThrow("checkpoint changed");
+    await Bun.write(sourcePath, body.replace("provider", "replaced"));
+    await expect(
+      prepareOcean(
+        selection,
+        dir,
+        new AbortController().signal,
+        () => {},
+        sourcePath,
+      ),
+    ).rejects.toThrow("checksum mismatch");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("clipped sea geometry collections retain polygon holes and discard zero-area remnants", async () => {
+  const { normalizeOcean } = await import(
+    "../packages/provisioning/src/ocean-source"
+  );
+  const p = ocean().features[0]!;
+  const result = normalizeOcean({
+    type: "FeatureCollection",
+    features: [
+      {
+        ...p,
+        geometry: {
+          type: "GeometryCollection",
+          geometries: [
+            p.geometry,
+            {
+              type: "LineString",
+              coordinates: [
+                [0, 0],
+                [0, 1],
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  });
+  expect(result.features).toEqual([p]);
+});

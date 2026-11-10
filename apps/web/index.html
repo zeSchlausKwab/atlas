@@ -47,7 +47,16 @@
           <h1>Map workspace.</h1>
         </div>
         <div class="tool-tabs" role="tablist" aria-label="Map tools">
-          <button id="tab-chat" role="tab" data-tab="chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1">Chat</button>
+          <button
+            id="tab-chat"
+            role="tab"
+            data-tab="chat"
+            aria-controls="panel-chat"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Chat
+          </button>
           <button
             id="tab-composer"
             role="tab"
@@ -144,7 +153,15 @@
           </p>
         </div>
         <div class="sidebar-content">
-          <div id="panel-chat" role="tabpanel" data-panel="chat" aria-labelledby="tab-chat" hidden><div id="chat-root">Open a map to chat with it.</div></div>
+          <div
+            id="panel-chat"
+            role="tabpanel"
+            data-panel="chat"
+            aria-labelledby="tab-chat"
+            hidden
+          >
+            <div id="chat-root">Open a map to chat with it.</div>
+          </div>
           <div
             id="panel-composer"
             role="tabpanel"
@@ -157,7 +174,7 @@
               <p class="eyebrow">MANY SOURCES / ONE VIEW</p>
               <h2>Client composer.</h2>
               <form id="server-form" class="host-field">
-                <label for="server-address">Primary map server</label>
+                <label for="server-address">HTTP discovery bootstrap (optional)</label>
                 <input
                   id="server-address"
                   type="url"
@@ -188,41 +205,58 @@
                 >
               </div>
               <div id="composition-controls">
+                <div class="composition-rule">
+                  <label for="composition-transport">Map delivery</label>
+                  <select id="composition-transport">
+                    <option value="fips">FIPS · verified peer delivery</option>
+                    <option value="http">HTTP · explicit alternative</option>
+                  </select>
+                  <label><input id="composition-http-fallback" type="checkbox" />Allow HTTP fallback for map reads</label>
+                  <p class="quiet">FIPS is the default. Only selected layers are read; server tools use the selected transport too.</p>
+                </div>
                 <div class="composition-actions">
                   <button id="composition-fit">Fit selected</button
                   ><button id="composition-share">Copy view link</button>
                 </div>
                 <p id="composition-message" role="status" class="quiet">
-                  Reading the host catalog…
+                  Reading signed Hashtree announcements…
                 </p>
                 <div class="composition-rule">
                   <p>
                     <strong>Top source wins, per layer.</strong> Lower maps fill
                     the remaining coverage. Use ↑ to raise a source’s priority.
-                    Data tab switches apply to all sources.
+                    Layers & data choices apply to all sources.
                   </p>
                   <label
                     ><input id="composition-coverage" type="checkbox" checked />
                     Show coverage outlines</label
                   >
                 </div>
+                <p id="composition-routing" role="status" class="quiet"></p>
+                <details class="composition-rule">
+                  <summary>Capability coverage</summary>
+                  <label
+                    >Capability<select id="composition-family"></select
+                  ></label>
+                  <button id="composition-check-coverage">
+                    Check current view
+                  </button>
+                  <p
+                    id="composition-coverage-report"
+                    role="status"
+                    class="quiet"
+                  >
+                    Inspect the selected maps at this view’s zoom. This checks
+                    archive scope, not route connectivity.
+                  </p>
+                </details>
                 <div id="composition-sources"></div>
-                <form id="composition-catalog-form" class="composition-rule">
-                  <label for="composition-catalog"
-                    >Add another host’s catalog</label
-                  ><input
-                    id="composition-catalog"
-                    type="url"
-                    placeholder="https://host.example/catalog"
-                    required
-                  /><button type="submit">Discover maps</button>
-                </form>
                 <form id="composition-nostr-form" class="composition-rule">
                   <label for="composition-relay">Discover through Nostr</label>
                   <input
                     id="composition-relay"
                     type="url"
-                    placeholder="ws://localhost:3100/nostr"
+                    placeholder="wss://relay.example"
                     required
                   />
                   <label for="composition-publisher"
@@ -236,9 +270,9 @@
                   <button type="submit">Listen for maps</button>
                 </form>
                 <p class="quiet">
-                  Cross-map routing requires one shared compiled graph.
-                  Independent snapshots can share a display. Composition uses 2D
-                  geometry; open a source on its own for building extrusion.
+                  Cross-map routing requires compatible OSM source revisions and routing contracts. Independently compiled maps can connect. Composition uses 2D
+                  geometry. The host library can pack selected maps into one
+                  file.
                 </p>
               </div>
             </section>
@@ -1109,7 +1143,7 @@
                   Choose any combination. Only selected layers are requested.
                 </p>
                 <p class="search-scope">
-                  Choices are saved for the next load. Previously read bytes
+                  Hidden layers stop display requests, not analysis of those objects. Previously read bytes
                   remain in the session counter.
                 </p>
               </section>
@@ -1125,7 +1159,7 @@
                 </p>
                 <label class="capability"
                   ><span
-                    ><strong>Routing</strong><small>Walking graph</small></span
+                    ><strong>Routing</strong><small>Walking, cycling and driving where included</small></span
                   ><input
                     type="checkbox"
                     data-purpose="routing"
@@ -1314,7 +1348,10 @@
           <span class="eyebrow">UNDER THE SURFACE</span>
           <h2>Follow the bytes.</h2>
           <p id="read-scope">Reads across the selected map sources.</p>
-          <p class="chat-read-note">Includes map display and AI analysis reads. Cached reuse adds no package bytes.</p>
+          <p class="chat-read-note">
+            Includes map display and AI analysis reads. Cached reuse adds no
+            package bytes.
+          </p>
         </div>
         <div class="execution-ledger">
           <span class="tiny-note">LAST OPERATION</span>
@@ -1432,11 +1469,11 @@
         <details class="limitations">
           <summary>What this prototype includes</summary>
           <p>
-            Binary vector tiles, local-file and HTTP readers, peak queries and
-            walking routes, location search, nearest-street lookup and
-            selectable source geometry on this device or server. Data blocks are
-            fetched on demand. Terrain, imagery, graph partitioning and Hashtree
-            delivery are future experiments.
+            Vector and raster layers, Hashtree delivery, portable local files,
+            walking/cycling/driving routes, location and address search,
+            nearest-street lookup, retained boundaries and selectable source
+            geometry. Map tools and AI analysis can run on this device. Data
+            blocks are fetched on demand; capabilities depend on each package.
           </p>
         </details>
       </aside>

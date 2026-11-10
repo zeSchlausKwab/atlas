@@ -1,3 +1,14 @@
+import { closeMapTransport } from "./transport";
+import { HashtreeSource } from "../../../packages/hashtree/src/source";
+import { setupMapWorkbench } from "./map-workbench";
+import {
+  parsePresentation,
+  type Presentation,
+} from "../../../packages/views/src/index";
+import { BrowserAcquisition } from "./acquisition-client";
+import { AcquisitionControls } from "./acquisition-controls";
+let acquisition: BrowserAcquisition | undefined;
+let savedAreas: AcquisitionControls | undefined;
 import { TransferLedger } from "../../../packages/format/src/transfer-ledger";
 import { ChatLauncher } from "./chat-launcher";
 let chat: ChatLauncher | undefined;
@@ -18,6 +29,7 @@ import { StyleControls } from "./style";
 import { setupTabs } from "./tabs";
 import { OperationSession, executionText, type Capability } from "./operations";
 import { ExtractControls } from "./extract";
+setupMapWorkbench();
 setupTabs();
 const connection = await clientConnection().catch((error) => {
   const element = document.getElementById("error")!;
@@ -102,6 +114,7 @@ let map: WorkspaceMap | undefined;
 let composer: ClientComposer | undefined;
 let composerAbort: AbortController | undefined;
 let compositionSources: CompositionMapSource[] | undefined;
+let compositionInput: ByteSource | undefined;
 let toolSignature = "";
 const appearance = new StyleControls(() => map);
 let sourceLabel = "server";
@@ -269,6 +282,7 @@ let reopening:
   | {
       source: ByteSource;
       composition?: boolean;
+      compositionInput?: ByteSource;
       center?: [number, number];
       zoom?: number;
     }
@@ -285,10 +299,15 @@ function closeSession() {
   composer?.destroy();
   composer = undefined;
   compositionSources = undefined;
+  compositionInput = undefined;
   map?.destroy();
   map = undefined;
 }
 function closeTools() {
+  savedAreas?.destroy();
+  savedAreas = undefined;
+  acquisition?.destroy();
+  acquisition = undefined;
   chat?.destroy();
   chat = undefined;
   tools?.destroy();
@@ -347,6 +366,10 @@ async function open(source: ByteSource) {
   try {
     await nextReader.open();
     if (session !== opening) return;
+    if (nextReader.index.manifest.composition) {
+      await openComposition(source);
+      return;
+    }
     el<HTMLInputElement>("offline").checked = reader.offline;
     if (reader.offline)
       el("connection-label").textContent = "Using cached blocks";
@@ -392,12 +415,13 @@ function bindTools() {
   for (const checkbox of document.querySelectorAll<HTMLInputElement>(
     "[data-mask]",
   )) {
-    checkbox.disabled =
-      !compositionSources &&
-      !!m.tileLayers &&
-      !m.tileLayers.some(
-        (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
-      );
+    checkbox.disabled = !(
+      compositionSources?.flatMap((s) => s.manifest.tileLayers ?? []) ??
+      m.tileLayers ??
+      MAP_LAYERS
+    ).some(
+      (layer) => (LAYER_MASKS[layer] & Number(checkbox.dataset.mask)) !== 0,
+    );
   }
   el("layer-transport").textContent = m.tileLayers
     ? "Choose any combination. Only selected layers are requested."
@@ -407,8 +431,11 @@ function bindTools() {
     `OSM EXTRACT · Z${m.minZoom}–${m.maxZoom}`;
   el("feature-label").textContent =
     m.featureCountKind === "tile-records" ? "Tile records" : "Features";
-  if (reader.source instanceof HttpSource)
-    el<HTMLAnchorElement>("download").href = reader.source.url;
+  const directDownload =
+    reader.source instanceof HttpSource && /^https?:/.test(reader.source.url);
+  el("download").hidden = !directDownload;
+  if (directDownload)
+    el<HTMLAnchorElement>("download").href = (reader.source as HttpSource).url;
   el<HTMLAnchorElement>("download").download =
     `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
   el("feature-count").textContent = number(m.features);
@@ -481,6 +508,23 @@ function bindTools() {
       pois: el<HTMLInputElement>("poi-labels").checked,
     }),
   );
+  acquisition = new BrowserAcquisition(
+    compositionSources?.map((s) => s.reader) ?? [reader],
+    () => el<HTMLInputElement>("offline").checked,
+    aiTransfer,
+  );
+  savedAreas = new AcquisitionControls(acquisition, map);
+  const currentAcquisition = acquisition;
+  const updateSavedBadge = () => {
+    const ready = currentAcquisition.jobs.filter((j) => j.state === "ready");
+    const badge = document.getElementById("map-saved-areas");
+    if (badge)
+      badge.textContent = ready.length
+        ? `${ready.length} saved area${ready.length === 1 ? "" : "s"} on this device · inspect coverage in Offline`
+        : "No saved areas yet · keep an area for offline use";
+  };
+  acquisition.subscribe(updateSavedBadge);
+  updateSavedBadge();
   configureOperations();
   chat = new ChatLauncher(
     map,
@@ -488,6 +532,7 @@ function bindTools() {
     () => new Set(operations?.enabled ?? []),
     () => el<HTMLInputElement>("offline").checked,
     aiTransfer,
+    acquisition,
   );
   if (m.selection && !compositionSources) map.setSelection(m.selection.polygon);
   if (!compositionSources && m.name === "Vienna Plus") {
@@ -510,7 +555,7 @@ function bindTools() {
     el("dataset-name").textContent = `Tool source: ${m.name}`;
     el("read-scope").textContent = "Reads across the selected map sources.";
     el("layer-transport").textContent =
-      "Global filters: apply to every source. Client composer can further restrict each map.";
+      "These display choices apply across sources. Source cards can further restrict each provider; analysis data remains independent.";
     el("height-coverage").textContent =
       "Composition uses 2D geometry. Open a source on its own in Client composer for building extrusion.";
     el("download").hidden = true;
@@ -525,10 +570,12 @@ function bindTools() {
     const input = document.getElementById(id) as HTMLInputElement | null;
     if (input) input.disabled = !!compositionSources;
   }
+  document.dispatchEvent(new Event("atlas-sources-change"));
   toolSignature = `${m.snapshot}|${compositionSources?.map((s) => s.id).join("|") ?? "single"}`;
 }
-async function openComposition() {
+async function openComposition(local?: ByteSource) {
   closeSession();
+  compositionInput = local;
   const opening = session;
   const abort = (composerAbort = new AbortController());
   events = [];
@@ -575,6 +622,55 @@ async function openComposition() {
     next.setGrid(el<HTMLInputElement>("tile-grid").checked);
     const control = await createComposer(next, {
       catalog: connection.catalog,
+      discovery: connection.discovery,
+      delivery: connection.delivery,
+      presentation: {
+        get: () => ({
+          style: appearance.style,
+          scene: appearance.scene,
+          layers: selectedLayers(),
+          labels: {
+            places: el<HTMLInputElement>("place-labels").checked,
+            streets: el<HTMLInputElement>("street-labels").checked,
+            pois: el<HTMLInputElement>("poi-labels").checked,
+          },
+          tools: [
+            ...document.querySelectorAll<HTMLInputElement>("[data-purpose]"),
+          ]
+            .filter((i) => i.checked)
+            .map((i) => i.dataset.purpose as any),
+        }),
+        apply: (value: Presentation) => {
+          const p = parsePresentation(value);
+          appearance.load(p.style, p.scene);
+          for (const input of document.querySelectorAll<HTMLInputElement>(
+            "[data-mask]",
+          ))
+            input.checked = p.layers.some(
+              (l) => (LAYER_MASKS[l] & Number(input.dataset.mask)) !== 0,
+            );
+          for (const [id, on] of [
+            ["place-labels", p.labels.places],
+            ["street-labels", p.labels.streets],
+            ["poi-labels", p.labels.pois],
+          ] as const)
+            el<HTMLInputElement>(id).checked = on;
+          const before = [
+            ...document.querySelectorAll<HTMLInputElement>("[data-purpose]"),
+          ]
+            .filter((i) => i.checked)
+            .map((i) => i.dataset.purpose)
+            .join();
+          for (const input of document.querySelectorAll<HTMLInputElement>(
+            "[data-purpose]",
+          ))
+            input.checked = p.tools.includes(input.dataset.purpose as any);
+          setLayers();
+          setLabels();
+          if (before !== p.tools.join()) configureOperations();
+        },
+      },
+      local,
       store: blockStore,
       signal: abort.signal,
       telemetry,
@@ -650,6 +746,7 @@ el("purge-caches").onclick = async () => {
     reopening = {
       source: reader.source,
       composition: !!compositionSources,
+      compositionInput,
       center: map?.center,
       zoom: map?.zoom,
     };
@@ -659,6 +756,7 @@ el("purge-caches").onclick = async () => {
   cacheChannel?.postMessage("close");
   showCachePause("Clearing Atlas caches…");
   try {
+    await closeMapTransport();
     await blockStore?.clear();
     await shellRegistration;
     const registration =
@@ -711,10 +809,11 @@ el("reopen-map").onclick = async () => {
   const saved = reopening;
   if (!saved) return;
   reopening = undefined;
-  if (saved.composition) await openComposition();
+  if (saved.composition) await openComposition(saved.compositionInput);
   else
     await open(
-      saved.source instanceof HttpSource
+      saved.source instanceof HttpSource &&
+        !(saved.source instanceof HashtreeSource)
         ? new HttpSource(saved.source.url, saved.source.apiUrl)
         : saved.source,
     );
@@ -735,6 +834,7 @@ if (cacheChannel)
       reopening = {
         source: reader.source,
         composition: !!compositionSources,
+        compositionInput,
         center: map?.center,
         zoom: map?.zoom,
       };
@@ -743,6 +843,7 @@ if (cacheChannel)
     showCachePause("Cache purge requested in another Atlas tab.");
     // Drain this tab's queued writes too, even if the other tab cleared first.
     try {
+      await closeMapTransport();
       await blockStore?.clear();
     } catch {
       el("cache-purge-status").textContent =
@@ -769,6 +870,7 @@ function configureOperations() {
       () => new Set(operations?.enabled ?? []),
       () => el<HTMLInputElement>("offline").checked,
       aiTransfer,
+      acquisition,
     );
   }
   el("execution-hint").textContent =
@@ -792,7 +894,10 @@ el("execution-mode").addEventListener("change", configureOperations);
 for (const input of document.querySelectorAll<HTMLInputElement>(
   "[data-purpose]",
 ))
-  input.addEventListener("change", configureOperations);
+  input.addEventListener("change", () => {
+    configureOperations();
+    document.dispatchEvent(new Event("atlas-view-change"));
+  });
 function setLabels() {
   saveLayers();
   world?.refresh();
@@ -803,7 +908,10 @@ function setLabels() {
   );
 }
 for (const id of ["place-labels", "street-labels", "poi-labels"])
-  el<HTMLInputElement>(id).onchange = setLabels;
+  el<HTMLInputElement>(id).onchange = () => {
+    setLabels();
+    document.dispatchEvent(new Event("atlas-view-change"));
+  };
 function setLayers() {
   map?.setLayers(selectedLayers());
   saveLayers();
@@ -827,9 +935,13 @@ el<HTMLInputElement>("offline").onchange = (event) => {
   el("connection-dot").style.background = offline ? "#c88a41" : "#688668";
   el("error").hidden = true;
 };
-document
-  .querySelectorAll<HTMLInputElement>("[data-mask]")
-  .forEach((input) => (input.onchange = setLayers));
+document.querySelectorAll<HTMLInputElement>("[data-mask]").forEach(
+  (input) =>
+    (input.onchange = () => {
+      setLayers();
+      document.dispatchEvent(new Event("atlas-view-change"));
+    }),
+);
 el("highest-peak").onclick = async () => {
   const button = el<HTMLButtonElement>("highest-peak");
   button.disabled = true;
@@ -874,21 +986,13 @@ el<HTMLInputElement>("file-input").onchange = async (event) => {
     await open(new FileSource(file));
   }
 };
-const hostedMap = new URLSearchParams(location.search).get("map");
 if (connection.source)
   void open(new HttpSource(connection.source, connection.api));
-else if (hostedMap)
-  void open(
-    new HttpSource(
-      connection.endpoint(
-        /^[a-f0-9-]{36}$/.test(hostedMap)
-          ? `maps/${hostedMap}.atlas`
-          : "maps/demo.atlas",
-      ),
-    ),
-  );
 else void openComposition();
-window.addEventListener("pagehide", closeSession);
+window.addEventListener("pagehide", () => {
+  closeSession();
+  void closeMapTransport().catch(() => {});
+});
 
 function shellCommand(worker: ServiceWorker, command: string) {
   return new Promise<void>((resolve, reject) => {

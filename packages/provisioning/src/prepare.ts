@@ -1,3 +1,9 @@
+import { ObjectWriter } from "../../objects/src/build";
+import {
+  objectRecords,
+  objectGeometry,
+  objectTopology,
+} from "../../objects/src/index";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import {
   boundaryRecords,
@@ -6,14 +12,13 @@ import {
 } from "../../boundaries/src/index";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
 import { selectedPeaks } from "../../format/src/peaks";
-import { selectedPlaces } from "../../labels/src/place-pages";
 import { rm } from "node:fs/promises";
 import { PagedSearchBuilder } from "../../geocoding/src/paged-build";
 import { STREET_ZOOM } from "../../geocoding/src/paging";
 import { locations, streets } from "../../geocoding/src/index";
 import booleanIntersects from "@turf/boolean-intersects";
 import type { Polygon as GeoPolygon } from "geojson";
-import { DiskWriter } from "../../cli/src/disk-writer";
+import { StreamWriter } from "../../cli/src/stream-writer";
 import {
   project,
   type Manifest,
@@ -91,7 +96,7 @@ export async function preparePackage(
     m = reader.index.manifest;
   p.total = plan.blocks.length;
   p.phase = "packing";
-  const writer = await new DiskWriter(output, s.maxBytes).open(),
+  const writer = await new StreamWriter(output, s.maxBytes).open(),
     encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
   const featureWriter = new PagedFeatureWriter(writer);
   const region: GeoPolygon = {
@@ -161,6 +166,36 @@ export async function preparePackage(
     }
   };
   try {
+    if (s.featureKinds.includes("objects")) {
+      const ow = new ObjectWriter(writer, output + ".objects-index.sqlite");
+      ow.report.profile = "selected-objects";
+      try {
+        for await (const row of objectRecords(
+          reader,
+          {
+            bounds: bounds(s.polygon),
+            includeDependencies: true,
+            includeUnlocated: true,
+          },
+          signal,
+          emit,
+        )) {
+          const geometry = await objectGeometry(reader, row, signal);
+          if (geometry && !booleanIntersects(geometry, region)) continue;
+          await ow.add({
+            id: row.id,
+            tags: row.tags,
+            geometry: geometry ?? null,
+            geometryStatus: row.geometryStatus,
+            dependencyOnly: row.dependencyOnly,
+            ...(await objectTopology(reader, row, signal)),
+          });
+        }
+        await ow.finish(emit);
+      } finally {
+        ow.close();
+      }
+    }
     if (s.featureKinds.includes("boundaries")) {
       const boundaries = new BoundaryWriter(writer);
       for await (const row of boundaryRecords(
@@ -179,7 +214,17 @@ export async function preparePackage(
       await boundaries.finish();
     }
     for (const b of plan.blocks) {
-      if (b.key.startsWith("boundaries/")) {
+      // Included in the acquisition plan as dependencies, consumed by their root builder.
+      if (
+        (b.key.startsWith("search/") &&
+          !["search/locations", "search/streets"].includes(b.key)) ||
+        b.key.startsWith("labels/settlements/") ||
+        b.key.startsWith("query/peaks-data/")
+      ) {
+        p.completed++;
+        continue;
+      }
+      if (b.key.startsWith("boundaries/") || b.key.startsWith("objects/")) {
         p.completed++;
         continue;
       }
@@ -225,10 +270,44 @@ export async function preparePackage(
           keep = false;
         }
       } else if (b.key === "labels/places") {
-        const values = await selectedPlaces(reader, s.polygon);
-        outputBytes = encodePlaces(values);
-        features = values.length;
-        keep = !!features;
+        const root = JSON.parse(new TextDecoder().decode(bytes));
+        if (root.schema === "places-paged-v1") {
+          if (root.zoom !== 8) throw Error("Invalid settlement page grid");
+          const overview = decodePlaces(encodePlaces(root.overview)).filter(
+            (v) => inside(v.coordinates, s.polygon),
+          );
+          features = 0;
+          for (const page of plan.blocks.filter((b) =>
+            b.key.startsWith("labels/settlements/"),
+          )) {
+            signal.throwIfAborted();
+            const values = decodePlaces(await reader.block(page.key)).filter(
+              (v) => inside(v.coordinates, s.polygon),
+            );
+            if (values.length)
+              await writer.add({
+                key: page.key,
+                bytes: encodePlaces(values),
+                features: values.length,
+              });
+            features += values.length;
+            reader.cache.delete(page.key);
+            emit(`Selecting ${page.key}`);
+          }
+          outputBytes = encode({
+            schema: "places-paged-v1",
+            zoom: 8,
+            overview,
+          });
+          keep = features > 0 || overview.length > 0;
+        } else {
+          const values = decodePlaces(bytes).filter((v) =>
+            inside(v.coordinates, s.polygon),
+          );
+          outputBytes = encodePlaces(values);
+          features = values.length;
+          keep = !!features;
+        }
       } else if (b.key.startsWith("labels/")) {
         const data = decodeLabels(bytes);
         data.pois = s.pois
@@ -276,8 +355,11 @@ export async function preparePackage(
         )!;
         const profile = profiles[mode]!,
           v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        if (new TextDecoder().decode(bytes.subarray(0, 4)) !== "RCL2")
-          throw new Error("Expected RCL2 transport cells");
+        if (
+          new TextDecoder().decode(bytes.subarray(0, 4)) !==
+          profile.codec.toUpperCase()
+        )
+          throw new Error("Expected RCL2/RCL3 transport cells");
         profile.count++;
         profile.nodes += v.getUint32(20, true);
         profile.segments += v.getUint32(24, true);
@@ -302,45 +384,53 @@ export async function preparePackage(
         signal,
         emit,
       );
-    const keys = new Set(writer.blocks.map((b) => b.key)),
-      caps: string[] = [],
-      layers = s.layers.filter((l) =>
-        writer.blocks.some((b) => b.key.startsWith(`tile/${l}/`)),
-      ),
+    const caps: string[] = [],
+      layers = s.layers.filter((l) => writer.hasPrefix(`tile/${l}/`)),
       featureKinds = s.featureKinds.filter((k) =>
-        writer.blocks.some((b) =>
-          k === "boundaries"
-            ? b.key === BOUNDARY_ROOT
-            : b.key.startsWith(`features/${k}/`),
-        ),
+        k === "objects"
+          ? writer.has("objects/index")
+          : k === "boundaries"
+            ? writer.has(BOUNDARY_ROOT)
+            : writer.hasPrefix(`features/${k}/`),
       );
     if (layers.length) caps.push("vector-rendering");
     if (layers.includes("buildings") && m.buildingHeights)
       caps.push("building-heights");
-    if ([...keys].some((k) => k.startsWith("labels/"))) caps.push("map-labels");
-    if (keys.has("search/locations")) {
+    if (writer.hasPrefix("labels/")) caps.push("map-labels");
+    if (writer.has("search/locations")) {
       caps.push("location-search");
       if (m.semantics) caps.push("semantic-locations");
       if (m.semantics?.addresses === "osm-explicit")
         caps.push("address-search");
     }
-    if (keys.has("search/streets")) caps.push("reverse-street");
-    if (keys.has("query/peaks")) caps.push("peak-query");
+    if (writer.has("search/streets")) caps.push("reverse-street");
+    if (writer.has("query/peaks")) caps.push("peak-query");
     if (featureKinds.length) caps.push("feature-extraction");
+    if (featureKinds.includes("objects")) {
+      caps.push("source-objects");
+      if (m.capabilities.includes("land-sea-surfaces"))
+        caps.push("land-sea-surfaces");
+    }
     if (featureKinds.includes("boundaries"))
       caps.push("administrative-boundaries");
     for (const mode of s.profiles)
-      if (!profiles[mode]!.count) delete profiles[mode];
+      if (!profiles[mode]!.count && !m.transport?.federation)
+        delete profiles[mode];
     if (Object.keys(profiles).length) caps.push("transport-routing");
+    const rasters = (m.rasters ?? []).filter((r) =>
+      writer.hasPrefix(`raster/${r.id}/`),
+    );
+    if (rasters.length) caps.push("raster-rendering");
     const manifest: Omit<Manifest, "snapshot"> = {
       ...m,
+      // Pixel tiles retain their native extent; the selection clips display coverage.
+      rasters: rasters.length ? rasters : undefined,
+      families: m.families ? [] : undefined,
       name: s.name.trim(),
       bounds: bounds(s.polygon),
       minZoom: s.minZoom,
       maxZoom: s.maxZoom,
-      features: writer.blocks
-        .filter((b) => b.key.startsWith("tile/"))
-        .reduce((n, b) => n + b.features, 0),
+      features: writer.featureCount("tile/"),
       featureCountKind: "tile-records",
       peaks: peakCount,
       places: s.placeNames
@@ -356,6 +446,7 @@ export async function preparePackage(
       transport: caps.includes("transport-routing")
         ? {
             version: 1,
+            federation: m.transport!.federation,
             profiles,
             statistics: "cell-records",
             graphSnapshot: m.transport!.graphSnapshot ?? m.snapshot,
@@ -367,7 +458,7 @@ export async function preparePackage(
         polygon: s.polygon,
         parentSnapshot: m.snapshot,
         boundaryPolicy:
-          "intersecting-display-tiles; intersecting-source-objects; clipped-labels-and-search; padded-whole-routing-cells",
+          "intersecting-display-and-raster-tiles; intersecting-source-objects; clipped-labels-and-search; padded-whole-routing-cells",
         ...(caps.includes("transport-routing")
           ? { routingPaddingCells: s.paddingCells }
           : {}),
@@ -378,7 +469,12 @@ export async function preparePackage(
       ],
     };
     delete (manifest as Partial<Manifest>).snapshot;
-    if (!writer.blocks.length)
+    if (!writer.blockCount && caps.includes("transport-routing"))
+      await writer.add({
+        key: "acquisition/coverage",
+        bytes: encode({ version: 1, empty: true }),
+      });
+    if (!writer.blockCount)
       throw new Error("No objects remain inside this selection.");
     p.phase = "indexing";
     emit("Writing the package directory and publishing the file…");

@@ -1,3 +1,4 @@
+import { objectTools } from "../../objects/src/tools";
 import { boundaryTools } from "../../boundaries/src/tools";
 import { AtlasWorkspace } from "../../workspace/src/index";
 import { workspaceTools } from "../../workspace/src/tools";
@@ -48,6 +49,7 @@ export class AtlasEngine {
       ...builtins(this),
       ...workspaceTools(this.workspace),
       ...boundaryTools(workspaceSources),
+      ...objectTools(workspaceSources),
     ])
       this.registry.register(plugin, "atlas-core-1");
   }
@@ -85,13 +87,19 @@ export class RemoteOperations {
   constructor(
     readonly url: string,
     readonly snapshot: string,
+    private adapter?: (path: string, init?: RequestInit) => Promise<Response>,
   ) {}
+  request(path: string, init?: RequestInit) {
+    return this.adapter
+      ? this.adapter(path, init)
+      : fetch(`${this.url}${path}`, init);
+  }
   async call<K extends Operation>(
     operation: K,
     input: OperationInputs[K],
     signal?: AbortSignal,
   ): Promise<{ result: OperationResults[K]; execution: Execution }> {
-    const response = await fetch(`${this.url}/${operation}`, {
+    const response = await this.request(`/${operation}`, {
       signal,
       method: "POST",
       headers: { "Content-Type": "application/json" },

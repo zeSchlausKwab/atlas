@@ -3253,3 +3253,346 @@ body[data-tab="chat"] .chat-read-note { display: block; font-size: 11px; color: 
 .chat-recipe p { color:var(--muted); line-height:1.5; }
 .chat-recipe p[role=status] { color:var(--ink); }
 .chat-recipe p[role=alert] { color:var(--accent); }
+
+/* Keep amendment review stable while the host library polls job progress. */
+.amend-dialog {
+  width: min(680px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 28px;
+}
+.amend-dialog::backdrop {
+  background: rgb(25 45 35 / 35%);
+}
+.amend-dialog form {
+  display: grid;
+  gap: 18px;
+}
+.amend-dialog h2,
+.amend-dialog p {
+  margin: 0;
+}
+.amend-dialog label {
+  display: grid;
+  gap: 8px;
+}
+.amend-dialog input:not([type="checkbox"]),
+.amend-dialog select {
+  width: 100%;
+  padding: 11px 13px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.amend-dialog input[type="checkbox"] { accent-color: var(--green); }
+.amend-dialog fieldset {
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+.amend-dialog .amend-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.amend-dialog [role="status"] {
+  line-height: 1.6;
+}
+.amend-dialog [role="status"] li {
+  margin: 8px 0;
+}
+.amend-dialog details p {
+  margin-top: 12px;
+}
+
+/* Per-map serving recipe; states distinguish retained bytes from queued construction. */
+.capability-composer { margin:24px 0; padding-top:20px; border-top:1px solid var(--line); }
+.capability-composer h4 { margin:0 0 8px; }
+.capability-composer fieldset { border:0; padding:12px 0; margin:0; display:grid; gap:8px; }
+.capability-composer legend { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.1em; padding:0; }
+.capability-option { display:grid; grid-template-columns:18px 1fr auto; gap:10px; align-items:center; font-size:14px; }
+.capability-option input { accent-color:var(--green); }
+.capability-option small { color:var(--muted); font-size:11px; }
+.capability-composer details { margin:12px 0; }
+.capability-composer input[type=number] { display:block; padding:8px; margin-top:8px; max-width:180px; font:inherit; }
+.capability-composer [role=status] { font-size:13px; }
+@media(max-width:560px) { .capability-option { grid-template-columns:18px 1fr; } .capability-option small { grid-column:2; } }
+
+.raster-plane { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.host-imagery {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
+  margin: 32px 0;
+}
+.host-imagery > summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+}
+.host-imagery > summary::before {
+  content: "▸";
+}
+.host-imagery[open] > summary::before {
+  content: "▾";
+}
+.host-imagery > summary h2 {
+  margin: 0;
+}
+.host-imagery > p {
+  margin: 20px 0;
+}
+#imagery-upload {
+  width: 100%;
+  margin-top: 16px;
+}
+
+#discovery-identity { overflow-wrap: anywhere; }
+.map-attribution { max-width: calc(100% - 20px); overflow-wrap: anywhere; }
+
+/* Independent raster controls span the composition card rather than one geometry column. */
+.composer-raster { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); }
+.composition-layers .composer-raster-opacity { display: grid; grid-template-columns: 60px minmax(0, 1fr); margin-top: 8px; color: var(--muted); }
+.composer-raster-opacity input { width: 100%; min-width: 0; accent-color: var(--green); }
+.raster-amend-row { display: grid; gap: 12px; min-width: 0; margin: 0 0 16px; }
+.raster-amend-row select { min-width: 0; }
+
+/* File imports use the same quiet library surfaces as queued preparations. */
+.host-imports {
+  scroll-margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 36px;
+}
+.host-import-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+  margin: 28px 0;
+}
+.host-import-guide h3 {
+  font-size: 20px;
+}
+.host-import-guide p,
+.host-composition-help p {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.host-import-guide a,
+.host-import-actions a,
+.host-imports > p a {
+  color: var(--green);
+}
+.host-import-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+}
+.host-import-list {
+  display: grid;
+  gap: 16px;
+  margin: 24px 0;
+}
+.host-import-row {
+  border: 1px solid var(--line);
+  background: #faf9f2;
+  padding: 24px;
+  min-width: 0;
+}
+.host-import-row h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.host-import-row progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--green);
+}
+.host-import-row p {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.host-import-error {
+  color: var(--accent);
+}
+.host-composition-help {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+.host-composition-help strong {
+  color: var(--ink);
+}
+@media (max-width: 750px) {
+  .host-import-guide,
+  .host-composition-help {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .host-import-row {
+    padding: 16px;
+  }
+}
+
+.federation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(270px, 1fr);
+  gap: 32px;
+  margin: 24px 0;
+}
+.federation-map {
+  height: 450px;
+  border: 1px solid var(--line);
+  margin: 12px 0;
+}
+#federation label {
+  display: block;
+  margin-bottom: 12px;
+}
+#federation .host-inline {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+#federation .host-inline label {
+  flex: 1;
+  min-width: 240px;
+  margin: 0;
+}
+#federation select,
+#federation input:not([type="checkbox"]) {
+  width: 100%;
+}
+#federation-summary p {
+  border-left: 5px solid;
+  padding-left: 12px;
+}
+#federation-sources .quiet {
+  overflow-wrap: anywhere;
+}
+#federation-mirrors progress {
+  width: 100%;
+}
+@media (max-width: 800px) {
+  .federation-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+#federation input[type="number"], #federation input[type="url"] {
+  border: 1px solid var(--line); border-radius: 3px; padding: 10px;
+  color: var(--ink); background: var(--paper); font: inherit;
+}
+#federation input[type="checkbox"] { accent-color: var(--green); }
+
+/* Saved-area acquisition, shared by the browser controls and AI. */
+.saved-areas input:not([type="checkbox"]) {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #faf9f2;
+  color: var(--ink);
+}
+.saved-areas .area-families {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  padding: 12px;
+  margin: 16px 0;
+}
+.saved-areas .area-families label {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.saved-areas label {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.saved-areas .world-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.saved-areas button {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #faf9f2;
+  color: var(--green);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.saved-areas button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.saved-areas button.primary-button {
+  background: var(--green);
+  color: #fff;
+}
+.saved-area-card {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  overflow-wrap: anywhere;
+}
+.saved-area-card h3 {
+  margin: 0 0 6px;
+  font:
+    23px Georgia,
+    serif;
+}
+.saved-area-card small {
+  font: 11px var(--mono);
+  text-transform: uppercase;
+  color: var(--green);
+}
+.saved-area-card p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.saved-area-card details {
+  font-size: 12px;
+  margin: 12px 0;
+}
+.saved-area-card progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--green);
+}
+
+/* The client map workbench separates presentation from on-demand data. */
+.map-workbench-heading { padding: 28px 30px 0; background: #f1f5ef; border-bottom: 1px solid #d3ded2; }
+.map-workbench-heading h2 { margin: 6px 0 22px; }
+.view-picker { display: grid; gap: 8px; font-size: 13px; font-weight: 600; }
+.view-picker select { width: 100%; padding: 12px; border: 1px solid #c7d5c4; background: #fffdf8; color: var(--ink); border-radius: 4px; font: inherit; }
+.view-recipe-state { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0 4px; }
+.view-recipe-state span { font-size: 12px; color: #416b50; }
+.view-recipe-state button { background: transparent; color: var(--green); font: inherit; font-size: 12px; padding: 7px; border: 1px solid #c7d5c4; border-radius: 4px; cursor: pointer; }
+.view-recipe-state button:disabled { opacity: .45; cursor: default; }
+.map-sections { display: flex; gap: 2px; margin-top: 18px; }
+.map-sections button { flex: 1; font: inherit; font-size: 13px; color: #59695e; background: transparent; padding: 13px 5px; border: 0; border-bottom: 3px solid transparent; cursor: pointer; }
+.map-sections button[aria-pressed=true] { color: #274b38; border-color: #52785b; background: #e5eddf; }
+.layer, .capability { flex-wrap: wrap; }
+.layer-load-state { width: 100%; display: block; margin: -2px 0 6px 26px; font-size: 11px; color: #637563; }
+body[data-tab=map] .execution-control { display: none; }
+#panel-composer > #panel-data, #panel-composer > #panel-style { outline: none; }
+.map-workbench-heading .quiet { font-size: 12px; line-height: 1.5; }
+@media(max-width:600px) { .map-workbench-heading { padding: 20px 18px 0; } }
+.map-saved-areas { width: 100%; padding: 12px; border: 1px solid #c7d5c4; border-radius: 4px; background: #eef3e9; color: var(--green); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }

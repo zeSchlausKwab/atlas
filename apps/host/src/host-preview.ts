@@ -3,6 +3,7 @@ import {
   NavigationControl,
   setWorkerUrl,
   type GeoJSONSource,
+  type ImageSource,
 } from "maplibre-gl";
 import { AtlasMap } from "../../../packages/renderer/src/map";
 import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
@@ -10,6 +11,8 @@ import type { Bounds } from "../../../packages/features/src/index";
 import type { Position } from "../../../packages/geocoding/src/model";
 import type { FeatureCollection } from "geojson";
 export interface HostPreview {
+  coverage?(data: FeatureCollection): void;
+  image?(url: string, bounds: Bounds): void;
   selection(points: Position[], closed: boolean): void;
   picking(enabled: boolean): void;
   fit(): void;
@@ -74,14 +77,78 @@ export async function createPreview(
   setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
   const map = new LibreMap({
     container,
-    style: "https://tiles.openfreemap.org/styles/liberty",
+    style:
+      provider === "blank"
+        ? {
+            version: 8,
+            sources: {},
+            layers: [
+              {
+                id: "background",
+                type: "background",
+                paint: { "background-color": "#e7e8da" },
+              },
+            ],
+          }
+        : "https://tiles.openfreemap.org/styles/liberty",
     center: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2],
     zoom: 9,
     attributionControl: { compact: true },
   });
   map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+  const resize = new ResizeObserver(() => {
+    if (container.clientWidth) map.resize();
+  });
+  resize.observe(container);
+  map.on("remove", () => resize.disconnect());
   map.doubleClickZoom.disable();
   map.getCanvas().setAttribute("aria-label", "OpenFreeMap area picker");
+  let overlay: { url: string; bounds: Bounds } | undefined;
+  const paintImage = () => {
+    if (!overlay || !map.getSource("selection")) return;
+    map.setPaintProperty("selection-fill", "fill-opacity", 0);
+    const [w, s, e, n] = overlay.bounds;
+    const options = {
+      url: overlay.url,
+      coordinates: [
+        [w, n],
+        [e, n],
+        [e, s],
+        [w, s],
+      ] as [
+        [number, number],
+        [number, number],
+        [number, number],
+        [number, number],
+      ],
+    };
+    const existing = map.getSource("uploaded-image") as ImageSource | undefined;
+    if (existing) existing.updateImage(options);
+    else {
+      map.addSource("uploaded-image", { type: "image", ...options });
+      map.addLayer(
+        {
+          id: "uploaded-image",
+          type: "raster",
+          source: "uploaded-image",
+          paint: { "raster-opacity": 0.7, "raster-fade-duration": 0 },
+        },
+        "selection-fill",
+      );
+    }
+  };
+  let coverage: FeatureCollection = { type: "FeatureCollection", features: [] };
+  const paintCoverage = () => {
+    (
+      map.getSource("capability-coverage") as GeoJSONSource | undefined
+    )?.setData(coverage);
+    if (map.getLayer("selection-fill"))
+      map.setPaintProperty(
+        "selection-fill",
+        "fill-opacity",
+        coverage.features.length ? 0 : 0.18,
+      );
+  };
   let picking = false,
     points: Position[] = [],
     closed = false;
@@ -149,6 +216,19 @@ export async function createPreview(
         },
       });
     }
+    map.addSource("capability-coverage", { type: "geojson", data: coverage });
+    map.addLayer({
+      id: "capability-coverage-fill",
+      type: "fill",
+      source: "capability-coverage",
+      paint: { "fill-color": ["get", "color"], "fill-opacity": 0.45 },
+    });
+    map.addLayer({
+      id: "capability-coverage-line",
+      type: "line",
+      source: "capability-coverage",
+      paint: { "line-color": ["get", "color"], "line-width": 2 },
+    });
     map.addSource("selection", { type: "geojson", data: collection() });
     map.addLayer({
       id: "selection-fill",
@@ -176,6 +256,8 @@ export async function createPreview(
         "circle-stroke-width": 2,
       },
     });
+    paintCoverage();
+    paintImage();
     status(
       world
         ? "OpenFreeMap preview only · draw your extraction area."
@@ -209,6 +291,14 @@ export async function createPreview(
   container.addEventListener("keydown", key);
   fit();
   return {
+    coverage: (data) => {
+      coverage = data;
+      paintCoverage();
+    },
+    image: (url, bounds) => {
+      overlay = { url, bounds };
+      paintImage();
+    },
     selection: (p, c) => {
       points = p;
       closed = c;

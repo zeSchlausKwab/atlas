@@ -7,11 +7,15 @@ export function clientHandler(
   directory: string,
   serverUrl?: string,
   chatKey?: string,
+  transport?: "fips" | "http",
 ) {
   const chat = chatProxy({ key: chatKey });
   const assets = staticFiles(directory);
   const config = serverUrl
-    ? { serverUrl: serverAddress(serverUrl) }
+    ? {
+        serverUrl: serverAddress(serverUrl),
+        ...(transport ? { transport } : {}),
+      }
     : undefined;
   return async (request: Request) => {
     const response = await chat(request);
@@ -58,6 +62,7 @@ if (import.meta.main) {
       dir,
       process.env.ATLAS_SERVER_URL,
       process.env.DS_API_KEY,
+      process.env.ATLAS_CLIENT_TRANSPORT as "fips" | "http" | undefined,
     ),
   });
   console.log(

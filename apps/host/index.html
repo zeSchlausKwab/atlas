@@ -6,6 +6,7 @@
     <title>Atlas — host console</title>
     <link rel="stylesheet" href="/maplibre.css" />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/workbench.css" />
   </head>
   <body class="host-page">
     <header class="masthead">
@@ -28,12 +29,133 @@
       </div>
       <nav class="host-section-nav" aria-label="Host console sections">
         <a href="#prepare">Prepare a map</a><a href="#builds">Builds</a
+        ><a href="#imports">Import files</a><a href="#imagery">Place an image</a
         ><a href="#library">Map library</a><a href="#sources">Source files</a
+        ><a href="#federation">Coverage & peers</a
         ><a href="#operations">Operations</a>
       </nav>
       <p id="host-access" class="host-source-note" role="status">
         Checking administration access…
       </p>
+      <section id="storage" class="workspace-storage">
+        <div class="storage-route" aria-label="Storage layout">
+          <article class="storage-place storage-maps">
+            <p class="eyebrow">01 / FINISHED MAPS</p>
+            <h2>A permanent home.</h2>
+            <p>Your published .atlas files stay on the map disk.</p>
+            <strong id="work-primary-free">Checking space…</strong
+            ><meter
+              id="work-primary-meter"
+              aria-label="Free map disk space"
+            ></meter
+            ><code id="work-primary-path"></code>
+          </article>
+          <span class="storage-route-arrow" aria-hidden="true">←</span>
+          <article class="storage-place storage-builds">
+            <p class="eyebrow">02 / WORK IN PROGRESS</p>
+            <h2>Space to prepare.</h2>
+            <p id="work-layout-note">
+              Choose where PBF builds keep their intermediate files.
+            </p>
+            <strong id="work-extra-free">Map disk by default</strong
+            ><meter
+              id="work-extra-meter"
+              aria-label="Free working disk space"
+              hidden
+            ></meter
+            ><code id="work-extra-path"></code>
+          </article>
+        </div>
+        <form id="work-storage-form" class="storage-settings">
+          <div class="host-step-heading">
+            <span class="host-step-number">↳</span>
+            <h2>Where should builds work?</h2>
+            <button id="work-refresh" type="button">Refresh disks</button>
+          </div>
+          <fieldset class="storage-policies">
+            <legend class="sr-only">Build storage policy</legend>
+            <label
+              ><input
+                type="radio"
+                name="work-policy"
+                value="map-disk"
+                checked
+              /><span
+                ><strong>Map disk</strong
+                ><small>Everything stays together.</small></span
+              ></label
+            >
+            <label
+              ><input
+                type="radio"
+                name="work-policy"
+                value="when-needed"
+              /><span
+                ><strong>Use extra space when needed</strong
+                ><small
+                  >Choose the extra location when the map disk falls short of
+                  the build estimate.</small
+                ></span
+              ></label
+            >
+            <label
+              ><input type="radio" name="work-policy" value="always" /><span
+                ><strong>Always use extra space</strong
+                ><small
+                  >Give every new PBF build the selected workspace.</small
+                ></span
+              ></label
+            >
+          </fieldset>
+          <div id="work-extra-options">
+            <h3>Choose a location on this server</h3>
+            <p class="quiet">
+              Use a detected location, or enter a mounted folder. Atlas creates
+              its own atlas-workspaces folder inside it.
+            </p>
+            <div id="work-locations" class="storage-locations"></div>
+            <div class="storage-folder-fields">
+              <label
+                >Folder on the server<input
+                  id="work-path"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="/mnt/build-disk or a mounted NAS folder" /></label
+              ><label
+                >Name<input
+                  id="work-label"
+                  type="text"
+                  maxlength="80"
+                  placeholder="MyCloud NAS"
+              /></label>
+            </div>
+            <button id="work-test" type="button">Test this folder</button>
+            <p id="work-test-result" role="status"></p>
+          </div>
+          <div class="storage-explanation">
+            <h3 id="work-placement-title">
+              One file at the end. Room along the way.
+            </h3>
+            <p id="work-placement-detail">
+              A local disk can hold the whole workspace. With NAS assistance,
+              extracted PBFs and intermediate map archives go to the NAS;
+              writable databases and temporary indexes stay on the map disk.
+            </p>
+            <p>
+              Finished maps are verified and stored in your map library. Each
+              build keeps its assigned paths through stop, resume and server
+              restart. Existing builds are not moved.
+            </p>
+          </div>
+          <div class="storage-save">
+            <button type="submit" id="work-save">Save build storage</button>
+            <p id="work-status" role="status">
+              Applies to new builds from PBF files in the source library.
+              Imports and amendments keep their existing storage.
+            </p>
+          </div>
+        </form>
+      </section>
       <section id="prepare" class="host-builder">
         <section class="host-source-step" aria-labelledby="source-step-title">
           <div class="host-step-heading">
@@ -172,6 +294,9 @@
             <label class="host-field"
               >Capabilities preset<select id="prepare-preset">
                 <option value="view">Map display · geometry & labels</option>
+                <option value="analysis">
+                  Analysis · source objects, areas &amp; search
+                </option>
                 <option value="geometry">Geometry only</option>
                 <option value="water-buildings">Water & buildings only</option>
                 <option value="all">All capabilities</option>
@@ -241,66 +366,11 @@
                 display geometry.
               </p>
             </details>
-            <details class="host-limits">
-              <summary>Storage limits</summary>
-              <label class="host-field"
-                >Maximum output size (MiB)<input
-                  id="prepare-budget"
-                  type="number"
-                  step="any"
-                  value="2048"
-                  min="1"
-                  required
-              /></label>
-              <input
-                id="prepare-budget-slider"
-                class="host-budget-slider"
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                aria-label="Maximum output size slider"
-                aria-describedby="prepare-budget-value"
-              />
-              <output
-                id="prepare-budget-value"
-                class="host-budget-value"
-                for="prepare-budget prepare-budget-slider"
-              ></output>
-              <p class="quiet">
-                Tiles, source objects and routing cells touching the outline can
-                extend beyond it. Search and label geometry are clipped. The
-                output is checked against this size limit.
-              </p>
-            </details>
             <div id="prepare-global-controls" hidden>
-              <label class="host-field"
-                >Maximum source download (MiB)<input
-                  id="prepare-source-budget"
-                  type="number"
-                  step="any"
-                  min="1"
-                  value="2048"
-              /></label>
-              <input
-                id="prepare-source-budget-slider"
-                class="host-budget-slider"
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                aria-label="Maximum source download slider"
-                aria-describedby="prepare-source-budget-value"
-              />
-              <output
-                id="prepare-source-budget-value"
-                class="host-budget-value"
-                for="prepare-source-budget prepare-source-budget-slider"
-              ></output>
               <p class="quiet">
                 We download one covering regional PBF, then crop it locally.
-                This budget is separate from the finished Atlas file. Verified
-                PBF files stay on disk for reuse.
+                Verified PBF files stay on disk for reuse. Check the source to
+                see its download size.
               </p>
               <button id="prepare-check-source" type="button" disabled>
                 Find covering download
@@ -313,9 +383,10 @@
                 Draw an area to find its source.
               </div>
             </div>
+
             <section class="host-storage" aria-label="Server storage">
               <div class="host-storage-heading">
-                <h3>Server storage</h3>
+                <h3>Map disk space</h3>
                 <button id="prepare-storage-refresh" type="button">
                   Refresh space
                 </button>
@@ -331,10 +402,13 @@
                 aria-label="Available server disk space"
               ></meter>
               <p id="prepare-storage-estimate"></p>
+              <p id="prepare-work-storage"></p>
+              <a href="#storage">Choose build storage ↗</a>
               <p class="quiet">
-                Space on the server’s map storage volume. Preparation also needs
-                temporary files. This estimate is checked again before starting;
-                it does not reserve disk space or measure RAM.
+                No fixed download or output size cap. Preparation also needs
+                temporary files; the final size is not known yet. If the
+                planning allowance exceeds free space, you can choose Start
+                anyway. Runtime low-disk checks still apply.
               </p>
             </section>
             <p class="host-build-summary" id="prepare-summary"></p>
@@ -357,6 +431,202 @@
         </div>
         <div id="prepare-jobs" aria-live="polite"></div>
       </section>
+      <section
+        id="imports"
+        class="host-imports"
+        aria-labelledby="imports-title"
+      >
+        <div class="host-list-heading">
+          <h2 id="imports-title">Import files</h2>
+          <span class="eyebrow">YOUR FILES / ONE MAP LIBRARY</span>
+        </div>
+        <p>
+          Bring satellite tiles or an existing Atlas map to this server.
+          Imported maps keep their own coverage and become available for
+          composition as soon as preparation finishes.
+        </p>
+        <div class="host-import-guide">
+          <div>
+            <h3>Raster MBTiles</h3>
+            <p>
+              JPEG or PNG tiles, already positioned on Earth. We preserve their
+              pixels and credits in a standalone Atlas file.
+            </p>
+          </div>
+          <div>
+            <h3>Existing Atlas</h3>
+            <p>
+              Geometry, imagery, routing, search and custom data stay together.
+              We verify the archive before serving it.
+            </p>
+          </div>
+          <div>
+            <h3>A photograph or overlay?</h3>
+            <p>
+              <a href="#imagery">Place a PNG or JPEG on the map ↓</a> and
+              prepare its raster tiles below.
+            </p>
+          </div>
+        </div>
+        <label class="host-field" for="imports-files"
+          >Files to import
+          <input
+            id="imports-files"
+            type="file"
+            accept=".mbtiles,.atlas"
+            multiple
+          />
+        </label>
+        <div class="host-import-actions">
+          <button id="imports-start" type="button" disabled>
+            Upload selected files ↗</button
+          ><a href="#library">Compose maps in the library ↓</a>
+        </div>
+        <p id="imports-status" class="quiet" role="status">
+          Checking saved uploads…
+        </p>
+        <div id="imports-list" class="host-import-list"></div>
+        <p class="quiet">
+          Uploads can be paused and resumed by selecting the same file again.
+          After upload, follow conversion and verification in
+          <a href="#builds">Builds &amp; checkpoints</a>. Your original files
+          remain on your computer.
+        </p>
+      </section>
+      <details id="imagery" class="host-imagery">
+        <summary>
+          <h2>Place an image</h2>
+          <span class="quiet"
+            >Position a PNG or JPEG · publish a standalone Atlas</span
+          >
+        </summary>
+        <p>
+          Your image becomes its own selectable raster layer. Compose it with
+          any vector map in the client. Attribution and placement are saved
+          inside the file.
+        </p>
+        <div class="host-builder-grid">
+          <div class="host-picker">
+            <div
+              id="imagery-map"
+              class="host-preview"
+              role="region"
+              aria-label="Image placement preview"
+            ></div>
+            <div class="host-draw-toolbar">
+              <button id="imagery-rect" type="button" aria-pressed="false">
+                Draw image rectangle
+              </button>
+              <button id="imagery-view" type="button">
+                Use visible bounds
+              </button>
+              <button id="imagery-fit" type="button">Fit image</button>
+            </div>
+            <p id="imagery-pick-status" role="status">
+              Click two opposite corners, or enter coordinates. The image is
+              stretched to this rectangle.
+            </p>
+            <label class="host-field"
+              >Image preview background<select id="imagery-provider">
+                <option value="openfreemap">OpenFreeMap</option>
+                <option value="blank">Plain background · offline</option>
+              </select></label
+            >
+            <p id="imagery-preview-status" class="quiet" role="status"></p>
+          </div>
+          <form id="imagery-form" class="host-prepare-form">
+            <label class="host-field"
+              >Image file<input
+                id="imagery-file"
+                type="file"
+                accept="image/png,image/jpeg"
+                required
+            /></label>
+            <p class="quiet">
+              Up to 32 megapixels and 64 MiB after conversion. JPEG orientation
+              is applied in your browser before upload.
+            </p>
+            <label class="host-field"
+              >Imagery name<input id="imagery-name" maxlength="80" required
+            /></label>
+            <div class="host-field-pair">
+              <label class="host-field"
+                >West longitude<input
+                  id="imagery-west"
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="any"
+                  required
+              /></label>
+              <label class="host-field"
+                >East longitude<input
+                  id="imagery-east"
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="any"
+                  required
+              /></label>
+              <label class="host-field"
+                >South latitude<input
+                  id="imagery-south"
+                  type="number"
+                  min="-85.05112878"
+                  max="85.05112878"
+                  step="any"
+                  required
+              /></label>
+              <label class="host-field"
+                >North latitude<input
+                  id="imagery-north"
+                  type="number"
+                  min="-85.05112878"
+                  max="85.05112878"
+                  step="any"
+                  required
+              /></label>
+            </div>
+            <p class="quiet">
+              North is the top of the image. Placement uses a Web Mercator
+              rectangle; this is manual alignment, not a surveyed georeference.
+              GeoTIFF and rotated images need a later importer.
+            </p>
+            <label class="host-field"
+              >Image attribution<input
+                id="imagery-attribution"
+                maxlength="1000"
+                placeholder="Creator or data provider"
+                required
+            /></label>
+            <label class="host-field"
+              >Image licence<input
+                id="imagery-license"
+                maxlength="1000"
+                placeholder="For example, CC BY 4.0 or private demo"
+                required
+            /></label>
+            <p id="imagery-plan" role="status">
+              Choose an image to calculate its zoom range and tile count.
+            </p>
+            <button id="imagery-submit" type="submit" disabled>
+              Upload & prepare imagery ↗
+            </button>
+            <progress
+              id="imagery-upload"
+              max="100"
+              value="0"
+              hidden
+              aria-label="Image upload progress"
+            ></progress>
+            <p id="imagery-message" role="status"></p>
+            <p class="quiet">
+              After upload, the server continues even if you close this page.
+              Follow tiling and packing in Builds & checkpoints.
+            </p>
+          </form>
+        </div>
+      </details>
       <section id="library">
         <div class="host-list-heading">
           <h2>Your map library</h2>
@@ -365,18 +635,221 @@
         <div class="host-composition-bar">
           <a id="prepare-compose" href="#library" target="_blank" rel="noopener"
             >Compose hosted maps ↗</a
-          ><a href="/catalog" target="_blank" rel="noopener"
-            >Public catalog ↗</a
+          ><a href="/discovery" target="_blank" rel="noopener"
+            >Signed announcements ↗</a
           ><span id="prepare-compose-count" class="quiet"
             >Choose maps below, or open the full library.</span
           >
         </div>
+        <details class="library-bundle">
+          <summary>Combine selected maps into one file</summary>
+          <p class="quiet">
+            Use composition above for a shared view, or pack the selected maps
+            into a portable archive here.
+          </p>
+          <form id="prepare-export-form" class="host-actions">
+            <label
+              >Combined file name
+              <input
+                id="prepare-export-name"
+                value="Map composition"
+                maxlength="80"
+                required
+            /></label>
+            <button id="prepare-export" disabled>
+              Pack selected maps into one .atlas
+            </button>
+          </form>
+          <div class="host-composition-help">
+            <p>
+              <strong>One view, separate Hashtree sources.</strong> Check
+              “Compose” on the maps you want, then open the selection in the
+              client. Toggle layers and adjust imagery opacity there.
+            </p>
+            <p>
+              Pack the selected maps to preserve every member’s geometry,
+              routing, search, imagery and custom data in one downloadable file.
+              Source maps stay available. This copies complete selected maps; it
+              does not cut them to the preview area. Network maps are published
+              with Hashtree automatically.
+            </p>
+            <p>
+              <strong>One file with embedded imagery.</strong> Choose “Manage
+              imagery” on a target map to add raster layers from your imported
+              maps and queue a new Atlas revision.
+            </p>
+          </div>
+        </details>
         <p id="prepare-library-message" role="status"></p>
         <div id="prepare-library" class="host-library"></div>
         <p class="quiet">
           Each prepared file has its own snapshot, download URL and HTTP tools.
           The source package below continues to serve the main demo.
         </p>
+      </section>
+      <section id="federation" aria-labelledby="federation-title">
+        <div class="host-section-heading">
+          <h2 id="federation-title">Coverage & peers</h2>
+          <span class="eyebrow">THIS HOST IS ALSO A CONSUMER</span>
+        </div>
+        <p>
+          Choose what you want to serve. Compare the local library with signed
+          maps from other hosts, mirror a verified file, or prepare a missing
+          area.
+        </p>
+        <form id="federation-peer-form" class="host-inline">
+          <label
+            >Discovery relay or HTTP host<input
+              id="federation-peer-url"
+              type="url"
+              placeholder="wss://relay.damus.io"
+              required /></label
+          ><label
+            >Publisher key<input
+              id="federation-peer-pubkey"
+              type="text"
+              pattern="[a-fA-F0-9]{64}"
+              placeholder="64-character key · required for relay discovery" /></label
+          ><button type="submit">Add trusted host</button
+          ><button type="button" id="federation-refresh">
+            Refresh coverage
+          </button>
+        </form>
+        <p class="quiet">
+          Use a discovery relay and the host’s publisher key to find maps
+          without a public HTTP address. An HTTP host URL can also provide its
+          key. The server verifies signed announcements and reads their Hashtree
+          archives over FIPS; an announcement alone is not verified coverage.
+        </p>
+        <div id="federation-peers"></div>
+        <p id="federation-status" role="status" aria-live="polite"></p>
+        <div class="federation-layout">
+          <div>
+            <label
+              >Preview<select
+                id="federation-preview-provider"
+                aria-label="Preview"
+              >
+                <option value="openfree">OpenFreeMap · world</option>
+                <option value="blank">Blank · no external basemap</option>
+              </select></label
+            >
+            <div id="federation-map" class="federation-map"></div>
+            <div class="host-inline">
+              <button id="federation-rect">Rectangle</button
+              ><button id="federation-polygon">Polygon</button
+              ><button id="federation-finish" disabled>Finish polygon</button
+              ><button id="federation-view">Use visible area</button
+              ><button id="federation-clear">Clear</button>
+            </div>
+            <p id="federation-area" class="quiet">
+              Draw an area, or use the visible area.
+            </p>
+          </div>
+          <div>
+            <label
+              >Capability<select
+                id="federation-family"
+                aria-label="Capability"
+              ></select></label
+            ><label
+              >Display zoom<input
+                id="federation-zoom"
+                type="number"
+                min="0"
+                max="24"
+                value="14" /></label
+            ><label
+              >Routing reference<select
+                id="federation-reference"
+                aria-label="Routing reference"
+              >
+                <option value="">Automatic · prefer a local map</option>
+              </select></label
+            >
+            <p class="quiet">
+              Zoom applies to display geometry and imagery. Routing, search and
+              extraction have their own indexes.
+            </p>
+            <button id="federation-plan">Check selected coverage</button
+            ><button id="federation-inspect">Inspect routing cells</button>
+            <div id="federation-summary" aria-live="polite"></div>
+            <p id="federation-detail" role="status"></p>
+            <div class="host-inline">
+              <button id="federation-export" disabled>Export report JSON</button
+              ><button id="federation-prepare" disabled>
+                Prepare this area…</button
+              ><a href="#library">Assemble local maps ↓</a>
+            </div>
+          </div>
+        </div>
+        <h3>Sources to compare</h3>
+        <div id="federation-sources" class="host-library"></div>
+        <p class="quiet">
+          Colors describe archive scope: green local, blue remote and verified,
+          amber unknown, purple incompatible, red missing among checked sources.
+          This is not a claim of real-world completeness or a guarantee that
+          every payload is reachable. Empty routing cells are valid coverage.
+        </p>
+        <section id="acquisition" aria-labelledby="area-acquisition-title">
+          <h3 id="area-acquisition-title">Complete this area</h3>
+          <p>
+            Use the area and sources selected above. Review several capabilities
+            together, acquire their data through Hashtree, and export one
+            self-contained Atlas file.
+          </p>
+          <label
+            >Area file name<input
+              id="area-name"
+              value="My offline area"
+              maxlength="80"
+          /></label>
+          <fieldset id="area-families">
+            <legend>Include these capabilities</legend>
+          </fieldset>
+          <div class="host-inline">
+            <label
+              >Minimum display zoom<input
+                id="area-min-zoom"
+                type="number"
+                min="0"
+                max="24"
+                value="0"
+            /></label>
+            <label
+              >Maximum display zoom<input
+                id="area-max-zoom"
+                type="number"
+                min="0"
+                max="24"
+                value="16"
+            /></label>
+            <label
+              >Routing padding cells<input
+                id="area-padding"
+                type="number"
+                min="0"
+                max="4"
+                value="1"
+            /></label>
+          </div>
+          <p class="quiet">
+            Planning reads directories and catalogs. Transfer estimates count
+            stored blocks; Hashtree chunk overhead is additional. Search and
+            routing are independent of display zoom.
+          </p>
+          <button id="area-review">Review area acquisition</button>
+          <p id="area-status" role="status" aria-live="polite"></p>
+          <div id="area-jobs" class="host-library"></div>
+        </section>
+        <h3>Mirror downloads</h3>
+        <p class="quiet">
+          Full files are downloaded by the server through Hashtree. Transfers
+          can be paused and resumed, then enter the existing import queue.
+          Imported maps can be composed or assembled into one self-contained
+          Atlas file.
+        </p>
+        <div id="federation-mirrors" class="host-library"></div>
       </section>
       <section id="discovery">
         <h2>Discovery &amp; delivery</h2>
@@ -450,6 +923,137 @@
           step 1. Deleting a prepared map never deletes its source PBF.
         </p>
       </details>
+      <section id="fips" aria-label="FIPS provider">
+        <div class="fips-heading">
+          <div>
+            <p class="eyebrow">LIVE PROVIDER</p>
+            <h2 id="fips-state">Waiting for status…</h2>
+          </div>
+          <p id="fips-updated" class="quiet" role="status">
+            Open this tab to check the provider.
+          </p>
+        </div>
+        <form id="fips-settings" class="fips-settings">
+          <h3>How consumers reach your maps</h3>
+          <p>
+            FIPS carries verified map data and map operations. Nostr announces
+            your maps, capabilities and default views.
+          </p>
+          <div class="host-actions">
+            <label
+              ><input id="fips-enabled" type="checkbox" checked /> Serve maps
+              over FIPS</label
+            >
+            <label
+              ><input id="fips-http" type="checkbox" /> Also allow HTTP map
+              delivery</label
+            >
+          </div>
+          <div class="fips-panels">
+            <label
+              >FIPS bootstrap seeds<textarea
+                id="fips-seed-input"
+                rows="3"
+                spellcheck="false"
+                placeholder="wss://seed.example/fips"
+              ></textarea>
+            </label>
+            <label
+              >Nostr discovery relays<textarea
+                id="fips-relay-input"
+                rows="3"
+                spellcheck="false"
+                placeholder="wss://relay.example"
+              ></textarea>
+            </label>
+          </div>
+          <p class="quiet">
+            One URL per line. Consumers can find your maps through your
+            publisher identity; your server needs no public HTTP address. HTTP
+            fallback is a consumer choice. Local/LAN administration stays
+            available here.
+          </p>
+          <button id="fips-save" type="submit">Apply delivery settings</button>
+          <p id="fips-settings-status" role="status"></p>
+        </form>
+        <div class="fips-metrics">
+          <article>
+            <span>Connected peers</span><strong id="fips-peers">—</strong>
+          </article>
+          <article>
+            <span>Blob reads / tool calls</span
+            ><strong id="fips-lookups">—</strong>
+          </article>
+          <article>
+            <span>Blob bytes read</span><strong id="fips-blob-bytes">—</strong>
+          </article>
+          <article>
+            <span>Uptime</span><strong id="fips-uptime">—</strong>
+          </article>
+        </div>
+        <div class="fips-panels">
+          <article class="fips-card">
+            <h3>Your published library</h3>
+            <p id="fips-map">Provider status has not arrived yet.</p>
+            <div id="fips-maps" class="fips-map-list"></div>
+            <dl>
+              <dt>Content identities</dt>
+              <dd id="fips-root">—</dd>
+              <dt>Provider identity</dt>
+              <dd id="fips-identity">—</dd>
+              <dt>Block size / service port</dt>
+              <dd id="fips-blocks">—</dd>
+            </dl>
+            <button id="fips-copy" type="button" disabled>
+              Copy connection descriptor
+            </button>
+            <details id="fips-descriptor">
+              <summary>Connection descriptor</summary>
+              <pre id="fips-json"></pre>
+            </details>
+            <p id="fips-copy-status" class="quiet" role="status"></p>
+          </article>
+          <article class="fips-card">
+            <h3>Connections &amp; traffic</h3>
+            <dl>
+              <dt>Bootstrap seeds</dt>
+              <dd id="fips-seeds">—</dd>
+              <dt>FIPS traffic sent / received</dt>
+              <dd id="fips-traffic">—</dd>
+              <dt>Frames sent / received</dt>
+              <dd id="fips-frames">—</dd>
+              <dt>Reconnects / rejected frames</dt>
+              <dd id="fips-reconnects">—</dd>
+              <dt>Last blob lookup</dt>
+              <dd id="fips-activity">—</dd>
+            </dl>
+            <p id="fips-policy" class="quiet"></p>
+            <p class="quiet">
+              Blob bytes count data read for peer requests. FIPS traffic
+              includes protocol overhead. Counters reset when the provider
+              restarts.
+            </p>
+          </article>
+        </div>
+        <div class="host-actions fips-controls">
+          <button id="fips-refresh" type="button">Refresh now</button>
+          <label
+            ><input id="fips-auto" type="checkbox" checked />
+            Auto-refresh</label
+          >
+          <label
+            >Refresh every
+            <select id="fips-interval" aria-label="FIPS refresh interval">
+              <option value="5">5 seconds</option>
+              <option value="15">15 seconds</option>
+              <option value="30">30 seconds</option>
+            </select></label
+          >
+        </div>
+        <p id="fips-message" class="quiet" role="status">
+          Map delivery continues while new maps are prepared.
+        </p>
+      </section>
       <section id="operations">
         <section class="host-package">
           <div>

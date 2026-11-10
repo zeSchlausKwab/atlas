@@ -65,3 +65,65 @@ export function cachedResumeSpace(
     ? BUILD_DISK_FLOOR + Math.min(maxBytes, CACHED_SCRATCH_ALLOWANCE)
     : cachedBuildSpace(maxBytes, partitioned);
 }
+
+/** Host UI has no user-chosen output ceiling; explicit CLI/API ceilings still work. */
+export const NO_SIZE_LIMIT = Number.MAX_SAFE_INTEGER;
+/** Admission estimate only. The output ceiling must never be treated as predicted bytes. */
+export function hostPreparationSpace(
+  maxBytes: number,
+  input: {
+    sourceBytes?: number;
+    atlasBytes?: number;
+    cached?: boolean;
+    partitioned?: boolean;
+    resume?: boolean;
+    extractedBytes?: number;
+  },
+) {
+  if (maxBytes !== NO_SIZE_LIMIT)
+    return input.cached
+      ? input.resume
+        ? cachedResumeSpace(
+            maxBytes,
+            !!input.partitioned,
+            input.extractedBytes ?? 0,
+          )
+        : cachedBuildSpace(maxBytes, !!input.partitioned)
+      : preparationSpace(maxBytes, input.sourceBytes);
+  if (input.cached)
+    return (
+      BUILD_DISK_FLOOR +
+      (input.partitioned
+        ? Math.max(
+            4 * GIB,
+            CACHED_SCRATCH_ALLOWANCE - (input.extractedBytes ?? 0),
+          )
+        : 4 * GIB)
+    );
+  if (input.sourceBytes !== undefined)
+    return BUILD_DISK_FLOOR + 4 * GIB + input.sourceBytes * 3;
+  return 64 * MIB + (input.atlasBytes ?? 0) * 2;
+}
+export interface StorageWarningInfo {
+  estimatedBytes: number;
+  availableBytes: number;
+}
+export class StorageWarning extends Error {
+  readonly storageWarning: StorageWarningInfo;
+  constructor(estimatedBytes: number, availableBytes: number) {
+    super(
+      `This job might exceed available disk space: ${(estimatedBytes / GIB).toFixed(2)} GiB planning allowance, ${(availableBytes / GIB).toFixed(2)} GiB free. You can start anyway; runtime free-space checks still apply.`,
+    );
+    this.storageWarning = { estimatedBytes, availableBytes };
+  }
+}
+export function checkStorageEstimate(
+  estimated: number,
+  available: number,
+  override: unknown = false,
+) {
+  if (typeof override !== "boolean")
+    throw new Error("Invalid storage override");
+  if (estimated > available && !override)
+    throw new StorageWarning(estimated, available);
+}

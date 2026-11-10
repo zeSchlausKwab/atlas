@@ -7,6 +7,7 @@ pub(super) struct CellCache {
     tick: u64,
     bytes: usize,
     budget: usize,
+    stable_ids: Option<bool>,
 }
 impl CellCache {
     pub(super) fn new(budget: usize) -> Self {
@@ -16,12 +17,14 @@ impl CellCache {
             tick: 0,
             bytes: 0,
             budget,
+            stable_ids: None,
         }
     }
     pub(super) fn clear(&mut self) {
         self.entries.clear();
         self.empty.clear();
         self.bytes = 0;
+        self.stable_ids = None;
     }
     pub(super) fn clear_empty(&mut self) {
         self.empty.clear();
@@ -69,6 +72,10 @@ impl CellCache {
         if c.graph.profile.unwrap_or(0) != profile {
             return Err("Routing cell profile mismatch".into());
         }
+        if self.stable_ids.is_some_and(|stable| stable != c.stable_ids) {
+            return Err("Cannot mix legacy and OSM routing identities".into());
+        }
+        self.stable_ids = Some(c.stable_ids);
         if c.memory() > self.budget {
             return Ok(false);
         }

@@ -1,3 +1,9 @@
+import {
+  objectCatalog,
+  objectRecords,
+  findObject,
+  objectGeometry,
+} from "../packages/objects/src/index";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { compilePartitioned } from "../packages/cli/src/partitioned";
@@ -41,6 +47,14 @@ try {
   const reader = await new AtlasReader(
     new FileSource(Bun.file(`${dir}/sample.atlas`)),
   ).open();
+  assert(reader.index.manifest.capabilities.includes("source-objects"));
+  assert(reader.index.manifest.featureKinds?.includes("objects"));
+  assert((await objectCatalog(reader)).count > 0);
+  for await (const row of objectRecords(reader)) {
+    assert.equal((await findObject(reader, row.id))?.id, row.id);
+    if (row.geometry) assert(await objectGeometry(reader, row));
+    break;
+  }
   assert.equal(reader.index.manifest.semantics?.addresses, "osm-explicit");
   assert(reader.index.manifest.capabilities.includes("address-search"));
   let address;

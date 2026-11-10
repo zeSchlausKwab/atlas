@@ -1,3 +1,4 @@
+import { prepareOcean } from "./ocean-source";
 import { BUILD_DISK_FLOOR, DISK_RESERVE, BUILD_STOP_MARGIN } from "./capacity";
 import { mkdir, rename, rm, statfs } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,8 +20,10 @@ export async function importPartitionedCached(
   bounds: [number, number, number, number],
   signal: AbortSignal,
   report: (p: PreparationProgress) => void,
+  artifacts = work,
 ) {
   await mkdir(work, { recursive: true });
+  await mkdir(artifacts, { recursive: true });
   const identity = new Bun.CryptoHasher("sha256")
     .update(
       JSON.stringify({
@@ -32,17 +35,31 @@ export async function importPartitionedCached(
     )
     .digest("hex");
   const cp = await new BuildCheckpoints(
-      join(work, "extraction"),
+      join(artifacts, "extraction"),
       identity,
     ).open(),
     name = "area.osm.pbf",
     area = join(cp.directory, name),
     partial = area + ".part.osm.pbf";
   let completed = 0;
+  let lastMeasured: Partial<PreparationProgress> | undefined;
   const progress = (
     message: string,
     phase: PreparationProgress["phase"] = "compiling",
-  ) =>
+  ) => {
+    const measured = compilerProgress(message);
+    if (measured && measured.stage === lastMeasured?.stage) {
+      for (const key of [
+        "checkpointAt",
+        "stagingBytes",
+        "indexBytes",
+        "etaSeconds",
+        "elapsedSeconds",
+      ] as const)
+        if (measured[key] === undefined && lastMeasured?.[key] !== undefined)
+          (measured as any)[key] = lastMeasured[key];
+    }
+    lastMeasured = measured;
     report({
       phase,
       message,
@@ -51,13 +68,18 @@ export async function importPartitionedCached(
       unit: "stages",
       readBytes: 0,
       writtenBytes: cp.savedBytes,
-      ...compilerProgress(message),
+      ...measured,
     });
+  };
   const abort = new AbortController();
   let failure: Error | undefined;
   const check = async () => {
-    const fs = await statfs(work);
-    if (fs.bavail * fs.bsize < BUILD_DISK_FLOOR) {
+    const disks = await Promise.all(
+      [...new Set([work, artifacts])].map((p) => statfs(p)),
+    );
+    if (
+      Math.min(...disks.map((fs) => fs.bavail * fs.bsize)) < BUILD_DISK_FLOOR
+    ) {
       failure = new Error(
         `Preparation paused to preserve ${DISK_RESERVE / 1024 ** 3} GiB free plus a ${BUILD_STOP_MARGIN / 1024 ** 3} GiB stopping buffer. Free space and resume the saved stages.`,
       );
@@ -67,6 +89,12 @@ export async function importPartitionedCached(
   };
   const timer = setInterval(() => void check().catch(() => {}), 2000);
   try {
+    const ocean = await prepareOcean(
+      s,
+      join(artifacts, "ocean"),
+      AbortSignal.any([signal, abort.signal]),
+      progress,
+    );
     progress("Verifying the saved extraction before reuse…", "verifying");
     const hashProgress = (done: number, total: number) =>
       report({
@@ -130,8 +158,10 @@ export async function importPartitionedCached(
       (line) => progress(line),
     );
     return await compilePartitioned({
+      ocean,
       input: area,
-      output: join(work, "source.atlas"),
+      output: join(artifacts, "source.atlas"),
+      artifacts: join(artifacts, "compiler"),
       work: join(work, "compiler"),
       selection: s,
       signal: AbortSignal.any([signal, abort.signal]),

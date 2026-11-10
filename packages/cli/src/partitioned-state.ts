@@ -1,5 +1,5 @@
 import type { PackageSelection } from "../../provisioning/src/selection";
-export const PARTITIONED_VERSION = 6;
+export const PARTITIONED_VERSION = 8;
 export interface PartitionedState {
   identity: string;
   completed: Record<string, { size: number; sha256: string }>;
@@ -13,7 +13,7 @@ export function partitionedIdentity(
     .update(JSON.stringify({ version, inputHash, selection }))
     .digest("hex");
 }
-/** v6 retains administrative areas; older source/semantic stages must be rebuilt. Transport and display remain reusable. */
+/** v8 packs source payloads and indexes tag values. v7 source stores, transport and display remain reusable. */
 export function reconcilePartitionedState(
   old: PartitionedState | undefined,
   inputHash: string,
@@ -28,7 +28,7 @@ export function reconcilePartitionedState(
   if (old.identity === identity) return { state: old, migrated: false };
   // Matching the *entire* old fingerprint is mandatory: no bypass for another source or recipe.
   if (
-    ![4, 5].some(
+    ![4, 5, 6, 7].some(
       (version) =>
         old.identity === partitionedIdentity(inputHash, selection, version),
     )
@@ -39,6 +39,11 @@ export function reconcilePartitionedState(
   const completed: PartitionedState["completed"] = {};
   for (const name of ["transport.atlas", "display.atlas"])
     if (old.completed[name]) completed[name] = old.completed[name];
+  if (
+    old.identity === partitionedIdentity(inputHash, selection, 7) &&
+    old.completed["source-v4.sqlite"]
+  )
+    completed["source-v4.sqlite"] = old.completed["source-v4.sqlite"]!;
   // Each retained artifact still undergoes the normal size + SHA-256 check before reuse.
   return { state: { identity, completed }, migrated: true };
 }

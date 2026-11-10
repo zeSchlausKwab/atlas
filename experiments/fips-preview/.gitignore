@@ -1,0 +1,6 @@
+node_modules/
+*.key
+*.descriptor.json
+config.local.json
+descriptor.local.json
+.env

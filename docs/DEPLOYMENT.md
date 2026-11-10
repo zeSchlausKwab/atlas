@@ -355,3 +355,81 @@ receipts, then repacks the display archive with the coarse-geometry fix. The
 parallel compiler and structured pass progress are now also deployed. No library
 maps or cached sources were deleted; approximately 213 GiB remained free.
 See [the reproduction and recovery notes](BRITAIN-TILE-RECOVERY.md).
+
+## Activity progress restoration — 2 November 2026
+
+Progress UI revision `93dc5fa` was applied to the running LAN release
+`20261102T075127413Z-f5a63e34f814-20511141` as a static-only update:
+`dist/host/{host.js,host.js.map,workbench.css}`. Backups and the uploaded observer
+are in `/home/nixuser/atlas/shared/ui-updates/20261102-93dc5fa/`.
+The Atlas server remained PID 725574 with its original 08:52:35 CET start time;
+no preparations were stopped, requeued or restarted.
+
+The transient user service `atlas-progress-observer-20261102` reads job state and
+completed-stage receipts, writes `dist/host/compiler-progress.json` every 15
+seconds, and waits through queued jobs. It has lowered CPU priority and a 256 MiB
+memory limit. It does not change compiler files, source databases or checkpoints.
+The source-object index was initially locked; the observer kept that pass
+indeterminate. When a read became available it measured 30,766,021 records. This
+is a packing total, not a whole-build total. Observed elapsed time begins with
+the observer, and an ETA is withheld until enough forward progress is measured.
+
+Structured object packing, identity lookup and tag-index instrumentation is
+committed for the next normal deployment. The current workers retain their
+original compiler code. Rollback of this UI update requires only restoring the
+three files from `previous/` and stopping the independent observer service.
+
+Validation: 405 Bun tests, TypeScript checking, host asset build, desktop/mobile
+browser fixtures for known and unknown totals, and the deployed assets/live
+progress through a read-only local browser proxy. Browser checks reported no
+uncaught exceptions, console errors or failed requests.
+
+### Counter retention follow-up
+
+UI revision `a5c52c9` preserves prior n/x counters across passes and fixes the
+observer fallback that could erase native counters without a stage name. The
+static-only update and rollback assets are under
+`/home/nixuser/atlas/shared/ui-updates/20261102-a5c52c9/`. The independent observer
+was replaced by `atlas-progress-counters-20261102.service`; `atlas.service` stayed
+PID 725574 with the original start time. No compiler process was restarted.
+
+The live feed recovered **30,766,021 / 30,766,021 objects** for both completed
+packing and identity lookup. The currently running legacy tag-index pass does
+not emit a term count; the UI explicitly reports that instead of removing the
+earlier counters or presenting their total as tag-index progress.
+
+Validation: 409 tests and typechecking passed; browser tests covered a measured
+pass becoming unmeasured, a growing counter with unknown total, previous counts
+after refresh, and desktop/mobile layout. The deployed live feed and UI show both
+completed object counts.
+
+
+## North Sea routing-output recovery — 5 November 2026
+
+Release `20261105T074242218Z-1f6d27ad557e-fc1a0d22` deploys commit `1f6d27a`.
+No preparation was active during activation. Candidate UI, WASM, catalog,
+byte-range and preparation-prerequisite smoke checks passed. The North Sea job
+`a4a4a7c9-4b2c-4256-a97d-c935f0fb8c16` was resumed through its normal admin API.
+The completed Lower Rhine maps and satellite archives were left in place.
+
+The misleading “Native compiler frame exceeds cell budget” failure reproduced
+when an unbounded native pipe ran ahead of the NAS archive writer. The largest
+saved cell was only 925,192 bytes. The fix acknowledges batches after writing,
+without raising the 32 MiB frame guard or changing map/checkpoint identities.
+The saved PBF and all 483,555 encoded graph cells are reused; checksum validation
+still runs. See [bounded native routing output](PARTITIONED-COMPILER.md#bounded-native-routing-output).
+
+Validation: TypeScript, 53 Rust tests, byte-identical comparison of all 242
+fixture routing cells, and six forced-stop/recovery checks passed. The Bun suite
+passed 414 tests; two disk-placement tests hit the Mac’s real 11 GiB free-space
+condition against a 12 GiB floor. Those tests and the routing-output/native
+process regressions passed on the Linux server (14 tests, Bun 1.3.13). The
+production recovery is being observed separately; restarting a job does not
+mean the complete North Sea map has finished.
+
+At 07:52 UTC, the resumed production run had packed 39,680 / 483,555 cells,
+past the failing NAS reproduction at cell 36,132. Worker RSS was 217,800 KiB
+and native compiler RSS 28,816 KiB; the worker's high-water mark including input
+verification was 356,832 KiB. The job remained running, with roughly 30 minutes
+estimated for the rest of this pass. This observation verifies bounded run-ahead
+on the real NAS path; later compilation and final publication remain pending.

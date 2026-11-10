@@ -19,6 +19,7 @@ if (serverPort === clientPort)
   throw new Error("Server and client need different ports.");
 const serverUrl = `http://127.0.0.1:${serverPort}/`;
 const clientUrl = `http://127.0.0.1:${clientPort}/`;
+const clientDemoUrl = `${clientUrl}?transport=http`;
 const children: Bun.Subprocess[] = [];
 let stopping = false;
 const stop = () => {
@@ -54,19 +55,25 @@ try {
     throw new Error(
       "Missing WASM. Run bun run setup or bun run build:wasm first.",
     );
-  const build = launch(["run", "build:web"], { ATLAS_SERVER_URL: serverUrl });
+  const build = launch(["run", "build:web"], {
+    ATLAS_SERVER_URL: serverUrl,
+    ATLAS_CLIENT_TRANSPORT: "http",
+  });
   if ((await build.exited) !== 0) throw new Error("Browser build failed.");
   if (!stopping) {
     console.log(
-      `\nClient: ${clientUrl}\nHost console: ${serverUrl}host\nMap: ${file}\nCtrl+C stops both applications.\n`,
+      `\nClient: ${clientDemoUrl}\nHost console: ${serverUrl}host\nMap: ${file}\nCtrl+C stops both applications.\n`,
     );
     const server = launch(["apps/server/index.ts"], {
       HOST: "127.0.0.1",
       PORT: String(serverPort),
       ATLAS_FILE: file,
       ATLAS_DATA_DIR: data,
-      ATLAS_CLIENT_URL: clientUrl,
+      ATLAS_CLIENT_URL: clientDemoUrl,
       ATLAS_CVM_SECRET: "",
+      ATLAS_FIPS_ENABLED: "0",
+      ATLAS_HTTP_DELIVERY: "1",
+      ATLAS_DISCOVERY_RELAYS: "",
       ATLAS_ADMIN_ORIGINS: "",
       ATLAS_ADMIN_SUBNETS: "",
       ATLAS_SOURCE_SYSTEMD: "0",
@@ -78,6 +85,7 @@ try {
       PORT: String(clientPort),
       ATLAS_SERVER_URL: serverUrl,
       ATLAS_CLIENT_DIR: resolve(root, "dist/client"),
+      ATLAS_CLIENT_TRANSPORT: "http",
     });
     const first = await Promise.race([server.exited, client.exited]);
     if (!stopping) process.exitCode = first || 1;

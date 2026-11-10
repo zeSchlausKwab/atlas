@@ -22,6 +22,8 @@ describe("deployment input and isolation", () => {
     expect(options.withLibrary).toBe(true);
     expect(options.dryRun).toBe(true);
     expect(options.format).toBe("json");
+    expect(parseDeployArgs(["--stage-only"]).stageOnly).toBe(true);
+    expect(() => parseDeployArgs(["status", "--stage-only"])).toThrow();
     expect(parseDeployArgs([]).withLibrary).toBe(false);
     expect(parseDeployArgs([]).map).toBeUndefined();
     expect(parseDeployArgs(["--upload-mib=8"]).uploadMiB).toBe(8);

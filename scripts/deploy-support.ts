@@ -12,6 +12,7 @@ export interface DeployOptions {
   withLibrary: boolean;
   dryRun: boolean;
   skipChecks: boolean;
+  stageOnly: boolean;
   format: "md" | "json";
 }
 
@@ -25,12 +26,14 @@ export function parseDeployArgs(args: string[]): DeployOptions {
     withLibrary: false,
     dryRun: false,
     skipChecks: false,
+    stageOnly: false,
     format: "md",
   };
   const booleans = new Map([
     ["dry-run", "dryRun"],
     ["with-library", "withLibrary"],
     ["skip-checks", "skipChecks"],
+    ["stage-only", "stageOnly"],
   ] as const);
   let commandSeen = false;
   for (let i = 0; i < args.length; i++) {
@@ -128,11 +131,12 @@ export function parseDeployArgs(args: string[]): DeployOptions {
     (result.map ||
       result.withLibrary ||
       result.skipChecks ||
+      result.stageOnly ||
       result.resume ||
       result.uploadMiB)
   )
     throw new Error(
-      "--map, --with-library, --resume and --skip-checks apply only to deploy",
+      "--map, --with-library, --resume, --stage-only and --skip-checks apply only to deploy",
     );
   return result;
 }

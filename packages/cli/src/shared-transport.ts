@@ -47,8 +47,11 @@ export async function copyTransport(
       )!;
       const profile = profiles[mode]!,
         view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      if (new TextDecoder().decode(bytes.subarray(0, 4)) !== "RCL2")
-        throw new Error("Shared transport requires RCL2 cells");
+      if (
+        new TextDecoder().decode(bytes.subarray(0, 4)) !==
+        profile.codec.toUpperCase()
+      )
+        throw new Error("Shared transport requires RCL2/RCL3 cells");
       profile.count++;
       profile.nodes += view.getUint32(20, true);
       profile.segments += view.getUint32(24, true);
@@ -58,6 +61,7 @@ export async function copyTransport(
     }
     return {
       version: 1,
+      federation: source.transport.federation,
       profiles,
       statistics: "cell-records",
       graphSnapshot: source.transport.graphSnapshot ?? source.snapshot,

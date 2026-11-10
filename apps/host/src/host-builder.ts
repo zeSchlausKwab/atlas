@@ -1,19 +1,23 @@
+import { hostActivity, showHostSection } from "./host-workbench";
+import type { CoverageRequest } from "../../../packages/coverage/src/index";
+import { openRasterAmendment } from "./host-raster-amend";
+import { capabilityPanel } from "./host-capabilities";
+import { AtlasReader, HttpSource } from "../../../packages/format/src/reader";
+import { objectCatalog } from "../../../packages/objects/src/index";
 import { publishMap } from "./host-discovery";
 import {
   currentObservation,
   type CompilerObservation,
 } from "../../../packages/provisioning/src/compiler-observation";
-import { approximateDuration } from "../../../packages/provisioning/src/compiler-progress";
+import { CompilerPassHistory } from "../../../packages/provisioning/src/compiler-pass-history";
+import { buildProgressPanel, orderBuildJobs } from "./host-build-progress";
 import { project } from "../../../packages/format/src/index";
 import { openClient } from "./client-link";
-import { budgetControl, storageSize } from "./host-budget";
+import { storageSize } from "./host-budget";
+import { storageRequest } from "./host-storage";
 import {
-  preparationSpace,
-  DISK_RESERVE,
-  BUILD_STOP_MARGIN,
-  cachedBuildSpace,
-  capacityBudget,
-  validBudget,
+  hostPreparationSpace,
+  NO_SIZE_LIMIT,
   type StorageInfo,
 } from "../../../packages/provisioning/src/capacity";
 import { createPreview, type HostPreview } from "./host-preview";
@@ -40,6 +44,7 @@ const text = (tag: string, value: string, cls?: string) => {
   if (cls) e.className = cls;
   return e;
 };
+let baseSourceBytes = 0;
 let source: Manifest,
   preview: HostPreview | undefined,
   points: Polygon = [],
@@ -50,12 +55,20 @@ let installedScope: SelectionScope,
   globalScope: SelectionScope,
   sourcePlan: PbfPlan | undefined;
 let storage: StorageInfo | undefined;
-type CachedChoice = { id: string; name: string; kind: string; bytes: number };
+type CachedChoice = {
+  id: string;
+  name: string;
+  kind: string;
+  bytes: number;
+  sha256?: string;
+};
 type AtlasChoice = {
   id: string;
   manifest: Manifest;
   available: SelectionScope["available"];
+  bytes?: number;
 };
+let oceanSource: { url: string; sha256: string } | undefined;
 let cachedSources: CachedChoice[] = [],
   atlasSources: AtlasChoice[] = [];
 let activeBuild = false,
@@ -117,18 +130,13 @@ function largeSelection() {
     16
   );
 }
-let outputBudget: ReturnType<typeof budgetControl> | undefined,
-  sourceBudget: ReturnType<typeof budgetControl> | undefined;
-const outputBytes = () =>
-  el<HTMLInputElement>("budget").valueAsNumber * 1048576;
-const sourceBytes = () =>
-  el<HTMLInputElement>("source-budget").valueAsNumber * 1048576;
 function spaceNeeded() {
-  if (cached()) return cachedBuildSpace(outputBytes(), largeSelection());
-  return preparationSpace(
-    outputBytes(),
-    global() ? (sourcePlan?.bytes ?? sourceBytes()) : undefined,
-  );
+  return hostPreparationSpace(NO_SIZE_LIMIT, {
+    cached: cached(),
+    partitioned: largeSelection(),
+    sourceBytes: remotePbf() ? sourcePlan?.bytes : undefined,
+    atlasBytes: atlasSource()?.bytes ?? baseSourceBytes,
+  });
 }
 function renderStorage() {
   const available = storage?.availableBytes;
@@ -139,40 +147,19 @@ function renderStorage() {
     const meter = el<HTMLMeterElement>("storage-meter");
     meter.max = storage!.totalBytes || 1;
     meter.value = available;
-    outputBudget?.setCapacity(
-      cached()
-        ? Math.max(
-            1048576,
-            Math.floor(
-              (largeSelection()
-                ? available - cachedBuildSpace(0, true)
-                : (available - cachedBuildSpace(0)) / 6) / 1048576,
-            ) * 1048576,
-          )
-        : capacityBudget(available, "output", global()),
-    );
-    sourceBudget?.setCapacity(capacityBudget(available, "source", global()));
   }
   const estimate = el("storage-estimate");
-  if (
-    !validBudget(outputBytes()) ||
-    (remotePbf() && !validBudget(sourceBytes()))
-  ) {
-    estimate.textContent = "Enter valid budgets to estimate preparation space.";
-    estimate.dataset.insufficient = "false";
+  estimate.dataset.insufficient = "false";
+  if (!closed || (remotePbf() && !sourcePlan)) {
+    estimate.textContent = remotePbf()
+      ? "Choose an area and find its covering download to check the source size."
+      : "Choose an area and capabilities. The finished file size depends on the selected data.";
     return;
   }
-  if (!closed) {
-    estimate.textContent =
-      "Choose an area to calculate the workspace allowance. This is a safety budget, not a prediction of the final file size.";
-    estimate.dataset.insufficient = "false";
-    return;
-  }
-  const needed = spaceNeeded();
-  estimate.dataset.insufficient = String(
-    available !== undefined && needed > available,
-  );
-  estimate.textContent = `${storageSize(needed)} ${cached() ? `minimum workspace allowance including ${storageSize(DISK_RESERVE)} reserve; compilation stops ${storageSize(BUILD_STOP_MARGIN)} above it` : "estimated workspace"}${remotePbf() && !sourcePlan ? " using the source download cap; check the source for a tighter estimate" : ""}.${available !== undefined ? (needed > available ? ` Exceeds available space by ${storageSize(needed - available)}.` : ` About ${storageSize(available - needed)} would remain.`) : ""}`;
+  const needed = spaceNeeded(),
+    risk = available !== undefined && needed > available;
+  estimate.dataset.insufficient = String(risk);
+  estimate.textContent = `${remotePbf() ? `${storageSize(sourcePlan!.bytes)} source PBF · ` : ""}${storageSize(needed)} rough planning allowance for temporary files, output and free-space reserve. Actual use may be higher or lower.${risk ? " This might exceed free space. You can review the warning and start anyway." : ""}`;
 }
 let checking = false,
   submitting = false,
@@ -191,7 +178,7 @@ const sourceArea = () => ({
   polygon: points,
   paddingCells: Number(el<HTMLSelectElement>("padding").value),
   profiles: selection().profiles,
-  maxSourceBytes: Number(el<HTMLInputElement>("source-budget").value) * 1048576,
+  maxSourceBytes: NO_SIZE_LIMIT,
 });
 const sourceKey = () => {
   const a = sourceArea();
@@ -235,22 +222,13 @@ function update() {
     el("source-plan").textContent =
       "Selection changed or source plan expired. Check the PBF source again.";
   }
-  const valid =
-    validBudget(outputBytes()) && (!remotePbf() || validBudget(sourceBytes()));
-  el<HTMLButtonElement>("check-source").disabled =
-    !closed || checking || !validBudget(sourceBytes());
+  el<HTMLButtonElement>("check-source").disabled = !closed || checking;
   el<HTMLButtonElement>("submit").disabled =
-    !closed ||
-    submitting ||
-    activeBuild ||
-    !sourceReady() ||
-    !valid ||
-    (remotePbf() && !sourcePlan) ||
-    (storage !== undefined && spaceNeeded() > storage.availableBytes);
+    !closed || submitting || !sourceReady() || (remotePbf() && !sourcePlan);
   el("submit").textContent = submitting
     ? "Starting…"
     : activeBuild
-      ? "Another build is running"
+      ? "Add to build queue ↗"
       : cached()
         ? "Build & host map ↗"
         : remotePbf()
@@ -273,6 +251,8 @@ function update() {
       {
         view: "Geometry and labels for display. Routing, search and feature extraction stay off.",
         geometry: "Display geometry only, without labels or query indexes.",
+        analysis:
+          "Tagged source objects, relationships, administrative areas and search. Independent of display categories; rendered map layers are optional.",
         "water-buildings":
           "Just water and building geometry, including available building heights.",
         all: "Every capability available in this source, including all travel modes, search and selectable features.",
@@ -393,6 +373,9 @@ async function switchPreview() {
 }
 function selection(): PackageSelection {
   return {
+    ...(sourceValue().startsWith("cached:") && oceanSource && checked("ocean")
+      ? { ocean: { sha256: oceanSource.sha256 } }
+      : {}),
     snapshot: scope().snapshot,
     name: el<HTMLInputElement>("name").value,
     polygon: points,
@@ -417,21 +400,13 @@ function selection(): PackageSelection {
       "roads",
       "land",
       "boundaries",
+      "objects",
     ].filter((k) => checked(`feature-${k}`)) as FeatureKind[],
     paddingCells: Number(el<HTMLSelectElement>("padding").value),
-    maxBytes: Number(el<HTMLInputElement>("budget").value) * 1024 * 1024,
+    maxBytes: NO_SIZE_LIMIT,
   };
 }
-async function request(path: string, body: unknown) {
-  const r = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error ?? "Request failed");
-  return data;
-}
+const request = storageRequest;
 const composition = new Set<string>();
 function updateComposition() {
   el<HTMLAnchorElement>("compose").href = openClient(
@@ -440,27 +415,79 @@ function updateComposition() {
   el("compose").textContent = composition.size
     ? `Compose ${composition.size} selected maps ↗`
     : "Compose hosted maps ↗";
+  el<HTMLButtonElement>("export").disabled = !composition.size;
   el("compose-count").textContent = composition.size
     ? "These sources will share one map view."
     : "Choose maps below, or open the full library.";
 }
+let exportJobs: PreparationJob[] = [];
+el<HTMLFormElement>("export-form").onsubmit = async (event) => {
+  event.preventDefault();
+  el<HTMLButtonElement>("export").disabled = true;
+  try {
+    await request("/admin/preparations/composition", {
+      name: el<HTMLInputElement>("export-name").value,
+      inputs: [...composition].map((id) => ({
+        id,
+        snapshot: exportJobs.find((j) => j.id === id)!.manifest!.snapshot,
+      })),
+    });
+    el("library-message").textContent =
+      "Combined file queued. Follow packing progress in Builds & checkpoints.";
+    await refresh();
+  } catch (error) {
+    el("library-message").textContent = String(error);
+  } finally {
+    updateComposition();
+  }
+};
 let lastJobs = "";
 let observations = new Map<string, CompilerObservation>();
 let nextObservationRead = 0;
+const passHistories = new Map<string, CompilerPassHistory>();
 function jobs(values: PreparationJob[]) {
+  exportJobs = values;
   const views = new Map<string, CompilerObservation>();
-  values = values.map((job) => {
+  values = orderBuildJobs(values).map((job) => {
     const view = currentObservation(observations.get(job.id), job);
-    if (!view) return job;
-    views.set(job.id, view);
-    return { ...job, progress: view.progress };
+    const key = `${job.id}:${job.createdAt}`;
+    if (!["running", "cancelling"].includes(job.state)) {
+      passHistories.delete(key);
+      return job;
+    }
+    const history = passHistories.get(key) ?? new CompilerPassHistory();
+    passHistories.set(key, history);
+    for (const pass of view?.previousPasses ?? []) history.record(pass);
+    const progress = view?.progress ?? job.progress;
+    history.record(progress);
+    if (view) views.set(job.id, view);
+    return { ...job, progress };
   });
+  hostActivity(
+    "Build",
+    "builds",
+    values.map((j) => ({
+      id: j.id,
+      name: j.name,
+      state: j.checkpointParking
+        ? j.checkpointParking.phase === "parked"
+          ? "cancelled"
+          : j.checkpointParking.phase === "error"
+            ? "failed"
+            : "running"
+        : j.state,
+    })),
+  );
   activeBuild = values.some((j) => ["running", "cancelling"].includes(j.state));
   for (const id of composition)
-    if (!values.some((j) => j.id === id && j.state === "ready"))
+    if (
+      !values.some(
+        (j) => j.id === id && j.state === "ready" && j.served !== false,
+      )
+    )
       composition.delete(id);
   updateComposition();
-  const identity = JSON.stringify(values);
+  const identity = JSON.stringify([values, cachedSources]);
   if (identity === lastJobs) return;
   lastJobs = identity;
   const list = el("jobs"),
@@ -470,11 +497,27 @@ function jobs(values: PreparationJob[]) {
   for (const job of values) {
     const card = text("article", "", "preparation-card"),
       heading = text("div", "", "preparation-card-heading");
+    const visibleState = job.checkpointParking
+      ? job.checkpointParking.phase === "parked"
+        ? "paused · NAS"
+        : "checkpoint transfer"
+      : job.state === "ready" && job.served === false
+        ? "retained"
+        : job.state;
+    card.dataset.state = job.checkpointParking ? "cancelled" : visibleState;
     heading.append(
       text("h3", job.name),
-      text("span", job.state, "state-badge"),
+      text("span", visibleState, "state-badge"),
     );
     card.append(heading);
+    if (job.workspace)
+      card.append(
+        text(
+          "p",
+          `${job.workspace.mode === "nas-assisted" ? "NAS-assisted build" : "Working disk"} · ${job.workspace.location.label} · ${job.workspace.reason === "low-space" ? "selected for extra space" : "preferred workspace"}`,
+          "quiet",
+        ),
+      );
     if (job.state === "ready" && job.manifest) {
       const m = job.manifest;
       if (job.sourcePlan)
@@ -488,16 +531,16 @@ function jobs(values: PreparationJob[]) {
       card.append(
         text(
           "p",
-          `${bytes(job.size!)} · z${m.minZoom}–${m.maxZoom} · ${m.tileLayers?.join(", ") || "no display geometry"}`,
+          `${bytes(job.size!)} · z${m.minZoom}–${m.maxZoom} · ${[...(m.tileLayers ?? []), ...(m.rasters ?? []).map((r) => r.name)].join(", ") || "no display geometry"}`,
         ),
         text("p", m.capabilities.join(" · "), "quiet"),
       );
       const links = document.createElement("div");
       links.className = "host-actions";
       for (const [label, url] of [
-        ["Open in client ↗", openClient({ map: job.id })],
-        ["Download .atlas", `/maps/${job.id}.atlas`],
-        ["Capabilities ↗", `/maps/${job.id}/api/capabilities`],
+        ["Open in client ↗", openClient({ maps: [job.id] })],
+        ["Download .atlas", `/admin/maps/${job.id}.atlas`],
+        ["Capabilities ↗", `/admin/maps/${job.id}/api/capabilities`],
       ]) {
         const a = document.createElement("a");
         a.href = url!;
@@ -509,8 +552,39 @@ function jobs(values: PreparationJob[]) {
         }
         links.append(a);
       }
+      if (m.capabilities.includes("source-objects")) {
+        const report = document.createElement("details");
+        report.append(text("summary", "Source retention report"));
+        let loaded = false;
+        report.ontoggle = () => {
+          if (!report.open || loaded) return;
+          loaded = true;
+          const body = text("p", "Reading report…", "quiet");
+          report.append(body);
+          void (async () => {
+            const reader = new AtlasReader(
+              new HttpSource(`/maps/${job.id}.atlas`),
+            );
+            try {
+              await reader.open();
+              const c = await objectCatalog(reader);
+              body.textContent = `${c.count.toLocaleString()} retained objects · ${Object.entries(
+                c.report.counts,
+              )
+                .map(([k, n]) => `${n.toLocaleString()} ${k}`)
+                .join(" · ")}. Source completeness: unknown.`;
+              report.append(text("pre", JSON.stringify(c.report, null, 2)));
+            } catch (e) {
+              body.textContent = String(e);
+            } finally {
+              reader.dispose();
+            }
+          })();
+        };
+        card.append(report);
+      }
       const publish = document.createElement("button");
-      publish.textContent = "Publish with Hashtree";
+      publish.textContent = "Publish / retry Hashtree";
       publish.onclick = () => void publishMap(job.id);
       links.append(publish);
       const details = document.createElement("details");
@@ -523,6 +597,11 @@ function jobs(values: PreparationJob[]) {
       select.className = "host-compose-select";
       check.type = "checkbox";
       check.checked = composition.has(job.id);
+      if (m.composition) {
+        check.disabled = true;
+        select.title =
+          "Already a combined file; compose its original members to export again";
+      }
       check.onchange = () => {
         if (check.checked) composition.add(job.id);
         else composition.delete(job.id);
@@ -531,15 +610,98 @@ function jobs(values: PreparationJob[]) {
       select.append(check, text("span", `Compose ${job.name}`));
       const actions = text("div", "", "host-actions host-card-actions");
       const reuse = text("button", "Use as source") as HTMLButtonElement;
+      reuse.hidden = !!job.imageImport || !job.manifest.tileLayers?.length;
       reuse.onclick = () => void chooseSource("atlas", `atlas:${job.id}`);
-      actions.append(reuse, deleteButton(job));
-      card.append(links, details, select, actions);
+      const serve = text(
+        "button",
+        job.served === false ? "Serve this revision again" : "Stop serving",
+      ) as HTMLButtonElement;
+      serve.onclick = async () => {
+        serve.disabled = true;
+        try {
+          await request("/admin/preparations/serve", {
+            id: job.id,
+            served: job.served === false,
+          });
+          await refresh();
+        } catch (e) {
+          serve.disabled = false;
+          serve.textContent = String(e);
+        }
+      };
+      const imagery = text("button", "Manage imagery") as HTMLButtonElement;
+      imagery.onclick = () =>
+        openRasterAmendment(
+          job,
+          [
+            { id: "demo", manifest: source! },
+            ...values
+              .filter((j) => j.state === "ready" && j.manifest)
+              .map((j) => ({ id: j.id, manifest: j.manifest! })),
+          ],
+          refresh,
+        );
+      imagery.hidden = !!m.composition;
+      actions.append(reuse, imagery, serve, deleteButton(job));
+      if (job.served === false) {
+        links.replaceChildren();
+        card.append(
+          text(
+            "p",
+            job.supersededBy
+              ? "Replaced by a newer revision. File retained locally; no longer advertised or served."
+              : "Not served. File retained locally.",
+            "quiet",
+          ),
+        );
+        check.disabled = true;
+      }
+      card.append(
+        links,
+        ...(m.composition
+          ? []
+          : [capabilityPanel(job, cachedSources, refresh)]),
+        details,
+        select,
+        actions,
+      );
       library.append(card);
     } else {
-      if (job.cachedSource && ["failed", "cancelled"].includes(job.state)) {
+      if (job.checkpointParking) {
+        const p = job.checkpointParking;
+        const bar = document.createElement("progress");
+        bar.max = p.total || 1;
+        bar.value = p.completed;
+        bar.setAttribute(
+          "aria-label",
+          `${p.phase} checkpoints for ${job.name}`,
+        );
+        card.append(
+          text(
+            "p",
+            p.phase === "parked"
+              ? "Build paused. Verified checkpoints are retained on the NAS. Restore them to the SSD before resuming."
+              : `${p.phase === "verifying" ? "Verifying the NAS copy" : p.phase === "error" ? "Checkpoint transfer needs attention" : "Copying checkpoints to the NAS"} · ${bytes(p.completed)} / ${bytes(p.total)}${p.total ? ` · ${((100 * p.completed) / p.total).toFixed(1)}%` : ""}`,
+          ),
+          bar,
+        );
+        if (p.error) card.append(text("p", p.error));
+        card.append(
+          text(
+            "p",
+            "Local data is reclaimed only after SHA-256 verification. Resume and delete remain locked until checkpoints are restored.",
+            "quiet",
+          ),
+        );
+        list.append(card);
+        continue;
+      }
+      if (["failed", "cancelled"].includes(job.state)) {
         const resume = text(
           "button",
-          "Resume saved build",
+          job.cachedSource || job.imageImport || job.archiveImport
+            ? "Resume saved build"
+            : "Queue again",
         ) as HTMLButtonElement;
         resume.onclick = async () => {
           resume.disabled = true;
@@ -553,72 +715,72 @@ function jobs(values: PreparationJob[]) {
         };
         card.append(resume);
       }
-      card.append(text("p", job.error ?? job.progress.message));
-      const view = views.get(job.id);
-      if (view) {
-        const stages = text("ol", "", "build-stage-list");
-        for (const stage of view.stages) {
-          const item = text(
-            "li",
-            `${stage.state === "done" ? "✓" : stage.state === "active" ? "●" : "○"} ${stage.label}`,
-          );
-          item.dataset.state = stage.state;
-          stages.append(item);
-        }
-        card.append(stages);
-      }
-      if (job.state === "running" || job.state === "cancelling") {
-        const progress = document.createElement("progress");
-        progress.max =
-          job.progress.stagePercent !== undefined
-            ? 100
-            : job.progress.total || 1;
-        if (job.progress.stagePercent !== undefined)
-          progress.value = job.progress.stagePercent;
-        else if (job.progress.total) progress.value = job.progress.completed;
-        progress.setAttribute("aria-label", `Preparing ${job.name}`);
+      card.append(
+        text(
+          "p",
+          job.recovery?.nextAttemptAt
+            ? job.progress.message
+            : (job.error ?? job.progress.message),
+        ),
+      );
+      if (job.recovery?.nextAttemptAt)
         card.append(
-          progress,
           text(
             "p",
-            `${job.progress.phase}${job.progress.total ? " · " + (job.progress.unit === "bytes" ? `${bytes(job.progress.completed)} / ${bytes(job.progress.total)}` : `${job.progress.completed.toLocaleString()} / ${job.progress.total.toLocaleString()} ${job.progress.unit ?? "blocks"}`) : ""} · ${bytes(job.progress.writtenBytes)} ${job.cachedSource ? "saved stage data" : "Atlas written"}`,
+            `Retry scheduled ${new Date(job.recovery.nextAttemptAt).toLocaleString()}. You can stop this recovery with Remove from queue.`,
             "quiet",
           ),
         );
-        if (job.progress.stage) {
-          const p = job.progress;
-          card.append(
+      if (job.recovery?.history.length) {
+        const history = document.createElement("details");
+        history.append(
+          text(
+            "summary",
+            `Recovery history · ${job.recovery.history.length} failures`,
+          ),
+        );
+        for (const attempt of job.recovery.history)
+          history.append(
             text(
               "p",
-              `${p.stageIndex ? `Routing stage ${p.stageIndex} of ${p.stageCount} · ` : ""}${p.stagePercent !== undefined ? `${p.stagePercent.toFixed(1)}% of this pass · ` : ""}${p.etaSeconds !== undefined ? `Approximately ${approximateDuration(p.etaSeconds)} left in this stage` : p.total ? "Estimating remaining time from throughput…" : "Working · this step has no reliable total yet"}`,
-              "quiet",
+              `${new Date(attempt.at).toLocaleString()} · ${attempt.action} · ${attempt.stage ?? "preparation"}${attempt.checkpointAt ? ` · checkpoint ${attempt.checkpointAt}` : ""}\n${attempt.error}`,
             ),
           );
-          if (p.checkpointAt)
-            card.append(
-              text(
-                "p",
-                `Checkpoint saved ${new Date(p.checkpointAt).toLocaleTimeString()} · Resume continues from the last committed batch.`,
-                "quiet",
-              ),
-            );
-          card.append(
-            text(
-              "p",
-              "Percentage and ETA apply to this pass only. Later passes have different costs; a reliable whole-build ETA is not available yet.",
-              "quiet",
-            ),
-          );
-        }
+        card.append(history);
+      }
+      if (job.state === "running" || job.state === "cancelling") {
+        card.append(
+          buildProgressPanel(
+            job,
+            views.get(job.id),
+            passHistories
+              .get(`${job.id}:${job.createdAt}`)
+              ?.previous(job.progress.stage),
+          ),
+        );
         const cancel = text(
           "button",
           job.state === "cancelling"
             ? "Stopping…"
-            : job.cachedSource
+            : job.cachedSource || job.imageImport || job.archiveImport
               ? "Stop & keep checkpoints"
               : "Cancel preparation",
         ) as HTMLButtonElement;
         cancel.disabled = job.state === "cancelling";
+        cancel.onclick = async () => {
+          cancel.disabled = true;
+          try {
+            await request(`/admin/preparations/${job.id}/cancel`, {});
+            await refresh();
+          } catch (e) {
+            el("message").textContent = String(e);
+            cancel.disabled = false;
+          }
+        };
+        card.append(cancel);
+      }
+      if (job.state === "queued") {
+        const cancel = text("button", "Remove from queue") as HTMLButtonElement;
         cancel.onclick = async () => {
           cancel.disabled = true;
           try {
@@ -640,7 +802,7 @@ function jobs(values: PreparationJob[]) {
     list.append(
       text(
         "p",
-        "No preparations running. Jobs continue when you leave this page.",
+        "No queued or running preparations. Add several areas; builds run one at a time and continue when you leave this page.",
         "quiet",
       ),
     );
@@ -686,10 +848,12 @@ async function refresh() {
         /* Native job progress remains available. */
       }
     }
-    jobs(data.jobs);
+    baseSourceBytes = data.sourceBytes ?? 0;
     const identity = JSON.stringify([cachedSources, atlasSources]);
+    oceanSource = data.oceanSource ?? undefined;
     cachedSources = data.cachedSources ?? [];
     atlasSources = data.atlasSources ?? [];
+    jobs(data.jobs);
     compilerReady = data.globalSource.ready;
     if (identity !== JSON.stringify([cachedSources, atlasSources])) {
       const previous = sourceValue();
@@ -707,6 +871,10 @@ async function refresh() {
       el("storage-free").textContent =
         "Server disk information is unavailable. Preparation will check again before starting.";
     renderStorage();
+    el("work-storage").textContent =
+      data.workStorage?.policy !== "map-disk" && data.workStorage?.location
+        ? `New cached-PBF builds: ${data.workStorage.policy === "always" ? "always use" : "overflow to"} ${data.workStorage.location.label}${data.workStorage.location.kind === "network" ? " · NAS assistance; databases stay on the map disk" : ""}. Server checks both locations before starting.`
+        : "New builds use the map disk for temporary files.";
     return data;
   } catch (e) {
     el("message").textContent = String(e);
@@ -744,7 +912,7 @@ function configureSource() {
   }
   for (const [k, label] of [
     ["land", "Landscape"],
-    ["water", "Water"],
+    ["water", "Lakes & rivers"],
     ["roads", "Roads & paths"],
     ["railways", "Railways"],
     ["buildings", "Buildings & heights"],
@@ -757,6 +925,27 @@ function configureSource() {
       a.layers.includes(k as MapLayer),
       true,
     );
+  checkbox(
+    "layers",
+    "ocean",
+    "Sea polygons · separate coastline snapshot",
+    !!oceanSource && sourceValue().startsWith("cached:"),
+    true,
+  );
+  const oceanNote = text(
+    "p",
+    sourceValue().startsWith("cached:") && oceanSource
+      ? "Sea polygons fill the ocean around coasts and islands. They use the separate coastline snapshot; keep this checked for blue seas."
+      : global()
+        ? oceanSource
+          ? "Lakes and rivers are included above. For blue seas, use a retained PBF from Source files with Sea polygons enabled."
+          : "Lakes and rivers are included above. Blue seas need an assembled coastline source configured on this server; coastline lines alone do not fill the ocean."
+        : "This excerpt reuses the source map’s water data. It includes sea fill only if the source map already contains it.",
+  );
+  oceanNote.id = "build-ocean-note";
+  el("layers").querySelector("#build-ocean-note")?.remove();
+  oceanNote.className = "hint";
+  el("layers").append(oceanNote);
   for (const [k, label] of [
     ["places", "Cities & villages"],
     ["streets", "Street names"],
@@ -791,6 +980,10 @@ function configureSource() {
     ["roads", "Roads & paths"],
     ["land", "Landscape"],
     [
+      "objects",
+      "Analysis source · tagged objects, site outlines, coasts & relationships",
+    ],
+    [
       "boundaries",
       "Administrative areas · countries, municipalities & districts",
     ],
@@ -803,8 +996,6 @@ function configureSource() {
       false,
     );
   el("global-controls").hidden = !remotePbf();
-  el<HTMLInputElement>("source-budget").disabled = !remotePbf();
-  el<HTMLInputElement>("source-budget").required = remotePbf();
   el("britain").hidden = !global();
   el("fit").textContent = global() ? "Fit world" : "Fit source";
   const local = el<HTMLSelectElement>(
@@ -832,7 +1023,7 @@ async function chooseSource(kind: string, value: string) {
   select.value = value;
   configureSource();
   await switchPreview();
-  document.getElementById("prepare")!.scrollIntoView({ behavior: "smooth" });
+  showHostSection("prepare");
 }
 function deleteButton(job: PreparationJob) {
   const button = text(
@@ -880,9 +1071,8 @@ function setupDeletion() {
   };
 }
 export async function startBuilder() {
+  document.addEventListener("atlas-jobs-changed", () => void refresh());
   updateComposition();
-  outputBudget = budgetControl("prepare-budget");
-  sourceBudget = budgetControl("prepare-source-budget");
   el("storage-refresh").onclick = async () => {
     const button = el<HTMLButtonElement>("storage-refresh");
     button.disabled = true;
@@ -933,10 +1123,6 @@ export async function startBuilder() {
     closed = true;
     mode = null;
     el<HTMLInputElement>("name").value = "Britain area";
-    el<HTMLInputElement>("budget").value = "32768";
-    el<HTMLInputElement>("budget").dispatchEvent(
-      new Event("input", { bubbles: true }),
-    );
     preview?.fitArea([-8.5, 49.75, 2, 61]);
     el("message").textContent =
       "Britain starter rectangle: includes Ireland and nearby coasts. Refine the area or draw a polygon, choose capabilities, then start when ready.";
@@ -987,12 +1173,21 @@ export async function startBuilder() {
       input.checked =
         !input.disabled &&
         (preset === "all" ||
-          (preset === "geometry" && k.startsWith("layer-")) ||
+          (preset === "analysis" &&
+            [
+              "feature-objects",
+              "feature-boundaries",
+              "search",
+              "reverse",
+              "query-peaks",
+            ].includes(k)) ||
+          (preset === "geometry" &&
+            (k.startsWith("layer-") || k === "ocean")) ||
           (preset === "view" &&
             (k.startsWith("layer-") ||
-              ["places", "streets", "pois"].includes(k))) ||
+              ["places", "streets", "pois", "ocean"].includes(k))) ||
           (preset === "water-buildings" &&
-            ["layer-water", "layer-buildings"].includes(k)));
+            ["layer-water", "layer-buildings", "ocean"].includes(k)));
     update();
   };
   el<HTMLFormElement>("form").onsubmit = async (event) => {
@@ -1019,7 +1214,7 @@ export async function startBuilder() {
           : {}),
       });
       el("message").textContent =
-        "Preparation started. You can leave this page and return to follow progress.";
+        "Preparation queued. Builds run one at a time and continue when you leave this page. Add another area now.";
       await refresh();
     } catch (e) {
       el("message").textContent = String(e);
@@ -1037,6 +1232,64 @@ export async function startBuilder() {
     (event) =>
       void chooseSource("cached", `cached:${(event as CustomEvent).detail.id}`),
   );
+  document.addEventListener("atlas-coverage-prepare", (event) => {
+    void (async () => {
+      const request = (event as CustomEvent<CoverageRequest>).detail;
+      await refresh();
+      const planet = cachedSources.find((s) => s.kind === "planet");
+      await chooseSource(
+        planet ? "cached" : "geofabrik",
+        planet ? `cached:${planet.id}` : "global",
+      );
+      for (const field of fields.values()) field.checked = false;
+      const family = request.family;
+      const keys = family.startsWith("tile:")
+        ? [`layer-${family.slice(5)}`]
+        : family.startsWith("routing:")
+          ? [`profile-${family.slice(8)}`]
+          : family === "labels"
+            ? ["places", "streets", "pois"]
+            : family === "search" || family === "addresses"
+              ? ["search", "reverse"]
+              : family === "query"
+                ? ["query-peaks"]
+                : family.startsWith("features:")
+                  ? [`feature-${family.slice(9)}`]
+                  : family === "features"
+                    ? [
+                        "feature-water",
+                        "feature-buildings",
+                        "feature-roads",
+                        "feature-railways",
+                        "feature-land",
+                      ]
+                    : [`feature-${family}`];
+      for (const key of keys) {
+        const field = fields.get(key);
+        if (field && !field.disabled) field.checked = true;
+      }
+      points = structuredClone(request.polygon);
+      closed = true;
+      mode = null;
+      el<HTMLInputElement>("name").value = `Coverage · ${family}`;
+      el<HTMLSelectElement>("preset").value = "custom";
+      el<HTMLInputElement>("min").value = "0";
+      el<HTMLInputElement>("max").value = String(
+        family.startsWith("tile:") ? Math.min(16, request.zoom) : 16,
+      );
+      preview?.fitArea([
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1])),
+      ]);
+      update();
+      el("message").textContent =
+        "Area and capability copied from coverage planning. Review the source and options before starting. A different source snapshot may not stitch with existing routing.";
+    })().catch((e) => {
+      el("message").textContent = String(e);
+    });
+  });
   el("form").addEventListener("input", update);
   el("form").addEventListener("change", update);
   el("jump").onclick = () => {

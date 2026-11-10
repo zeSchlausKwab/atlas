@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+import { routingAuthority } from "./routing-authority";
+import { Database } from "bun:sqlite";
+import { rm } from "node:fs/promises";
+import { writeSourceObjects } from "../../objects/src/source-build";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import { FEATURE_KINDS } from "../../features/src/index";
 import { compilerWorkers } from "../../compiler/src/settings";
@@ -484,6 +488,11 @@ async function main() {
           await Bun.file(`${importedPath}.routing.bin`).arrayBuffer(),
         ),
       });
+    const sourceFile = Bun.file(`${input}.source.json`);
+    const source = (await sourceFile.exists())
+      ? await sourceFile.json()
+      : { url: "local OSM PBF" };
+    const hash = await fileHash(input);
     const transport =
       !selected || selected.profiles.length
         ? flags["transport-from"]
@@ -492,7 +501,13 @@ async function main() {
               resolve(text(flags, "transport-from", "")),
               selected!,
             )
-          : await addTransport(writer, input, selected?.profiles)
+          : await addTransport(
+              writer,
+              input,
+              selected?.profiles,
+              routingAuthority(source),
+              hash,
+            )
         : undefined;
     console.log("Building search and street indexes…");
     const geocoding =
@@ -539,6 +554,53 @@ async function main() {
           await boundaries.add(feature);
         await boundaries.finish();
       }
+      if (!selected || selected.featureKinds.includes("objects")) {
+        const build = Bun.spawn(
+          [
+            "cargo",
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "atlas-osm-import",
+            "--bin",
+            "source-store",
+          ],
+          { cwd: ROOT, stdout: "inherit", stderr: "inherit" },
+        );
+        if ((await build.exited) !== 0)
+          throw new Error("Source object compiler build failed");
+        const path = output + ".source-objects.sqlite";
+        const proc = Bun.spawn(
+          [resolve(ROOT, "target/release/source-store"), input, path],
+          {
+            cwd: ROOT,
+            stdout: "inherit",
+            stderr: "inherit",
+            env: { ...process.env, ATLAS_SOURCE_OBJECTS: "1" },
+          },
+        );
+        if ((await proc.exited) !== 0)
+          throw new Error("Source object importer failed");
+        const db = new Database(path, { readonly: true });
+        try {
+          await writeSourceObjects(
+            db,
+            writer,
+            selected
+              ? {
+                  type: "Polygon",
+                  coordinates: [[...selected.polygon, selected.polygon[0]!]],
+                }
+              : undefined,
+            undefined,
+            console.log,
+          );
+        } finally {
+          db.close();
+          await rm(path, { force: true });
+        }
+      }
       const cells = buildFeatures(imported.geojson);
       const featureWriter = new PagedFeatureWriter(writer);
       for (const [key, features] of cells) {
@@ -550,11 +612,6 @@ async function main() {
         cells.delete(key);
       }
     }
-    const sourceFile = Bun.file(`${input}.source.json`);
-    const source = (await sourceFile.exists())
-      ? await sourceFile.json()
-      : { url: "local OSM PBF" };
-    const hash = await fileHash(input);
     const size = await writer.finish({
       format: "atlas",
       version: 1,
@@ -599,6 +656,10 @@ async function main() {
         skippedRelations: imported.skippedRelations,
       },
       capabilities: [
+        ...(flags.features &&
+        (!selected || selected.featureKinds.includes("objects"))
+          ? ["source-objects"]
+          : []),
         ...(flags.features &&
         (!selected || selected.featureKinds.includes("boundaries"))
           ? ["administrative-boundaries"]

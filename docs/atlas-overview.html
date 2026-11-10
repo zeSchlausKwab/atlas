@@ -1,0 +1,3422 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#203f38" />
+    <meta
+      name="description"
+      content="A visual field guide to Atlas: one geographic archive for maps, routing, search, spatial analysis and AI tools. Explore the format, architecture and working prototype."
+    />
+    <title>Atlas — a field guide to the stack</title>
+    <style>
+      :root {
+        --paper: #f5f3e9;
+        --white: #fffef8;
+        --ink: #203f38;
+        --muted: #576963;
+        --line: #cbd1c3;
+        --blue: #347c99;
+        --water: #b4d4df;
+        --green: #8aab71;
+        --orange: #c45131;
+        --sand: #e7d5af;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+        --serif:
+          "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+        scroll-padding-top: 100px;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.65 var(--sans);
+      }
+      a {
+        color: inherit;
+        text-underline-offset: 4px;
+        text-decoration-thickness: 1px;
+      }
+      a:hover {
+        color: var(--orange);
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: default;
+      }
+      button,
+      a,
+      input,
+      summary {
+        -webkit-tap-highlight-color: transparent;
+      }
+      :focus-visible {
+        outline: 3px solid var(--orange);
+        outline-offset: 5px;
+      }
+      button {
+        color: var(--ink);
+      }
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin: 0;
+      }
+      h1,
+      h2 {
+        font-family: var(--serif);
+        font-weight: 500;
+        line-height: 1.04;
+        letter-spacing: -0.045em;
+      }
+      h1 {
+        font-size: clamp(56px, 6.3vw, 94px);
+      }
+      h2 {
+        font-size: clamp(37px, 4.1vw, 60px);
+      }
+      h3 {
+        font-size: 21px;
+        line-height: 1.3;
+        letter-spacing: -0.02em;
+      }
+      h4 {
+        font-size: 17px;
+        line-height: 1.35;
+      }
+      p + p {
+        margin-top: 14px;
+      }
+      svg {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+      code,
+      .mono {
+        font-family: var(--mono);
+      }
+      code {
+        font-size: 0.81em;
+      }
+      button {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--white);
+      }
+      button:hover {
+        border-color: var(--ink);
+      }
+      .wrap {
+        width: min(1260px, calc(100% - 96px));
+        margin: auto;
+      }
+      .eyebrow {
+        font: 11px/1.5 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .small {
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .accent {
+        color: var(--orange);
+      }
+      .section {
+        padding: 92px 0;
+        border-top: 1px solid var(--line);
+        scroll-margin-top: 12px;
+      }
+      .section-head {
+        display: grid;
+        grid-template-columns: 1.08fr 1fr;
+        gap: 80px;
+        align-items: end;
+        margin-bottom: 42px;
+      }
+      .section-head p {
+        max-width: 520px;
+        color: var(--muted);
+        font-size: 18px;
+      }
+      .section-number {
+        display: block;
+        color: var(--orange);
+        margin-bottom: 18px;
+      }
+      .tag {
+        display: inline-block;
+        font: 10px/1.4 var(--mono);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 5px 8px;
+        border: 1px solid currentColor;
+        border-radius: 2px;
+      }
+      .tag-live {
+        color: #426747;
+        background: #ecf1e4;
+      }
+      .tag-next {
+        color: #96632d;
+        background: #faf0dc;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        padding: 13px 18px;
+        text-decoration: none;
+        border: 1px solid var(--ink);
+        border-radius: 3px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .button-primary {
+        background: var(--ink);
+        color: var(--white);
+      }
+      .button-primary:hover {
+        background: #31574b;
+        color: white;
+      }
+      .button-quiet {
+        border-color: var(--line);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+      .skip {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 50;
+        background: var(--white);
+        padding: 10px;
+        transform: translateY(-160%);
+      }
+      .skip:focus {
+        transform: none;
+      }
+      .masthead {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid var(--line);
+        background: rgba(245, 243, 233, 0.97);
+      }
+      .masthead-inner {
+        height: 76px;
+        display: flex;
+        align-items: center;
+        gap: 26px;
+      }
+      .brand {
+        font: 700 34px/1 var(--serif);
+        letter-spacing: -2px;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .brand span {
+        color: var(--orange);
+      }
+      .edition {
+        border-left: 1px solid var(--line);
+        padding-left: 24px;
+        color: var(--muted);
+      }
+      .nav {
+        display: flex;
+        gap: 22px;
+        margin-left: auto;
+        align-items: center;
+        font-size: 13px;
+      }
+      .nav a {
+        text-decoration: none;
+        padding: 10px 0;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+      .nav a[aria-current="location"] {
+        border-bottom-color: var(--orange);
+        color: var(--orange);
+      }
+      .print {
+        border: 0;
+        background: none;
+        padding: 8px;
+        font-size: 13px;
+      }
+      .hero {
+        position: relative;
+        padding: 72px 0 50px;
+        overflow: hidden;
+      }
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1fr 1.08fr;
+        gap: 60px;
+        align-items: center;
+      }
+      .hero .eyebrow {
+        margin-bottom: 24px;
+      }
+      .hero h1 em {
+        font-weight: 400;
+        color: var(--orange);
+      }
+      .hero-lead {
+        max-width: 460px;
+        font-size: 19px;
+        margin-top: 28px;
+        color: var(--muted);
+      }
+      .hero-art {
+        position: relative;
+      }
+      .hero-map {
+        border: 1px solid var(--line);
+        background: #e7ecdb;
+        box-shadow: 16px 16px 0 #e6e9dc;
+      }
+      .figure-caption {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        margin-top: 24px;
+        font: 10px/1.5 var(--mono);
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .hero-card {
+        position: absolute;
+        bottom: 54px;
+        right: 12px;
+        width: 240px;
+        padding: 20px 23px;
+        background: var(--white);
+        border: 1px solid var(--ink);
+        box-shadow: 5px 5px 0 var(--ink);
+      }
+      .hero-card h3 {
+        font: 27px/1.3 var(--serif);
+        margin: 8px 0;
+      }
+      .hero-card .file-dots {
+        display: flex;
+        gap: 5px;
+        margin-top: 14px;
+      }
+      .file-dots i {
+        display: block;
+        flex: 1;
+        height: 6px;
+        background: var(--blue);
+      }
+      .file-dots i:nth-child(2) {
+        background: var(--green);
+      }
+      .file-dots i:nth-child(3) {
+        background: var(--orange);
+      }
+      .file-dots i:nth-child(4) {
+        background: #8a7fa0;
+      }
+      .file-dots i:nth-child(5) {
+        background: #b49560;
+      }
+      .principles {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 35px;
+        margin-top: 60px;
+        padding-top: 27px;
+        border-top: 1px solid var(--line);
+      }
+      .principle {
+        display: grid;
+        grid-template-columns: 30px 1fr;
+        gap: 10px;
+      }
+      .principle .num {
+        font: 13px var(--mono);
+        color: var(--orange);
+        padding-top: 4px;
+      }
+      .principle strong {
+        font-size: 15px;
+      }
+      .principle p {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .note {
+        border-left: 3px solid var(--orange);
+        padding: 13px 18px;
+        background: #efeee4;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .explorer {
+        border: 1px solid var(--line);
+        background: var(--white);
+      }
+      .scenario-bar {
+        display: flex;
+        gap: 8px;
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--line);
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .scenario-bar > span {
+        margin-right: auto;
+      }
+      .scenario {
+        padding: 8px 13px;
+        font-size: 13px;
+      }
+      .scenario[aria-pressed="true"] {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: white;
+      }
+      .explorer-main {
+        display: grid;
+        grid-template-columns: 1fr 1.05fr;
+      }
+      .archive {
+        padding: 28px;
+        border-right: 1px solid var(--line);
+      }
+      .archive-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 18px;
+      }
+      .archive-title strong {
+        font: 25px var(--serif);
+      }
+      .mandatory {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .mandatory div {
+        padding: 9px 13px;
+        background: #e7ebe3;
+        border: 1px solid var(--line);
+        font: 11px var(--mono);
+      }
+      .family {
+        display: grid;
+        grid-template-columns: 18px 1fr auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 52px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        margin-top: 6px;
+        background: #f3f4ec;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .family:has(input:checked) {
+        background: #e2edf0;
+        border-color: #8eb1bf;
+      }
+      .family input {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--blue);
+        margin: 0;
+      }
+      .family strong {
+        font-size: 14px;
+      }
+      .family small {
+        font: 10px var(--mono);
+        color: var(--muted);
+      }
+      .family input:disabled + strong {
+        color: var(--muted);
+      }
+      .selection-summary {
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .reader-demo {
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+      }
+      .reader-demo h3 {
+        font: 28px var(--serif);
+        margin-bottom: 10px;
+      }
+      .reader-demo p {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .mini-map {
+        margin: 20px 0 18px;
+        border: 1px solid var(--line);
+        background: #eeeede;
+      }
+      .mini-map [data-layer] {
+        transition: opacity 0.18s;
+      }
+      .mini-map [data-layer][data-off] {
+        opacity: 0;
+      }
+      .read-flow {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        font: 10px var(--mono);
+        flex-wrap: wrap;
+      }
+      .read-flow span {
+        padding: 6px;
+        background: #edf1e8;
+      }
+      .explainer-foot {
+        padding: 15px 24px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .explainer-foot strong {
+        color: var(--ink);
+      }
+      .nojs {
+        padding: 12px;
+        background: #f8e4cb;
+      }
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0;
+        margin-top: 36px;
+      }
+      .station {
+        position: relative;
+        text-align: left;
+        border-radius: 0;
+        border: 0;
+        border-bottom: 3px solid var(--line);
+        background: transparent;
+        padding: 20px 22px 22px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-width: 0;
+      }
+      .station:before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: var(--line);
+      }
+      .station:after {
+        content: "→";
+        position: absolute;
+        right: 16px;
+        top: 21px;
+        font-size: 22px;
+        color: var(--muted);
+      }
+      .station:last-child:after {
+        content: none;
+      }
+      .station .step {
+        font: 12px var(--mono);
+        color: var(--muted);
+      }
+      .station .station-title {
+        font-size: 18px;
+      }
+      .station .station-copy {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .station[aria-pressed="true"] {
+        border-bottom-color: var(--orange);
+      }
+      .station[aria-pressed="true"] .step {
+        color: var(--orange);
+      }
+      .station-detail {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 32px;
+        padding: 26px;
+        background: #e9ecdf;
+        margin-top: 20px;
+        min-height: 140px;
+      }
+      .station-detail h3 {
+        font: 25px var(--serif);
+      }
+      .station-detail p {
+        font-size: 15px;
+      }
+      .architecture {
+        margin-top: 42px;
+        border: 1px solid var(--line);
+      }
+      .architecture-top {
+        padding: 17px 22px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .arch-row {
+        display: grid;
+        grid-template-columns: 155px 1fr;
+        gap: 22px;
+        padding: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+      .arch-row:last-child {
+        border: 0;
+      }
+      .arch-label {
+        font: 11px/1.7 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding-top: 7px;
+      }
+      .arch-modules {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .module {
+        padding: 16px 18px;
+        background: var(--white);
+        border: 1px solid var(--line);
+      }
+      .module h4 {
+        font-size: 15px;
+      }
+      .module p {
+        font-size: 12px;
+        margin-top: 7px;
+        color: var(--muted);
+      }
+      .module code {
+        display: block;
+        margin-top: 10px;
+        color: var(--blue);
+        font-size: 10px;
+        overflow-wrap: anywhere;
+      }
+      .arch-row.core {
+        background: #e3e9de;
+      }
+      .arch-row.delivery {
+        background: #e6eef0;
+      }
+      .arch-row.apps {
+        background: #eee7da;
+      }
+      .arch-caption {
+        margin-top: 16px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .capabilities {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 50px;
+      }
+      .capability {
+        display: grid;
+        grid-template-columns: 40px 1fr;
+        gap: 14px;
+        padding: 26px 0;
+        border-top: 1px solid var(--line);
+      }
+      .cap-icon {
+        width: 35px;
+        height: 35px;
+        border: 1px solid var(--line);
+        display: grid;
+        place-items: center;
+        font: 18px var(--mono);
+      }
+      .capability h3 {
+        margin: 0 0 10px;
+        font-size: 20px;
+      }
+      .capability p {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .capability .limit {
+        font-size: 12px;
+        line-height: 1.6;
+        margin-top: 13px;
+        padding-top: 10px;
+        border-top: 1px dotted var(--line);
+      }
+      .capability a {
+        font-size: 12px;
+        display: inline-block;
+        margin-top: 10px;
+      }
+      .capability .tag {
+        margin-bottom: 9px;
+      }
+      .three-decisions {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0;
+        border: 1px solid var(--line);
+        margin-top: 34px;
+      }
+      .decision {
+        padding: 22px;
+        border-right: 1px solid var(--line);
+      }
+      .decision:last-child {
+        border: 0;
+      }
+      .decision .eyebrow {
+        color: var(--orange);
+        margin-bottom: 9px;
+      }
+      .decision p {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 10px;
+      }
+      .decision h3 {
+        font: 26px var(--serif);
+      }
+      .ai-section {
+        background: var(--ink);
+        color: var(--paper);
+        border: 0;
+        position: relative;
+      }
+      .ai-section .section-head p,
+      .ai-section .muted {
+        color: #bfd0c5;
+      }
+      .ai-section .section-number {
+        color: #e8ae84;
+      }
+      .ai-section .section-head {
+        margin-bottom: 32px;
+      }
+      .ai-layout {
+        display: grid;
+        grid-template-columns: 1fr 1.15fr;
+        gap: 65px;
+      }
+      .prompt {
+        font: 26px/1.5 var(--serif);
+        border-left: 2px solid #e7af85;
+        padding: 0 0 0 22px;
+        margin: 20px 0 30px;
+      }
+      .ai-points {
+        display: grid;
+        gap: 19px;
+      }
+      .ai-points h3 {
+        font-size: 16px;
+      }
+      .ai-points p {
+        font-size: 13px;
+        color: #bfd0c5;
+        margin-top: 5px;
+      }
+      .trace {
+        border: 1px solid #5c776b;
+        background: #19372f;
+      }
+      .trace-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #5c776b;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .trace ol {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        counter-reset: trace;
+      }
+      .trace li {
+        position: relative;
+        padding: 19px 20px 19px 56px;
+        border-bottom: 1px solid #3e5c51;
+        counter-increment: trace;
+      }
+      .trace li:before {
+        content: "0" counter(trace);
+        position: absolute;
+        left: 20px;
+        top: 21px;
+        font: 11px var(--mono);
+        color: #b6c69e;
+      }
+      .trace li:last-child {
+        border: 0;
+      }
+      .trace code {
+        color: #c3d6a7;
+        font-size: 12px;
+      }
+      .trace p {
+        font-size: 13px;
+        color: #d1dbcf;
+        margin-top: 6px;
+      }
+      .trace-footer {
+        padding: 15px 20px;
+        background: #294b3e;
+        font-size: 12px;
+      }
+      .ai-boundary {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 28px;
+        border-top: 1px solid #587064;
+        margin-top: 42px;
+        padding-top: 30px;
+      }
+      .ai-boundary p {
+        font-size: 13px;
+        color: #bfd0c5;
+        margin-top: 6px;
+      }
+      .ai-boundary .arrow {
+        color: #e8ae84;
+        font-size: 30px;
+      }
+      .ai-section a {
+        color: #d6e7d9;
+      }
+      .ai-section .small {
+        margin-top: 28px;
+        color: #bfd0c5;
+      }
+      .federation {
+        display: grid;
+        grid-template-columns: 1.08fr 1fr;
+        gap: 54px;
+        align-items: center;
+      }
+      .network-map {
+        border: 1px solid var(--line);
+        background: #e8ecdf;
+        padding: 22px;
+      }
+      .network-key {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        margin-top: 15px;
+        font: 10px var(--mono);
+      }
+      .network-key span:before {
+        content: "";
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        background: var(--blue);
+        margin-right: 7px;
+      }
+      .network-key span:nth-child(2):before {
+        background: #b27b36;
+      }
+      .network-key span:nth-child(3):before {
+        background: var(--orange);
+      }
+      .network-list {
+        display: grid;
+        gap: 24px;
+      }
+      .network-item {
+        display: grid;
+        grid-template-columns: 28px 1fr;
+        gap: 12px;
+      }
+      .network-item > span {
+        font: 12px var(--mono);
+        color: var(--orange);
+        padding-top: 5px;
+      }
+      .network-item h3 {
+        font-size: 19px;
+      }
+      .network-item p {
+        font-size: 14px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+      .network-warning {
+        margin-top: 26px;
+      }
+      .revision {
+        display: grid;
+        grid-template-columns: 1fr 45px 1fr;
+        gap: 24px;
+        align-items: center;
+      }
+      .revision-file {
+        padding: 26px;
+        background: var(--white);
+        border: 1px solid var(--line);
+      }
+      .revision-file h3 {
+        font: 28px var(--serif);
+        margin: 10px 0 17px;
+      }
+      .revision-blocks {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+      .revision-blocks span {
+        background: #e7eddf;
+        text-align: center;
+        padding: 11px 2px;
+        font: 11px var(--mono);
+      }
+      .revision-blocks .new-block {
+        background: #c9e2ec;
+        border: 1px solid var(--blue);
+      }
+      .revision-blocks .empty-block {
+        background: transparent;
+        border: 1px dashed var(--line);
+        color: var(--muted);
+      }
+      .revision-file .small {
+        margin-top: 18px;
+        color: var(--muted);
+      }
+      .revision-arrow {
+        text-align: center;
+        font: 34px var(--serif);
+      }
+      .two-options {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 38px;
+        margin-top: 34px;
+      }
+      .two-options h3 {
+        font-size: 20px;
+      }
+      .two-options p {
+        font-size: 14px;
+        color: var(--muted);
+        margin-top: 8px;
+      }
+      .two-options code {
+        overflow-wrap: anywhere;
+      }
+      .revision-note {
+        margin-top: 24px;
+      }
+      .reality {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 46px;
+      }
+      .reality-column {
+        padding: 26px;
+        border-top: 3px solid var(--green);
+        background: #eaeee2;
+      }
+      .reality-column.next {
+        border-color: #c19c65;
+        background: #f0e9d9;
+      }
+      .reality-column ul {
+        padding-left: 19px;
+        margin: 15px 0 0;
+      }
+      .reality-column li {
+        font-size: 14px;
+        margin: 10px 0;
+      }
+      .reality-column h3 {
+        font: 27px var(--serif);
+      }
+      .reality-column .tag {
+        margin-bottom: 14px;
+      }
+      .footnote {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 25px;
+      }
+      .start {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 60px;
+      }
+      .terminal {
+        background: #203f38;
+        color: #f1f3e8;
+        padding: 26px 30px;
+        font: 13px/2.1 var(--mono);
+        overflow-x: auto;
+        border-top: 3px solid var(--orange);
+        margin: 0;
+      }
+      .terminal .comment {
+        color: #b6c69e;
+      }
+      .start p {
+        font-size: 15px;
+        color: var(--muted);
+        margin-top: 22px;
+      }
+      .start-links {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        margin-top: 18px;
+      }
+      .docs-index {
+        margin-top: 50px;
+      }
+      .docs-index summary {
+        font-weight: 600;
+        cursor: pointer;
+        border-top: 1px solid var(--line);
+        padding: 20px 0;
+      }
+      .docs-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0 28px;
+      }
+      .docs-grid a {
+        padding: 11px 0;
+        border-bottom: 1px solid var(--line);
+        text-decoration: none;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .docs-grid a:after {
+        content: "↗";
+      }
+      .repo-map {
+        margin-top: 24px;
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+      }
+      .repo-map caption {
+        text-align: left;
+        padding: 16px 0;
+        font-weight: 600;
+      }
+      .repo-map td,
+      .repo-map th {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      .repo-map th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .repo-map code {
+        overflow-wrap: anywhere;
+      }
+      .site-footer {
+        border-top: 1px solid var(--line);
+        padding: 28px 0;
+        display: flex;
+        justify-content: space-between;
+        gap: 25px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .site-footer .brand {
+        font-size: 28px;
+        color: var(--ink);
+      }
+      .inline-link {
+        font-size: 13px;
+        display: inline-block;
+        margin-top: 18px;
+      }
+      .print-only {
+        display: none;
+      }
+      @media (min-width: 1400px) {
+        .hero {
+          padding-top: 90px;
+        }
+        .hero-grid {
+          gap: 80px;
+        }
+      }
+      @media (max-width: 1100px) {
+        .wrap {
+          width: calc(100% - 56px);
+        }
+        .edition {
+          display: none;
+        }
+        .nav {
+          gap: 18px;
+        }
+        .hero-grid {
+          gap: 32px;
+        }
+        .hero-card {
+          right: -5px;
+          width: 210px;
+        }
+        .section-head {
+          gap: 40px;
+        }
+        .arch-row {
+          grid-template-columns: 115px 1fr;
+          gap: 12px;
+        }
+        .module {
+          padding: 14px 12px;
+        }
+        .ai-layout {
+          gap: 35px;
+        }
+        .pipeline .station-title {
+          font-size: 16px;
+        }
+        .station {
+          padding-right: 14px;
+        }
+        .station:after {
+          right: 8px;
+        }
+        .capabilities {
+          column-gap: 30px;
+        }
+        .family small {
+          font-size: 9px;
+        }
+      }
+      @media (max-width: 800px) {
+        html {
+          scroll-padding-top: 122px;
+        }
+        .wrap {
+          width: calc(100% - 40px);
+        }
+        .masthead-inner {
+          height: auto;
+          min-height: 66px;
+          flex-wrap: wrap;
+          gap: 0;
+          padding-top: 13px;
+        }
+        .brand {
+          font-size: 29px;
+        }
+        .print {
+          margin-left: auto;
+        }
+        .nav {
+          order: 3;
+          flex: 1 1 100%;
+          overflow-x: auto;
+          gap: 24px;
+          margin: 6px 0 0;
+        }
+        .nav a {
+          padding: 7px 0 10px;
+          font-size: 12px;
+        }
+        .hero {
+          padding: 38px 0;
+        }
+        .hero-grid {
+          grid-template-columns: 1fr;
+          gap: 35px;
+        }
+        .hero h1 {
+          max-width: 560px;
+          font-size: 65px;
+        }
+        .hero-lead {
+          max-width: 570px;
+        }
+        .hero-art {
+          max-width: 600px;
+          width: 100%;
+          margin: auto;
+        }
+        .hero-card {
+          bottom: 42px;
+          right: 12px;
+        }
+        .hero-map {
+          box-shadow: 8px 8px 0 #e6e9dc;
+        }
+        .principles {
+          gap: 15px;
+          margin-top: 40px;
+        }
+        .principle {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+        .section {
+          padding: 58px 0;
+        }
+        .section-head {
+          grid-template-columns: 1fr;
+          gap: 20px;
+          margin-bottom: 30px;
+        }
+        .section-head p {
+          font-size: 16px;
+          max-width: 650px;
+        }
+        .explorer-main {
+          grid-template-columns: 1fr;
+        }
+        .archive {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .reader-demo {
+          padding: 24px;
+        }
+        .mini-map {
+          max-height: 260px;
+          width: 100%;
+        }
+        .scenario-bar {
+          padding: 16px;
+        }
+        .scenario-bar > span {
+          flex-basis: 100%;
+          margin-bottom: 4px;
+        }
+        .pipeline {
+          grid-template-columns: 1fr 1fr;
+          gap: 8px 20px;
+        }
+        .station:last-child {
+          grid-column: 1 / -1;
+        }
+        .station {
+          padding: 17px 15px 14px 0;
+        }
+        .station .station-copy {
+          max-width: 300px;
+        }
+        .station-detail {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .arch-row {
+          grid-template-columns: 1fr;
+          gap: 12px;
+          padding: 20px;
+        }
+        .arch-label {
+          padding: 0;
+        }
+        .arch-modules {
+          gap: 10px;
+        }
+        .module h4 {
+          font-size: 14px;
+        }
+        .module code {
+          font-size: 9px;
+        }
+        .capabilities {
+          column-gap: 25px;
+        }
+        .capability {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        .three-decisions {
+          grid-template-columns: 1fr;
+        }
+        .decision {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .ai-layout,
+        .federation,
+        .start {
+          grid-template-columns: 1fr;
+          gap: 32px;
+        }
+        .ai-boundary {
+          gap: 16px;
+        }
+        .revision {
+          gap: 14px;
+          grid-template-columns: 1fr 20px 1fr;
+        }
+        .revision-file {
+          padding: 18px;
+        }
+        .revision-file h3 {
+          font-size: 22px;
+        }
+        .revision-blocks {
+          grid-template-columns: 1fr 1fr;
+        }
+        .revision-arrow {
+          font-size: 24px;
+        }
+        .reality {
+          gap: 20px;
+        }
+        .reality-column {
+          padding: 20px;
+        }
+        .docs-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+        .site-footer {
+          flex-wrap: wrap;
+        }
+      }
+      @media (max-width: 480px) {
+        .wrap {
+          width: calc(100% - 32px);
+        }
+        h1,
+        .hero h1 {
+          font-size: 55px;
+        }
+        h2 {
+          font-size: 38px;
+        }
+        .hero-lead {
+          font-size: 17px;
+        }
+        .hero-card {
+          width: 184px;
+          padding: 15px;
+          bottom: 40px;
+        }
+        .hero-card h3 {
+          font-size: 23px;
+        }
+        .hero-card .small {
+          font-size: 11px;
+        }
+        .figure-caption {
+          font-size: 9px;
+          gap: 10px;
+        }
+        .principles {
+          grid-template-columns: 1fr;
+          gap: 19px;
+        }
+        .principle {
+          grid-template-columns: 26px 1fr;
+        }
+        .archive,
+        .reader-demo {
+          padding: 18px;
+        }
+        .family {
+          grid-template-columns: 16px 1fr;
+        }
+        .family small {
+          grid-column: 2;
+        }
+        .archive-title .eyebrow {
+          font-size: 9px;
+        }
+        .archive-title strong {
+          font-size: 23px;
+        }
+        .arch-modules {
+          grid-template-columns: 1fr;
+        }
+        .module code {
+          font-size: 11px;
+        }
+        .architecture-top {
+          flex-wrap: wrap;
+          gap: 5px;
+        }
+        .capabilities {
+          grid-template-columns: 1fr;
+        }
+        .capability {
+          grid-template-columns: 32px 1fr;
+          gap: 14px;
+        }
+        .cap-icon {
+          width: 30px;
+          height: 30px;
+        }
+        .ai-boundary {
+          grid-template-columns: 1fr;
+        }
+        .ai-boundary .arrow {
+          transform: rotate(90deg);
+          width: 30px;
+          text-align: center;
+        }
+        .prompt {
+          font-size: 23px;
+        }
+        .network-map {
+          padding: 12px;
+        }
+        .revision {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+        .revision-arrow {
+          transform: rotate(90deg);
+        }
+        .revision-blocks {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .two-options,
+        .reality {
+          grid-template-columns: 1fr;
+          gap: 24px;
+        }
+        .docs-grid {
+          grid-template-columns: 1fr;
+        }
+        .terminal {
+          padding: 19px;
+          font-size: 11px;
+        }
+        .repo-map th,
+        .repo-map td {
+          padding: 10px 5px;
+          font-size: 12px;
+        }
+        .site-footer {
+          font-size: 11px;
+        }
+        .station-detail {
+          padding: 20px;
+        }
+        .scenario {
+          font-size: 12px;
+          padding: 8px 10px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *:before,
+        *:after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+      @media print {
+        html {
+          scroll-padding: 0;
+        }
+        body {
+          font-size: 11px;
+          background: white;
+          color: #18352e;
+        }
+        .wrap {
+          width: 100%;
+        }
+        .masthead {
+          position: static;
+          background: white;
+        }
+        .masthead-inner {
+          height: 50px;
+          min-height: 0;
+          padding: 0;
+        }
+        .nav,
+        .print,
+        .skip,
+        .actions,
+        .scenario-bar,
+        .nojs {
+          display: none !important;
+        }
+        .hero {
+          padding: 20px 0;
+        }
+        .hero-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 35px;
+        }
+        .hero h1 {
+          font-size: 49px;
+        }
+        .hero-lead {
+          font-size: 14px;
+        }
+        .hero-map {
+          box-shadow: none;
+        }
+        .hero-card {
+          width: 180px;
+          right: 0;
+          bottom: 40px;
+        }
+        .hero-card h3 {
+          font-size: 22px;
+        }
+        .principles {
+          margin-top: 25px;
+        }
+        .section {
+          padding: 30px 0;
+          break-inside: auto;
+        }
+        .section-head {
+          grid-template-columns: 1fr 1fr;
+          gap: 35px;
+          margin-bottom: 25px;
+        }
+        h2 {
+          font-size: 32px;
+        }
+        .section-head p {
+          font-size: 13px;
+        }
+        .ai-section {
+          background: #f0f3ec;
+          color: #18352e;
+        }
+        .ai-section .section-head p,
+        .ai-section .muted,
+        .ai-section .small,
+        .ai-points p,
+        .ai-boundary p {
+          color: #345146;
+        }
+        .trace {
+          background: white;
+          color: #18352e;
+        }
+        .trace p,
+        .trace code {
+          color: #18352e;
+        }
+        .trace-footer {
+          background: #e1e8da;
+        }
+        .ai-section a {
+          color: #18352e;
+        }
+        .ai-layout {
+          gap: 28px;
+        }
+        .prompt {
+          font-size: 20px;
+        }
+        .ai-boundary {
+          margin-top: 20px;
+          padding-top: 20px;
+        }
+        .print-only {
+          display: block;
+        }
+        .station {
+          break-inside: avoid;
+        }
+        .station-detail {
+          min-height: 0;
+        }
+        .capability,
+        .module,
+        .revision-file,
+        .trace li,
+        .reality-column {
+          break-inside: avoid;
+        }
+        .hero-art,
+        .network-map,
+        .mini-map {
+          break-inside: avoid;
+        }
+        .docs-index summary {
+          display: none;
+        }
+        .docs-index > *:not(summary) {
+          display: block !important;
+        }
+        .docs-grid {
+          display: grid !important;
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .site-footer {
+          padding: 15px 0;
+        }
+        a {
+          text-decoration: none;
+        }
+        * {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="masthead">
+      <div class="wrap masthead-inner">
+        <a class="brand" href="#main" aria-label="Atlas field guide home"
+          >◭ atlas<span>.</span></a
+        >
+        <span class="edition eyebrow">The stack<br />Field guide / 01</span>
+        <nav class="nav" aria-label="Guide sections">
+          <a href="#archive">The file</a><a href="#architecture">Architecture</a
+          ><a href="#features">Features</a><a href="#intelligence">AI</a
+          ><a href="#network">Network</a><a href="#start">Run it</a>
+        </nav>
+        <button class="print" id="print-guide" type="button" hidden>
+          Print ↗
+        </button>
+      </div>
+    </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-grid">
+          <div>
+            <p class="eyebrow">A geographic format. An entire map stack.</p>
+            <h1 id="hero-title">
+              One file.<br />Many ways to<br /><em>read a place.</em>
+            </h1>
+            <p class="hero-lead">
+              Atlas puts the map, the network and the meaning of a place in one
+              portable archive. Read just what you need. Render it, route
+              through it, or ask questions of it.
+            </p>
+            <div class="actions">
+              <a class="button button-primary" href="#archive"
+                >Explore the file <span>↓</span></a
+              ><a class="button button-quiet" href="#architecture"
+                >See the architecture <span>↗</span></a
+              >
+            </div>
+            <p class="small muted" style="margin-top: 20px">
+              Working prototype · Code-grounded overview · 6 November 2026
+            </p>
+          </div>
+          <figure class="hero-art" style="margin: 0">
+            <svg
+              class="hero-map"
+              viewBox="0 0 600 560"
+              role="img"
+              aria-labelledby="hero-map-title hero-map-desc"
+            >
+              <title id="hero-map-title">
+                One place, many kinds of geographic knowledge
+              </title>
+              <desc id="hero-map-desc">
+                Illustrative map showing buildings, a river, roads, a route
+                crossing overlapping map regions, and a park with analysis
+                rings.
+              </desc>
+              <defs>
+                <pattern
+                  id="hero-grid"
+                  width="40"
+                  height="40"
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d="M40 0H0V40"
+                    fill="none"
+                    stroke="#c7d0bc"
+                    stroke-width=".7"
+                  />
+                </pattern>
+                <pattern
+                  id="building-grid"
+                  width="53"
+                  height="52"
+                  patternUnits="userSpaceOnUse"
+                  patternTransform="rotate(-15)"
+                >
+                  <path
+                    d="M8 9h29v20H8z M10 33h13v10H10z M28 33h12v10H28z"
+                    fill="#c8c1aa"
+                  />
+                  <path d="M2 0v52M0 49h53" stroke="#fffdf3" stroke-width="5" />
+                </pattern>
+                <clipPath id="hero-city">
+                  <path
+                    d="M0 150L245 155 247 340 373 430 340 560H0Z M397 0H600V560H470L477 372 374 292Z"
+                  />
+                </clipPath>
+              </defs>
+              <rect width="600" height="560" fill="#e8ecdc" />
+              <rect width="600" height="560" fill="url(#hero-grid)" />
+              <path
+                d="M0 0h195l61 71-30 92-127-24L0 156Z M57 390l131-13 65 69-34 114H0v-87Z M451 92l149-32v157l-147 28-35-76Z"
+                fill="#b8cc9a"
+              />
+              <rect
+                width="600"
+                height="560"
+                fill="url(#building-grid)"
+                clip-path="url(#hero-city)"
+              />
+              <path
+                d="M284-30C239 108 294 169 298 245S303 365 371 405 411 503 401 590"
+                fill="none"
+                stroke="#82b5c6"
+                stroke-width="58"
+              />
+              <path
+                d="M282-30C237 108 292 169 296 245S301 365 369 405 409 503 399 590"
+                fill="none"
+                stroke="#b6d9e2"
+                stroke-width="45"
+              />
+              <g fill="none" stroke="#fffdf4" stroke-width="17">
+                <path
+                  d="M-20 279L630 97M91-20l111 271 136 324M-20 431l259-47 354-111M497-20l-37 294 138 322"
+                />
+              </g>
+              <g fill="none" stroke="#d6ae71" stroke-width="4">
+                <path
+                  d="M-20 279L630 97M91-20l111 271 136 324M-20 431l259-47 354-111M497-20l-37 294 138 322"
+                />
+              </g>
+              <path
+                d="M0 346L607 224"
+                fill="none"
+                stroke="#84988a"
+                stroke-width="3"
+                stroke-dasharray="5 4"
+              />
+              <rect
+                x="22"
+                y="25"
+                width="316"
+                height="502"
+                fill="none"
+                stroke="#527f94"
+                stroke-width="2"
+                stroke-dasharray="7 6"
+              />
+              <rect
+                x="261"
+                y="25"
+                width="317"
+                height="502"
+                fill="none"
+                stroke="#a07d3f"
+                stroke-width="2"
+                stroke-dasharray="7 6"
+              />
+              <g fill="none" stroke="#739c55">
+                <circle cx="103" cy="78" r="66" stroke-width="1.5" />
+                <circle cx="103" cy="78" r="43" stroke-width="1.5" />
+                <circle cx="103" cy="78" r="21" stroke-width="2" />
+              </g>
+              <path
+                d="M139 389L216 375 191 276 326 236 457 198 473 133"
+                fill="none"
+                stroke="#fffaf0"
+                stroke-width="13"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M139 389L216 375 191 276 326 236 457 198 473 133"
+                fill="none"
+                stroke="#c45131"
+                stroke-width="6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <g fill="#c45131" stroke="#fffef8" stroke-width="4">
+                <circle cx="139" cy="389" r="10" />
+                <circle cx="473" cy="133" r="10" />
+              </g>
+              <g font-family="Consolas,monospace" font-size="11" fill="#203f38">
+                <text x="39" y="49">SOURCE A</text>
+                <text x="489" y="49">SOURCE B</text>
+                <text x="42" y="179">PARK / OBJECTS</text>
+                <text x="32" y="508">48° N / ILLUSTRATION</text>
+              </g>
+              <path
+                d="M544 343v-42l-6 12m6-12 6 12"
+                stroke="#203f38"
+                fill="none"
+                stroke-width="2"
+              />
+              <text
+                x="540"
+                y="292"
+                font-family="Consolas,monospace"
+                font-size="12"
+                fill="#203f38"
+              >
+                N
+              </text>
+            </svg>
+            <div class="hero-card">
+              <span class="eyebrow">Self-contained archive</span>
+              <h3>this-place.atlas</h3>
+              <p class="small muted">
+                Geometry · routes · search<br />Objects · imagery · custom data
+              </p>
+              <div class="file-dots" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i>
+              </div>
+            </div>
+            <figcaption class="figure-caption">
+              <span>01 / The map is also a dataset</span
+              ><span>Schematic · not real geography</span>
+            </figcaption>
+          </figure>
+        </div>
+        <div class="principles">
+          <div class="principle">
+            <span class="num">01</span>
+            <div>
+              <strong>One finished artifact</strong>
+              <p>
+                Copy, host or open a file. Its retained data travels with it.
+              </p>
+            </div>
+          </div>
+          <div class="principle">
+            <span class="num">02</span>
+            <div>
+              <strong>Read with a purpose</strong>
+              <p>
+                A building display does not need a road graph or search index.
+              </p>
+            </div>
+          </div>
+          <div class="principle">
+            <span class="num">03</span>
+            <div>
+              <strong>Compute close to the data</strong>
+              <p>
+                Use local workers and caches, or ask a host to run an operation.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="archive">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number">01 / Inside the format</span>
+              <h2>One archive.<br />Different appetites.</h2>
+            </div>
+            <p>
+              A map is a collection of independently addressable data families.
+              The consumer reads the manifest and relevant directory pages, then
+              fetches only the blocks its task needs.
+            </p>
+          </div>
+          <div class="explorer">
+            <div
+              class="scenario-bar"
+              role="group"
+              aria-label="Illustrative task presets"
+            >
+              <span class="eyebrow">Try a task</span
+              ><button
+                type="button"
+                class="scenario"
+                disabled
+                data-scenario="view"
+                aria-pressed="true"
+              >
+                Just view the map</button
+              ><button
+                type="button"
+                class="scenario"
+                disabled
+                data-scenario="route"
+                aria-pressed="false"
+              >
+                Find a route</button
+              ><button
+                type="button"
+                class="scenario"
+                disabled
+                data-scenario="analyse"
+                aria-pressed="false"
+              >
+                Analyse a place</button
+              ><button
+                type="button"
+                class="scenario"
+                disabled
+                data-scenario="offline"
+                aria-pressed="false"
+              >
+                Save an area
+              </button>
+            </div>
+            <div class="explorer-main">
+              <div class="archive">
+                <div class="archive-title">
+                  <strong>region.atlas</strong
+                  ><span class="eyebrow">Logical contents</span>
+                </div>
+                <div class="mandatory">
+                  <div>Header + manifest</div>
+                  <div>Block directory</div>
+                </div>
+                <fieldset style="border: 0; padding: 0; margin: 0">
+                  <legend class="small muted" style="padding: 0 0 7px">
+                    Choose the data families for this illustration
+                  </legend>
+                  <label class="family"
+                    ><input
+                      type="checkbox"
+                      disabled
+                      value="geometry"
+                      checked
+                    /><strong>Display geometry</strong
+                    ><small>land · water · buildings · roads</small></label
+                  >
+                  <label class="family"
+                    ><input
+                      type="checkbox"
+                      disabled
+                      value="labels"
+                      checked
+                    /><strong>Map labels</strong
+                    ><small>places · streets · POIs</small></label
+                  >
+                  <label class="family"
+                    ><input type="checkbox" disabled value="imagery" /><strong
+                      >Raster imagery</strong
+                    ><small>satellite · relief · placed images</small></label
+                  >
+                  <label class="family"
+                    ><input type="checkbox" disabled value="routing" /><strong
+                      >Transport networks</strong
+                    ><small>graph cells · costs · turns</small></label
+                  >
+                  <label class="family"
+                    ><input type="checkbox" disabled value="search" /><strong
+                      >Search &amp; geocoding</strong
+                    ><small>names · addresses · streets</small></label
+                  >
+                  <label class="family"
+                    ><input type="checkbox" disabled value="objects" /><strong
+                      >Source objects &amp; features</strong
+                    ><small>tags · shapes · relations</small></label
+                  >
+                  <label class="family"
+                    ><input type="checkbox" disabled value="custom" /><strong
+                      >Custom data blocks</strong
+                    ><small>extension-defined schemas</small></label
+                  >
+                </fieldset>
+                <p
+                  class="selection-summary"
+                  id="selection-summary"
+                  aria-live="polite"
+                >
+                  2 of 7 optional families selected. Metadata is always
+                  available.
+                </p>
+              </div>
+              <div class="reader-demo">
+                <span class="eyebrow accent" style="margin-bottom: 12px"
+                  >Consumer read plan</span
+                >
+                <h3 id="task-title">A picture of the place.</h3>
+                <p id="task-copy">
+                  Visible geometry and labels are enough. Routing, source
+                  objects and the geocoder can stay unread.
+                </p>
+                <svg
+                  class="mini-map"
+                  viewBox="0 0 500 250"
+                  role="img"
+                  aria-labelledby="mini-title mini-desc"
+                >
+                  <title id="mini-title">
+                    Selected capabilities, illustrated
+                  </title>
+                  <desc id="mini-desc">
+                    An illustrative view changes as optional data families are
+                    selected. This is a conceptual diagram, not a running Atlas
+                    map.
+                  </desc>
+                  <defs>
+                    <pattern
+                      id="mini-buildings"
+                      width="42"
+                      height="38"
+                      patternUnits="userSpaceOnUse"
+                      patternTransform="rotate(-12)"
+                    >
+                      <rect x="6" y="6" width="26" height="22" fill="#c5bda6" />
+                    </pattern>
+                  </defs>
+                  <rect width="500" height="250" fill="#ececdd" />
+                  <g data-layer="imagery" data-off>
+                    <rect width="500" height="250" fill="#74855a" />
+                    <path
+                      d="M0 50L500 175M0 120L500 245M120 0L90 250M330 0L270 250"
+                      stroke="#a6b88b"
+                      stroke-width="35"
+                      opacity=".7"
+                    />
+                  </g>
+                  <g data-layer="geometry">
+                    <path
+                      d="M0 0h160l-20 88-140 12Z M365 148l135-7v109H335Z"
+                      fill="#b1c792"
+                    />
+                    <path
+                      d="M0 103L175 84 190 250H0Z M305 0H500V138L330 155Z"
+                      fill="url(#mini-buildings)"
+                    />
+                    <path
+                      d="M227-10C182 96 295 141 254 260"
+                      stroke="#8bbacb"
+                      stroke-width="31"
+                      fill="none"
+                    />
+                    <path
+                      d="M-5 203L505 57M83-5L148 260"
+                      stroke="#fffdf5"
+                      stroke-width="12"
+                    />
+                    <path
+                      d="M-5 203L505 57M83-5L148 260"
+                      stroke="#cda36b"
+                      stroke-width="3"
+                    />
+                  </g>
+                  <g data-layer="objects" data-off>
+                    <path
+                      d="M28 18h111l-9 54-103 8Z"
+                      fill="#6eab7c"
+                      fill-opacity=".35"
+                      stroke="#3f7853"
+                      stroke-width="2"
+                      stroke-dasharray="5 3"
+                    />
+                    <g fill="#325f40">
+                      <circle cx="51" cy="49" r="4" />
+                      <circle cx="85" cy="62" r="4" />
+                      <circle cx="110" cy="40" r="4" />
+                    </g>
+                    <circle
+                      cx="85"
+                      cy="62"
+                      r="30"
+                      fill="none"
+                      stroke="#3f7853"
+                      stroke-dasharray="3 3"
+                    />
+                  </g>
+                  <g data-layer="routing" data-off>
+                    <path
+                      d="M114 190L104 171 273 123 396 90"
+                      fill="none"
+                      stroke="#fffdf5"
+                      stroke-width="10"
+                    />
+                    <path
+                      d="M114 190L104 171 273 123 396 90"
+                      fill="none"
+                      stroke="#c45131"
+                      stroke-width="4"
+                    />
+                    <g fill="#c45131" stroke="#fffdf5" stroke-width="2">
+                      <circle cx="114" cy="190" r="7" />
+                      <circle cx="396" cy="90" r="7" />
+                    </g>
+                  </g>
+                  <g data-layer="search" data-off>
+                    <circle
+                      cx="355"
+                      cy="108"
+                      r="13"
+                      fill="#fffef8"
+                      stroke="#347c99"
+                      stroke-width="3"
+                    />
+                    <path
+                      d="M366 119l11 11"
+                      stroke="#347c99"
+                      stroke-width="4"
+                    />
+                    <rect
+                      x="305"
+                      y="139"
+                      width="143"
+                      height="25"
+                      fill="#fffef8"
+                    />
+                    <text
+                      x="315"
+                      y="156"
+                      font-family="Consolas,monospace"
+                      font-size="11"
+                      fill="#203f38"
+                    >
+                      Address candidate
+                    </text>
+                  </g>
+                  <g
+                    data-layer="labels"
+                    font-family="Georgia,serif"
+                    font-size="14"
+                    fill="#203f38"
+                    stroke="#fffef8"
+                    stroke-width="3"
+                    paint-order="stroke"
+                  >
+                    <text x="28" y="115">Riverside</text>
+                    <text x="309" y="48">Old town</text>
+                  </g>
+                  <g data-layer="custom" data-off>
+                    <path
+                      d="M410 180l15-25 15 25Z"
+                      stroke="#79618d"
+                      stroke-width="2"
+                      fill="#d0c3da"
+                    />
+                    <text
+                      x="354"
+                      y="207"
+                      font-family="Consolas,monospace"
+                      font-size="10"
+                      fill="#594267"
+                    >
+                      CUSTOM OBSERVATIONS
+                    </text>
+                  </g>
+                  <text
+                    x="12"
+                    y="235"
+                    font-family="Consolas,monospace"
+                    font-size="9"
+                    fill="#334e42"
+                  >
+                    ILLUSTRATIVE OUTPUT / NO DATA FETCHED
+                  </text>
+                </svg>
+                <div class="read-flow">
+                  <span>Find blocks</span> → <span>Verify hashes</span> →
+                  <span>Cache &amp; compute</span>
+                </div>
+                <p class="small" style="margin-top: 16px">
+                  Each family can be subdivided by area, zoom or purpose. Water
+                  and buildings can be requested without roads. A graph cell’s
+                  detail is independent of display zoom.
+                </p>
+              </div>
+            </div>
+            <div class="explainer-foot">
+              <strong>Not a size calculator.</strong> These controls illustrate
+              dependencies; they do not fetch data. Enabling a tool permits
+              future reads. It does not download its entire data family. Custom
+              blocks require a reader or plugin that understands their schema.
+            </div>
+          </div>
+          <p id="noscript-notice" class="nojs">
+            JavaScript is disabled or has not loaded. The guide remains
+            readable; the diagrams show the default examples.
+          </p>
+          <a class="inline-link" href="FORMAT.md"
+            >Read the format specification ↗</a
+          >
+        </div>
+      </section>
+
+      <section class="section" id="architecture">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number">02 / End to end</span>
+              <h2>From source facts<br />to useful answers.</h2>
+            </div>
+            <p>
+              Rust handles native import and the rendering/routing cores. Bun
+              and TypeScript coordinate preparation, storage, delivery and
+              tools. The browser owns the interactive map and local computation.
+            </p>
+          </div>
+          <div
+            class="pipeline"
+            role="group"
+            aria-label="Inspect pipeline stages"
+          >
+            <button
+              class="station"
+              type="button"
+              disabled
+              data-stage="source"
+              aria-pressed="true"
+            >
+              <span class="step">01 / INPUT</span>
+              <strong class="station-title">Choose sources</strong>
+              <span class="station-copy">
+                OSM PBF, ocean polygons, raster tiles or existing Atlas files.
+              </span>
+            </button>
+            <button
+              class="station"
+              type="button"
+              disabled
+              data-stage="prepare"
+              aria-pressed="false"
+            >
+              <span class="step">02 / BUILD</span>
+              <strong class="station-title">Prepare an area</strong>
+              <span class="station-copy"
+                >Retain, partition, index and compile selected
+                capabilities.</span
+              >
+            </button>
+            <button
+              class="station"
+              type="button"
+              disabled
+              data-stage="package"
+              aria-pressed="false"
+            >
+              <span class="step">03 / PACKAGE</span>
+              <strong class="station-title">Write one file</strong>
+              <span class="station-copy"
+                >Manifest, paged directory and verified data blocks.</span
+              >
+            </button>
+            <button
+              class="station"
+              type="button"
+              disabled
+              data-stage="deliver"
+              aria-pressed="false"
+            >
+              <span class="step">04 / DELIVER</span>
+              <strong class="station-title">Publish or open</strong>
+              <span class="station-copy"
+                >Signed discovery, Hashtree reads, or a local file.</span
+              >
+            </button>
+            <button
+              class="station"
+              type="button"
+              disabled
+              data-stage="compute"
+              aria-pressed="false"
+            >
+              <span class="step">05 / USE</span>
+              <strong class="station-title">Render &amp; compute</strong>
+              <span class="station-copy"
+                >Maps, routes, queries, analysis, drawings and exports.</span
+              >
+            </button>
+          </div>
+          <div class="station-detail" aria-live="polite">
+            <h3 id="stage-title">Pin the source, then choose the area.</h3>
+            <p id="stage-copy">
+              Use a cached planet PBF, a regional download or a compatible
+              existing Atlas archive. Record the exact source fingerprint. A PBF
+              is scanned and extracted locally; it is not geographically
+              queryable through arbitrary byte ranges. Sea polygons come from a
+              separately identified coastline dataset.
+            </p>
+          </div>
+          <div class="architecture">
+            <div class="architecture-top">
+              <span class="eyebrow">Architecture / responsibilities</span
+              ><span class="small muted"
+                >Shared data contract, separate applications</span
+              >
+            </div>
+            <div class="arch-row">
+              <div class="arch-label">Preparation<br />Native + Bun<br />↓</div>
+              <div class="arch-modules">
+                <div class="module">
+                  <h4>Source import</h4>
+                  <p>
+                    OSM semantics, complete ways, relation assembly, transport
+                    policies and source identity.
+                  </p>
+                  <code>crates/osm-import</code>
+                </div>
+                <div class="module">
+                  <h4>Partitioned compiler</h4>
+                  <p>
+                    Disk-backed stages, bounded pages, compressed payloads,
+                    checkpoints and final packing.
+                  </p>
+                  <code>packages/cli · compiler · objects</code>
+                </div>
+                <div class="module">
+                  <h4>Host orchestration</h4>
+                  <p>
+                    Source library, build queue, imports, recovery, storage
+                    choices and amendments.
+                  </p>
+                  <code>apps/server · apps/host</code>
+                </div>
+              </div>
+            </div>
+            <div class="arch-row delivery">
+              <div class="arch-label">
+                Data &amp; delivery<br />One archive<br />↓
+              </div>
+              <div class="arch-modules">
+                <div class="module">
+                  <h4>Atlas container</h4>
+                  <p>
+                    Manifest and paged block directory. Independent codecs,
+                    capabilities and integrity checks.
+                  </p>
+                  <code>packages/format</code>
+                </div>
+                <div class="module">
+                  <h4>Discovery &amp; verified reads</h4>
+                  <p>
+                    Nostr offers → Hashtree roots → HTTP blobs. Local files use
+                    the same reader interface.
+                  </p>
+                  <code>packages/hashtree · format</code>
+                </div>
+                <div class="module">
+                  <h4>Coverage &amp; acquisition</h4>
+                  <p>
+                    Plan selected areas, identify gaps, reuse cached bytes,
+                    acquire or export dependencies.
+                  </p>
+                  <code>packages/coverage · acquisition</code>
+                </div>
+              </div>
+            </div>
+            <div class="arch-row core">
+              <div class="arch-label">
+                Reusable engines<br />On demand<br />↓
+              </div>
+              <div class="arch-modules">
+                <div class="module">
+                  <h4>Visual map</h4>
+                  <p>
+                    WASM decoding and tessellation, WebGL2 geometry, Canvas
+                    labels and raster imagery.
+                  </p>
+                  <code>crates/renderer · packages/renderer</code>
+                </div>
+                <div class="module">
+                  <h4>Navigation &amp; semantics</h4>
+                  <p>
+                    Rust/WASM graph search; TypeScript geocoding, boundaries,
+                    feature and object readers.
+                  </p>
+                  <code>routing · geocoding · boundaries</code>
+                </div>
+                <div class="module">
+                  <h4>Analysis &amp; tool registry</h4>
+                  <p>
+                    Prepared workspaces, spatial operations, validated plugins
+                    and typed result references.
+                  </p>
+                  <code>workspace · spatial · operations</code>
+                </div>
+              </div>
+            </div>
+            <div class="arch-row apps">
+              <div class="arch-label">Applications<br />Human + AI</div>
+              <div class="arch-modules">
+                <div class="module">
+                  <h4>Client demo</h4>
+                  <p>
+                    Map, chat, search, route, extraction, offline areas and
+                    adjustable appearance.
+                  </p>
+                  <code>apps/web</code>
+                </div>
+                <div class="module">
+                  <h4>Host console &amp; APIs</h4>
+                  <p>
+                    Serve maps and run supported operations. HTTP and ContextVM
+                    share a registry.
+                  </p>
+                  <code>apps/host · apps/server</code>
+                </div>
+                <div class="module">
+                  <h4>Browser AI harness</h4>
+                  <p>
+                    Model conversations dispatch local tools and QuickJS.
+                    Progress and evidence stay inspectable.
+                  </p>
+                  <code>packages/chat · apps/web</code>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="arch-caption">
+            Server routing and geocoding use shared engines; the host can also
+            consume other hosts. The entire browser chat/spatial toolbox is not
+            yet exposed through every server adapter. Native mobile and desktop
+            SDKs remain a future product layer.
+          </p>
+          <a class="inline-link" href="ARCHITECTURE.md"
+            >Architecture notes ↗</a
+          >
+        </div>
+      </section>
+
+      <section class="section" id="features">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number">03 / What you can do</span>
+              <h2>A map you can<br />work with.</h2>
+            </div>
+            <p>
+              Capabilities describe what a package contains. They are optional
+              at preparation time. A tiny visual asset and an analysis-rich
+              regional map use the same container.
+            </p>
+          </div>
+          <div class="capabilities">
+            <article class="capability">
+              <div class="cap-icon" aria-hidden="true">▧</div>
+              <div>
+                <span class="tag tag-live">Implemented prototype</span>
+                <h3>Render &amp; style</h3>
+                <p>
+                  Separate water, landscape, building, road and rail layers.
+                  Independent place, street and POI labels. Color and width
+                  controls, pitch, bearing and building extrusion.
+                </p>
+                <p class="limit">
+                  Zoom to 20 by overzooming the highest stored vector tiles. OSM
+                  height tags and floor estimates are distinct from unknown
+                  height; there is no terrain elevation in building extrusion.
+                </p>
+                <a href="STYLING-AND-3D.md">Styling and 3D ↗</a>
+              </div>
+            </article>
+            <article class="capability">
+              <div class="cap-icon" aria-hidden="true">↝</div>
+              <div>
+                <span class="tag tag-live">Implemented prototype</span>
+                <h3>Route &amp; explore reach</h3>
+                <p>
+                  Walking, cycling and driving networks, directional costs,
+                  supported turns and network isochrones. The client acquires
+                  cells as its search needs them.
+                </p>
+                <p class="limit">
+                  Client and server routing are available. Missing coverage is
+                  explicit. Traffic, timetables, full restriction handling and
+                  navigation-grade guidance are not supplied.
+                </p>
+                <a href="ROUTING.md">Routing contract ↗</a>
+              </div>
+            </article>
+            <article class="capability">
+              <div class="cap-icon" aria-hidden="true">⌕</div>
+              <div>
+                <span class="tag tag-live">Implemented prototype</span>
+                <h3>Find places &amp; addresses</h3>
+                <p>
+                  Search retained names, streets, POIs and explicit OSM
+                  house-number addresses. Reverse lookup finds the nearest
+                  retained street. Resolve a place to its available footprint.
+                </p>
+                <p class="limit">
+                  Coverage follows the source. Address interpolation and
+                  complete postal coverage are not guaranteed. A place point is
+                  not a district boundary.
+                </p>
+                <a href="GEOCODING.md">Geocoding and address scope ↗</a>
+              </div>
+            </article>
+            <article class="capability">
+              <div class="cap-icon" aria-hidden="true">◇</div>
+              <div>
+                <span class="tag tag-live">Implemented prototype</span>
+                <h3>Understand shapes &amp; relationships</h3>
+                <p>
+                  Retain feature geometry, tagged nodes, ways and relations,
+                  administrative borders, coastlines, campuses, entrances and
+                  objects a map style may never display.
+                </p>
+                <p class="limit">
+                  Member roles and missing dependencies are preserved. No
+                  hierarchy, navigable sea or complete real-world dataset is
+                  invented from partial OSM tags.
+                </p>
+                <a href="ANALYSIS-SOURCE.md">Analysis source retention ↗</a>
+              </div>
+            </article>
+            <article class="capability">
+              <div class="cap-icon" aria-hidden="true">◉</div>
+              <div>
+                <span class="tag tag-live">Implemented prototype</span>
+                <h3>Analyse, draw &amp; compare</h3>
+                <p>
+                  Filter and join features, measure, buffer, clip, dissolve and
+                  subtract polygons. Build distance bands, density fields,
+                  contours, thematic layers and linked charts.
+                </p>
+                <p class="limit">
+                  Cached geometry remains on the device. Regional approximations
+                  and unknown values are reported; a proximity band is not a
+                  flood model.
+                </p>
+                <a href="SPATIAL-ANALYSIS.md">Spatial tools ↗</a> ·
+                <a href="CONTINUOUS-GEOMETRY.md"
+                  >Constructed polygons &amp; fields ↗</a
+                >
+              </div>
+            </article>
+            <article class="capability">
+              <div class="cap-icon" aria-hidden="true">▦</div>
+              <div>
+                <span class="tag tag-live">Implemented prototype</span>
+                <h3>Bring imagery &amp; your own tools</h3>
+                <p>
+                  Import raster MBTiles, XYZ tiles or anchored PNG/JPEG images.
+                  Compose imagery with vectors. Add trusted operation plugins,
+                  such as a precisely defined lake-ranking tool.
+                </p>
+                <p class="limit">
+                  Raster imagery is visual, not a numeric DEM. GeoTIFF
+                  reprojection and a general plugin marketplace are future work;
+                  remote discovery does not authorize arbitrary code.
+                </p>
+                <a href="MBTILES.md">Raster imports ↗</a> ·
+                <a href="PLUGIN-DEMO.md">Plugin proof ↗</a>
+              </div>
+            </article>
+          </div>
+          <div class="three-decisions">
+            <article class="decision">
+              <div class="eyebrow">The package decides</div>
+              <h3>What exists?</h3>
+              <p>
+                Chosen area, source revision, zooms, data families and indexes.
+                Omitted data must be built or acquired later.
+              </p>
+            </article>
+            <article class="decision">
+              <div class="eyebrow">The published view suggests</div>
+              <h3>How should it look?</h3>
+              <p>
+                Source order, paint, camera, visible layers and allowed
+                on-demand tools. A signed recipe can change without rewriting
+                map bytes.
+              </p>
+            </article>
+            <article class="decision">
+              <div class="eyebrow">The consumer controls</div>
+              <h3>What do I need now?</h3>
+              <p>
+                Override the view, choose display subscriptions and permit
+                analysis separately. Hiding buildings need not disable building
+                analysis.
+              </p>
+            </article>
+          </div>
+          <a class="inline-link" href="PUBLISHED-VIEWS.md"
+            >Publisher defaults and client overrides ↗</a
+          >
+        </div>
+      </section>
+
+      <section class="section ai-section" id="intelligence">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number"
+                >04 / Maps as tools for intelligence</span
+              >
+              <h2>The model asks.<br />The client does the work.</h2>
+            </div>
+            <p>
+              Instead of sending thousands of coordinates through a model, Atlas
+              gives it tool schemas and references to data held on the device.
+              The geographic work stays grounded in retained source objects.
+            </p>
+          </div>
+          <div class="ai-layout">
+            <div>
+              <blockquote class="prompt">
+                “Show 100, 250 and 500 metre bands along the Danube’s mapped
+                banks. Exclude water, find buildings in each band, and colour
+                them by height.”
+              </blockquote>
+              <div class="ai-points">
+                <div>
+                  <h3>Ground the request in a place</h3>
+                  <p>
+                    Resolve names and actual geometry. The camera is context,
+                    not an automatic analysis boundary. “Here” and “current
+                    view” opt into it.
+                  </p>
+                </div>
+                <div>
+                  <h3>Keep the expensive work</h3>
+                  <p>
+                    A prepared workspace pins selected data. Follow-up filters,
+                    geometry operations, colours and contours reuse local
+                    results.
+                  </p>
+                </div>
+                <div>
+                  <h3>Make the work inspectable</h3>
+                  <p>
+                    Tool arguments, responses, progress, timing, package reads,
+                    drawings and charts are visible. Export the conversation as
+                    JSON for evaluation.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="trace">
+              <div class="trace-header">
+                <span class="eyebrow">Example tool workflow</span
+                ><span class="eyebrow">On this device</span>
+              </div>
+              <ol>
+                <li>
+                  <code>object_search · object_get</code>
+                  <p>
+                    Find the named water features and inspect their retained
+                    footprints and provenance.
+                  </p>
+                </li>
+                <li>
+                  <code>workspace_prepare · workspace_query</code>
+                  <p>
+                    Apply area and tag filters, fetch necessary pages, and keep
+                    geometry under local result IDs.
+                  </p>
+                </li>
+                <li>
+                  <code>spatial_bands · spatial_filter</code>
+                  <p>
+                    Construct dissolved, disjoint distance bands; identify
+                    buildings intersecting them.
+                  </p>
+                </li>
+                <li>
+                  <code>result_summary · result_style</code>
+                  <p>
+                    Count known and unknown heights. Assign colours, labels and
+                    a legend.
+                  </p>
+                </li>
+                <li>
+                  <code>map_draw · chart_show</code>
+                  <p>
+                    Draw the referenced geometries and explain the result with
+                    its geographic limitations.
+                  </p>
+                </li>
+              </ol>
+              <div class="trace-footer">
+                Conceptual sequence, not a recorded run. Bands measure proximity
+                to mapped geometry, not flooding or travel time.
+              </div>
+            </div>
+          </div>
+          <div class="ai-boundary">
+            <div>
+              <span class="eyebrow">Browser / local data plane</span>
+              <h3 style="margin-top: 9px">Readers → workers → results → map</h3>
+              <p>
+                Verified blocks, Rust/WASM routing, spatial operations and a
+                QuickJS sandbox. Custom JavaScript gets selected JSON data; no
+                network, DOM or filesystem access.
+              </p>
+            </div>
+            <span class="arrow" aria-hidden="true">⇄</span>
+            <div>
+              <span class="eyebrow">Online / model inference</span>
+              <h3 style="margin-top: 9px">Agent → credential proxy → model</h3>
+              <p>
+                The demo uses DeepSeek Flash. The proxy keeps the API key out of
+                the browser; prompts and tool evidence go to the model.
+                Inference still needs a connection.
+              </p>
+            </div>
+          </div>
+          <p class="small">
+            Local map computation and online inference are separate. Cached
+            analysis can run without the map provider, but that does not make
+            the model offline or prevent selected facts from appearing in its
+            tool responses.
+            <a href="AI-CHAT-DEMO.md">Read the AI execution contract ↗</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="network">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number"
+                >05 / More than one host</span
+              >
+              <h2>Different sources.<br />One working map.</h2>
+            </div>
+            <p>
+              Nostr tells a consumer what a publisher offers. Hashtree
+              identifies and verifies the bytes. Atlas explains what those bytes
+              mean and whether they can work together.
+            </p>
+          </div>
+          <div class="federation">
+            <figure class="network-map" style="margin: 0">
+              <svg
+                viewBox="0 0 540 345"
+                role="img"
+                aria-labelledby="network-title network-desc"
+              >
+                <title id="network-title">
+                  Cross-source routing and verified discovery
+                </title>
+                <desc id="network-desc">
+                  Two publishers announce neighboring archives. The client
+                  validates compatibility and reads cells from both to calculate
+                  one route through the overlap.
+                </desc>
+                <defs>
+                  <pattern
+                    id="net-grid"
+                    width="34"
+                    height="34"
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <path d="M34 0H0V34" fill="none" stroke="#c5cebd" />
+                  </pattern>
+                </defs>
+                <rect width="540" height="345" fill="url(#net-grid)" />
+                <rect
+                  x="24"
+                  y="67"
+                  width="285"
+                  height="240"
+                  fill="#88b3c8"
+                  fill-opacity=".17"
+                  stroke="#347c99"
+                  stroke-width="2"
+                  stroke-dasharray="6 4"
+                />
+                <rect
+                  x="236"
+                  y="67"
+                  width="280"
+                  height="240"
+                  fill="#d7ba7a"
+                  fill-opacity=".17"
+                  stroke="#a47632"
+                  stroke-width="2"
+                  stroke-dasharray="6 4"
+                />
+                <path
+                  d="M0 242L540 123M71 0L225 345M489 0L357 345"
+                  stroke="#fbfcf3"
+                  stroke-width="17"
+                  fill="none"
+                />
+                <path
+                  d="M0 242L540 123M71 0L225 345M489 0L357 345"
+                  stroke="#c5bea8"
+                  stroke-width="2"
+                  fill="none"
+                />
+                <path
+                  d="M99 251L151 227 273 201 405 171 429 105"
+                  fill="none"
+                  stroke="#fffef7"
+                  stroke-width="12"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M99 251L151 227 273 201 405 171 429 105"
+                  fill="none"
+                  stroke="#c45131"
+                  stroke-width="5"
+                  stroke-linejoin="round"
+                />
+                <g fill="#c45131" stroke="white" stroke-width="3">
+                  <circle cx="99" cy="251" r="8" />
+                  <circle cx="429" cy="105" r="8" />
+                </g>
+                <g
+                  font-family="Consolas,monospace"
+                  font-size="11"
+                  fill="#203f38"
+                >
+                  <rect x="16" y="12" width="180" height="32" fill="#fffef8" />
+                  <text x="28" y="33">HOST A / west.atlas</text>
+                  <rect x="330" y="12" width="194" height="32" fill="#fffef8" />
+                  <text x="342" y="33">HOST B / east.atlas</text>
+                  <rect
+                    x="174"
+                    y="270"
+                    width="190"
+                    height="27"
+                    fill="#fffef8"
+                  />
+                  <text x="186" y="288">CHECK THE OVERLAP</text>
+                </g>
+                <path
+                  d="M263 263l8-47"
+                  stroke="#203f38"
+                  fill="none"
+                  stroke-width="1.3"
+                />
+              </svg>
+              <figcaption class="network-key">
+                <span>Source A</span><span>Source B</span
+                ><span>Client-computed route</span>
+              </figcaption>
+            </figure>
+            <div class="network-list">
+              <div class="network-item">
+                <span>01</span>
+                <div>
+                  <h3>Discover the offer</h3>
+                  <p>
+                    A signed Nostr event advertises a pinned map root,
+                    capabilities, coverage and delivery endpoints. Consumers
+                    explicitly choose publishers.
+                  </p>
+                </div>
+              </div>
+              <div class="network-item">
+                <span>02</span>
+                <div>
+                  <h3>Fetch and verify</h3>
+                  <p>
+                    Hashtree uses SHA-256-linked chunks. The host serves them
+                    from the original file. Same-root mirrors can supply the
+                    same bytes; the client caches verified content.
+                  </p>
+                </div>
+              </div>
+              <div class="network-item">
+                <span>03</span>
+                <div>
+                  <h3>Compose by meaning</h3>
+                  <p>
+                    Visual layers can overlap. Cross-map routing additionally
+                    checks source authority, transport policy, stable OSM
+                    identities and complete cell coverage.
+                  </p>
+                </div>
+              </div>
+              <div class="network-item">
+                <span>04</span>
+                <div>
+                  <h3>Expose the gaps</h3>
+                  <p>
+                    Missing cells remain missing data, not “no road.” Coverage
+                    review supports acquiring an area on the host or saving
+                    source blocks in the browser.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="note network-warning">
+            <strong>Independent build, compatible source.</strong> Current
+            federated routing requires the exact same upstream PBF fingerprint
+            and transport contract. It does not require a common compiled Atlas
+            parent. Different OSM dates or independently dated regional
+            downloads are not automatically routable together. Matching
+            coordinates alone never create a junction.
+          </div>
+          <div class="two-options">
+            <div>
+              <h3>Save on the device</h3>
+              <p>
+                Pin an area’s verified source blocks outside the rolling cache.
+                Reuse them for display, routing and AI. This is persistent
+                browser storage, not a newly portable archive or a guarantee of
+                fully disconnected app startup.
+              </p>
+            </div>
+            <div>
+              <h3>Acquire on the host</h3>
+              <p>
+                The server can act as a consumer, review coverage and fetch from
+                peers. Its export packs one or more self-contained members into
+                a single <code>.atlas</code>, with no external map dependency at
+                runtime.
+              </p>
+            </div>
+          </div>
+          <p class="footnote">
+            Today’s network data channel is HTTP Hashtree blobs. Nostr carries
+            announcements and, when configured, ContextVM tool messages.
+            Automatic peer-to-peer seeding, WebRTC delivery and arbitrary
+            cross-revision routing remain future work.
+          </p>
+          <div class="start-links">
+            <a href="HASHTREE.md">Hashtree &amp; discovery ↗</a
+            ><a href="ROUTING-FEDERATION.md">Routing federation ↗</a
+            ><a href="AREA-ACQUISITION.md">Area acquisition ↗</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="evolution">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number"
+                >06 / Grow without starting over</span
+              >
+              <h2>A new capability.<br />A new revision.</h2>
+            </div>
+            <p>
+              A host can add capabilities to an existing map. Retained
+              compressed blocks are reused, missing data is prepared from the
+              exact source or a compatible donor, and a new self-contained
+              archive is published.
+            </p>
+          </div>
+          <div class="revision">
+            <div class="revision-file">
+              <span class="eyebrow">Original / pinned root A</span>
+              <h3>region-v1.atlas</h3>
+              <div class="revision-blocks">
+                <span>Geometry</span><span>Labels</span><span>Features</span
+                ><span>Custom</span><span class="empty-block">—</span
+                ><span class="empty-block">—</span>
+              </div>
+              <p class="small">
+                Already serves display and extraction.<br />The original file
+                stays available locally.
+              </p>
+            </div>
+            <div class="revision-arrow" aria-label="New revision">→</div>
+            <div class="revision-file" style="border-color: var(--blue)">
+              <span class="eyebrow">Amended / new root B</span>
+              <h3>region-v2.atlas</h3>
+              <div class="revision-blocks">
+                <span>Geometry</span><span>Labels</span><span>Features</span
+                ><span>Custom</span><span class="new-block">Routing</span
+                ><span class="new-block">Imagery</span>
+              </div>
+              <p class="small">
+                Existing payload bytes survive.<br />New data, manifest and
+                content identity.
+              </p>
+            </div>
+          </div>
+          <div class="two-options">
+            <div>
+              <h3>Compose at viewing time</h3>
+              <p>
+                Read separate vector and raster Atlas sources in one scene. Each
+                keeps its own root, attribution and update cycle. A published
+                view captures their composition.
+              </p>
+            </div>
+            <div>
+              <h3>Combine for portability</h3>
+              <p>
+                Embed imagery or source members in one output archive. This
+                costs copying and storage, but the final file carries its data
+                with it. Current amendments rewrite a file rather than append in
+                place.
+              </p>
+            </div>
+          </div>
+          <div class="note revision-note">
+            <strong>New code does not always need new map data.</strong> A
+            plugin that ranks retained lake polygons can run over an existing
+            archive. A tool requiring unretained depth, terrain or timetables
+            needs a new source, schema and build step. Operation names alone do
+            not define geographic meaning.
+          </div>
+          <div class="start-links">
+            <a href="AMENDMENTS-AND-RASTER.md">Amendment design ↗</a
+            ><a href="RASTER-AMENDMENTS.md">Imagery revisions ↗</a
+            ><a href="EXTENSIONS.md">Custom operations ↗</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="status">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow section-number"
+                >07 / The honest boundary</span
+              >
+              <h2>Working today.<br />Room to explore.</h2>
+            </div>
+            <p>
+              This is an end-to-end experiment with real files and executable
+              proofs. It is also an evolving format: scalable storage and
+              explicit correctness contracts matter as much as a convincing map.
+            </p>
+          </div>
+          <div class="reality">
+            <article class="reality-column">
+              <span class="tag tag-live">Implemented</span>
+              <h3>The current foundation</h3>
+              <ul>
+                <li>
+                  Local Bun host and independent browser client; no remote Atlas
+                  service is required.
+                </li>
+                <li>
+                  Selective vector, label, raster, graph and semantic reads with
+                  verification and caching.
+                </li>
+                <li>
+                  Server and device navigation, search, extraction; browser AI
+                  analysis and drawings.
+                </li>
+                <li>
+                  Signed discovery, Hashtree transport, compatible cross-source
+                  routing and area acquisition.
+                </li>
+                <li>
+                  Queued builds, progress, resumable stage checkpoints,
+                  amendments and file imports.
+                </li>
+                <li>
+                  NAS-assisted builds: sequential bulk payloads can use extra
+                  storage; mutable indexes stay local.
+                </li>
+              </ul>
+            </article>
+            <article class="reality-column next">
+              <span class="tag tag-next">Not yet a product promise</span>
+              <h3>The remaining frontier</h3>
+              <ul>
+                <li>
+                  A finalized, stable format specification and polished native
+                  mobile/desktop SDKs.
+                </li>
+                <li>
+                  Proven planet-scale throughput and predictable build-time,
+                  memory and disk requirements.
+                </li>
+                <li>
+                  General routing between different OSM revisions, global
+                  shipping and time-dependent networks.
+                </li>
+                <li>
+                  Numeric terrain, bathymetry, population, weather, hazard data
+                  and their analysis contracts.
+                </li>
+                <li>
+                  General GPU raster rendering, arbitrary reprojection and a
+                  portable plugin ecosystem.
+                </li>
+                <li>
+                  Seamless disconnected startup in every workflow, automatic
+                  relay renewal and peer seeding.
+                </li>
+              </ul>
+            </article>
+          </div>
+          <p class="footnote">
+            Data completeness, source revision, execution location and
+            measurement semantics belong in results. A verified hash proves
+            which bytes arrived; it does not prove a map is complete or an
+            analysis is scientifically valid. Host-side capability switches
+            govern serving and computation, not copies already downloaded.
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="start">
+        <div class="wrap">
+          <div class="start">
+            <div>
+              <span class="eyebrow section-number"
+                >08 / Take it for a walk</span
+              >
+              <h2>Start small.<br />Run it locally.</h2>
+              <p>
+                From a clone of this repository, setup builds a small
+                Liechtenstein sample with display, routing, search and
+                selectable data. Dependencies and the initial extract need
+                internet; no LAN server, account or planet download is required.
+              </p>
+              <p class="small">
+                Prerequisites: Bun 1.3+, stable Rust/Cargo,
+                <code>wasm-pack</code> and a native C/C++ toolchain. macOS and
+                Linux; WSL2 for Windows. Arbitrary PBF extraction in the host
+                console also needs <code>osmium-tool</code>.
+              </p>
+              <a class="inline-link" href="../README.md#run-locally"
+                >Complete local setup instructions ↗</a
+              >
+            </div>
+            <div>
+              <pre
+                class="terminal"
+              ><span class="comment"># In the Atlas repository</span>
+bun install --frozen-lockfile
+bun run setup
+bun run demo
+
+<span class="comment"># Client map</span>
+http://127.0.0.1:5173/
+<span class="comment"># Host console</span>
+http://127.0.0.1:3100/host</pre>
+              <p class="small">
+                Optional chat: set <code>DS_API_KEY</code> in your ignored
+                <code>.env</code> and restart the client process. Model
+                inference is online. The HTML guide you are reading needs no
+                server, dependencies or external assets.
+              </p>
+            </div>
+          </div>
+          <details class="docs-index" open>
+            <summary>Go deeper / documentation &amp; code map</summary>
+            <div class="docs-grid">
+              <a href="FORMAT.md">File format &amp; directory</a
+              ><a href="PARTITIONED-COMPILER.md">Compiler &amp; checkpoints</a
+              ><a href="BUILD-STORAGE.md">Build storage &amp; NAS</a
+              ><a href="SERVER-CLIENT.md">Server / client separation</a
+              ><a href="PUBLISHED-VIEWS.md">Views &amp; client overrides</a
+              ><a href="HASHTREE.md">Hashtree &amp; Nostr</a
+              ><a href="ROUTING-FEDERATION.md">Cross-source routing</a
+              ><a href="ADMINISTRATIVE-BOUNDARIES.md"
+                >Administrative boundaries</a
+              ><a href="OCEAN-WATER.md">Coastlines &amp; sea polygons</a
+              ><a href="AI-WORKSPACES.md">Task-local workspaces</a
+              ><a href="AI-CHAT-DEMO.md">AI chat &amp; code sandbox</a
+              ><a href="ANALYSIS-RECIPES.md">Reusable analysis recipes</a
+              ><a href="AREA-ACQUISITION.md">Offline areas &amp; acquisition</a
+              ><a href="FILE-IMPORTS.md">File imports &amp; upload API</a
+              ><a href="EXTENSIONS.md">Extension architecture</a>
+            </div>
+            <table class="repo-map">
+              <caption>
+                Where to look in the repository
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Responsibility</th>
+                  <th scope="col">Entry points</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Consumer and host interfaces</td>
+                  <td>
+                    <a href="../apps/web/"><code>apps/web</code></a> ·
+                    <a href="../apps/host/"><code>apps/host</code></a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Host service and preparation jobs</td>
+                  <td>
+                    <a href="../apps/server/"><code>apps/server</code></a> ·
+                    <a href="../packages/provisioning/"
+                      ><code>packages/provisioning</code></a
+                    >
+                  </td>
+                </tr>
+                <tr>
+                  <td>Import, native processing and compilation</td>
+                  <td>
+                    <a href="../crates/osm-import/"
+                      ><code>crates/osm-import</code></a
+                    >
+                    · <a href="../packages/cli/"><code>packages/cli</code></a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Archive, transport and discovery</td>
+                  <td>
+                    <a href="../packages/format/"
+                      ><code>packages/format</code></a
+                    >
+                    ·
+                    <a href="../packages/hashtree/"
+                      ><code>packages/hashtree</code></a
+                    >
+                  </td>
+                </tr>
+                <tr>
+                  <td>Rendering and transport engines</td>
+                  <td>
+                    <a href="../crates/renderer/"
+                      ><code>crates/renderer</code></a
+                    >
+                    ·
+                    <a href="../crates/routing/"><code>crates/routing</code></a>
+                    ·
+                    <a href="../crates/routing-wasm/"
+                      ><code>crates/routing-wasm</code></a
+                    >
+                  </td>
+                </tr>
+                <tr>
+                  <td>Retained objects and task data</td>
+                  <td>
+                    <a href="../packages/objects/"
+                      ><code>packages/objects</code></a
+                    >
+                    ·
+                    <a href="../packages/workspace/"
+                      ><code>packages/workspace</code></a
+                    >
+                  </td>
+                </tr>
+                <tr>
+                  <td>Agent tools, geometry and extensions</td>
+                  <td>
+                    <a href="../packages/chat/"><code>packages/chat</code></a> ·
+                    <a href="../packages/spatial/"
+                      ><code>packages/spatial</code></a
+                    >
+                    ·
+                    <a href="../packages/operations/"
+                      ><code>packages/operations</code></a
+                    >
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+          <p class="footnote">
+            Scope: implemented prototype and documented boundaries as of 6
+            November 2026. Diagrams are conceptual, not measured performance or
+            real geographic data. Refer to the linked contracts for schema
+            details and current limitations.
+          </p>
+        </div>
+      </section>
+    </main>
+    <footer class="wrap site-footer">
+      <a class="brand" href="#main">◭ atlas<span>.</span></a
+      ><span>Portable geography, selective reads, useful computation.</span
+      ><span>Field guide / 01 · Self-contained HTML</span>
+    </footer>
+    <script>
+      (() => {
+        "use strict";
+        const presets = {
+          view: {
+            families: ["geometry", "labels"],
+            title: "A picture of the place.",
+            copy: "Visible geometry and labels are enough. Routing, source objects and the geocoder can stay unread.",
+          },
+          route: {
+            families: ["geometry", "labels", "routing"],
+            title: "A route through the network.",
+            copy: "Draw the map, then fetch graph cells as route search needs them. A street is connected by graph identity, not by the appearance of its display line.",
+          },
+          analyse: {
+            families: ["search", "objects"],
+            title: "An answer beyond the viewport.",
+            copy: "Resolve a named place and prepare matching source objects. Analysis can run without display tiles. Load attributes first and geometry only when the operation needs it.",
+          },
+          offline: {
+            families: ["geometry", "labels", "routing", "search"],
+            title: "Useful data for a chosen area.",
+            copy: "Explicitly choose an area, zooms and capabilities. Review coverage, then acquire their dependencies. The browser pins source blocks; the host can export one portable file.",
+          },
+        };
+        const checks = [...document.querySelectorAll(".family input")];
+        const presetButtons = [...document.querySelectorAll("[data-scenario]")];
+        function renderSelection() {
+          const selected = new Set(
+            checks.filter((input) => input.checked).map((input) => input.value),
+          );
+          document
+            .querySelectorAll("[data-layer]")
+            .forEach((layer) =>
+              layer.toggleAttribute(
+                "data-off",
+                !selected.has(layer.dataset.layer),
+              ),
+            );
+          document.getElementById("selection-summary").textContent =
+            `${selected.size} of ${checks.length} optional families selected. Metadata is always available.`;
+        }
+        presetButtons.forEach((button) =>
+          button.addEventListener("click", () => {
+            const preset = presets[button.dataset.scenario];
+            checks.forEach((input) => {
+              input.checked = preset.families.includes(input.value);
+            });
+            presetButtons.forEach((candidate) =>
+              candidate.setAttribute(
+                "aria-pressed",
+                String(candidate === button),
+              ),
+            );
+            document.getElementById("task-title").textContent = preset.title;
+            document.getElementById("task-copy").textContent = preset.copy;
+            renderSelection();
+          }),
+        );
+        checks.forEach((input) =>
+          input.addEventListener("change", () => {
+            presetButtons.forEach((button) =>
+              button.setAttribute("aria-pressed", "false"),
+            );
+            document.getElementById("task-title").textContent =
+              "Your own combination.";
+            document.getElementById("task-copy").textContent =
+              "The consumer decides which capabilities it needs. Each chosen family is still read selectively by area, zoom or operation; toggling it on does not load every block.";
+            renderSelection();
+          }),
+        );
+        const stages = {
+          source: [
+            "Pin the source, then choose the area.",
+            "Use a cached planet PBF, a regional download or a compatible existing Atlas archive. Record the exact source fingerprint. A PBF is scanned and extracted locally; it is not geographically queryable through arbitrary byte ranges. Sea polygons come from a separately identified coastline dataset.",
+          ],
+          prepare: [
+            "Compile in recoverable passes.",
+            "Extract the PBF, build transport graphs, retain source geometry, pack objects and semantic indexes, then generate display tiles. Native Rust and Bun use disk-backed stages and checkpoints. NAS assistance places sequential bulk payloads on extra storage while mutable databases and indexes stay local.",
+          ],
+          package: [
+            "One file is the delivery artifact.",
+            "The writer packs a header, JSON manifest, root directory, data blocks and paged directories. Blocks have keys, offsets, lengths and hashes; many are compressed independently. Temporary build files are not runtime dependencies of the finished archive.",
+          ],
+          deliver: [
+            "Announce meaning; verify bytes.",
+            "A host signs a Nostr map offer and indexes the archive as a Hashtree. Consumers pin the root and fetch verified HTTP blobs, with same-root mirror fallback. Local files use the same reader abstraction. Direct archive downloads and HTTP range APIs remain available.",
+          ],
+          compute: [
+            "Choose where the work happens.",
+            "The browser renders locally and runs graph search and analysis in workers over verified data. Supported host operations return results through HTTP or ContextVM. Results can become styled drawings, GeoJSON, charts or new archive exports; an operation must report unsupported or missing data.",
+          ],
+        };
+        const stations = [...document.querySelectorAll("[data-stage]")];
+        stations.forEach((button) =>
+          button.addEventListener("click", () => {
+            stations.forEach((candidate) =>
+              candidate.setAttribute(
+                "aria-pressed",
+                String(candidate === button),
+              ),
+            );
+            const [title, copy] = stages[button.dataset.stage];
+            document.getElementById("stage-title").textContent = title;
+            document.getElementById("stage-copy").textContent = copy;
+          }),
+        );
+        const printButton = document.getElementById("print-guide");
+        printButton.hidden = false;
+        printButton.addEventListener("click", () => window.print());
+        let detailsBeforePrint;
+        window.addEventListener("beforeprint", () => {
+          detailsBeforePrint = [...document.querySelectorAll("details")].map(
+            (element) => [element, element.open],
+          );
+          detailsBeforePrint.forEach(([element]) => {
+            element.open = true;
+          });
+        });
+        window.addEventListener("afterprint", () =>
+          detailsBeforePrint?.forEach(([element, open]) => {
+            element.open = open;
+          }),
+        );
+        const navLinks = [...document.querySelectorAll(".nav a")];
+        const sections = navLinks.map((link) =>
+          document.querySelector(link.getAttribute("href")),
+        );
+        if ("IntersectionObserver" in window) {
+          const observer = new IntersectionObserver(
+            () => {
+              const cutoff = Math.min(250, innerHeight * 0.35);
+              const current = [...sections]
+                .reverse()
+                .find(
+                  (section) => section.getBoundingClientRect().top < cutoff,
+                );
+              navLinks.forEach((link) => {
+                if (current && link.hash === "#" + current.id)
+                  link.setAttribute("aria-current", "location");
+                else link.removeAttribute("aria-current");
+              });
+            },
+            { rootMargin: "-15% 0px -60% 0px", threshold: 0 },
+          );
+          sections.forEach((section) => observer.observe(section));
+        }
+        document.getElementById("noscript-notice").hidden = true;
+        [...checks, ...presetButtons, ...stations].forEach((control) => {
+          control.disabled = false;
+        });
+        renderSelection();
+      })();
+    </script>
+  </body>
+</html>

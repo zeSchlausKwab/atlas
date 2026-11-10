@@ -1,5 +1,8 @@
 # Prototype architecture
 
+For an intuitive, interactive overview, open the [Atlas field guide](atlas-overview.html)
+in a browser. It covers preparation, the archive, discovery, consumers and AI tools.
+
 ```mermaid
 flowchart LR
   PBF[Regional OSM PBF] --> Import[Native Rust import and profile policies]
@@ -24,4 +27,4 @@ The importer owns OSM meaning and access/speed policies. The compiler owns parti
 
 The app owns user selection, execution side, capability switches and presentation. Styles, scene/camera state and data subscriptions remain independent. Input uses one active picking owner across tools. Legacy packages remain readable, with explicit capability limits.
 
-This remains a regional prototype: the server pins an archive in RAM, import is memory-based, semantic indexes are partly monolithic, caches outside routing/persistent bytes need bounds, and no routing hierarchy exists. The combined renderer/routing WASM facade and the large map coordinator are the next code-structure seams to improve. See the [measured stack review](STACK-REVIEW.md), [transport contract](ROUTING.md), [wire formats](FORMAT.md), [styling and 3D](STYLING-AND-3D.md), and [planet sizing](PLANET-SIZING.md).
+The stack remains a prototype, but preparation now has disk-backed, partitioned stages and paged semantic indexes. The server reads a pinned file handle rather than loading the entire archive into RAM. Rendering and routing have separate WASM facades. Normal network composition uses signed Nostr offers and Hashtree; local files and direct HTTP range APIs remain available. NAS-assisted builds separate sequential payloads from local mutable indexes. Planet-scale throughput is not established, routing has no precomputed hierarchy, and browser memory and large geometry operations still need careful bounds. See [partitioned compilation](PARTITIONED-COMPILER.md), [build storage](BUILD-STORAGE.md), [Hashtree](HASHTREE.md) and [routing federation](ROUTING-FEDERATION.md) for the current contracts. See the [measured stack review](STACK-REVIEW.md), [transport contract](ROUTING.md), [wire formats](FORMAT.md), [styling and 3D](STYLING-AND-3D.md), and [planet sizing](PLANET-SIZING.md).

@@ -1,9 +1,13 @@
+import type { CompilerPassCounter } from "./compiler-pass-history";
 import type { PreparationProgress } from "./selection";
 export interface CompilerObservation {
   id: string;
   createdAt: string;
   observedAt: string;
   progress: PreparationProgress;
+  previousPasses?: CompilerPassCounter[];
+  /** Time watched by this observer, not the full elapsed compiler pass. */
+  observedElapsedSeconds?: number;
   stages: { label: string; state: "done" | "active" | "pending" }[];
 }
 /** Only a fresh observation of this exact job may augment its live status. */

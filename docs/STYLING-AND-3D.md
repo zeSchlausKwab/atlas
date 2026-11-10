@@ -107,3 +107,10 @@ These widths precede style multipliers and exclude the path casing. **Style → 
 The current compact tiles retain broad classes, not every OSM subtype. `path`, `footway`, `cycleway`, `steps`, `bridleway` and `track` share path paint; `pedestrian` streets use local-road paint. Railways (including trams) share rail paint. Separate sidewalk/cycleway/stair symbols, sleepers, tunnel dashes and bridge stacking require retaining more source attributes in display tiles; changing width does not invent those attributes. Existing Vienna data needs no regeneration for these improvements.
 
 A visible Chromium check exercised Stadtpark footways, Hauptbahnhof rail lines and the Wien waterway. Each width dial changed map pixels in both flat and 3D views with zero additional range reads and zero mesh uploads. Changing the widths of disabled rail/path layers left the map unchanged. The mobile layout also passed the horizontal-overflow check.
+
+## Published defaults (2026-10-31)
+
+The initial publisher/client contract is now implemented as a separately signed
+view recipe, preserving map Hashtree roots across paint changes. Host Library can
+publish defaults; the client Map workspace applies, customizes, resets and shares
+them. See [Published views](PUBLISHED-VIEWS.md) for precedence, API and limits.

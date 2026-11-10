@@ -36,11 +36,34 @@ kill can leave `.part` / `.patch-*` scratch files; choose a fresh output path or
 remove those explicitly after checking no writer remains. This incremental step
 is restartable from the original file, not checkpoint-resumable.
 
-This version is a regional post-processing CLI, not yet a host-UI build option.
-It accepts up to 256 MiB / 10 million points of clipped GeoJSON and a 32 GiB output.
-It writes the archive's full configured zoom range. It must not be used directly
-on the uncut global shapefile. The core PBF importer still needs this ocean step
-for newly built coastal regions; inland-only excerpts need no additional source.
+The repair CLI above remains intended for existing regional archives. New large
+builds can include oceans during compilation (below), avoiding a full-file patch
+and unreachable superseded payloads.
+
+## Integrated compilation
+
+Configure the host with `ATLAS_OCEAN_SOURCE=/absolute/path/water-polygons-split-4326.zip`.
+The adjacent `.source.json` contains `{url,bytes,sha256}`. The Nix runtime includes
+GDAL; local hosts can install `ogr2ogr`. The host's cached-PBF chooser exposes
+**Sea polygons · separate coastline snapshot** when the source is available.
+The selection pins `{ocean:{sha256}}`; paths cannot be supplied by API callers.
+
+Before the expensive PBF pass the compiler verifies the provider file, clips its
+polygons to the exact selection, validates the geometry and saves a checksum
+receipt. A polygon-only view removes zero-area line remnants from clipping while
+preserving all polygon components and holes. The current single clip is bounded
+to 512 MiB and 25 million points; larger areas need partitioned coastline input.
+The Western Europe preflight was 530,446,129 bytes / 19,228,734 polygon points
+before coordinate precision reduction. Its parsed input used about 2.12 GB RSS.
+Tiling uses additional memory; this is not a whole-build memory estimate.
+
+Queryable sea objects enter the same packed object store as PBF objects. Water
+tiles enter the display spool in batches of 10,000. Cancellation rolls back the
+unfinished batch; restart replays traversal but skips committed contributions.
+All components are assembled once into the final self-contained `.atlas`.
+Physical coastline ways retain the PBF identity; sea objects carry the separately
+dated provider hash and clipped-geometry identity. Provider split/cut edges are
+not physical coastline, and these surfaces do not provide shipping routing.
 
 ## Archive and reader behavior
 
@@ -56,9 +79,12 @@ for newly built coastal regions; inland-only excerpts need no additional source.
 - The archive gets a new snapshot, but its transport graph identity is preserved.
   The manifest records both the coastline source hash and clipped-input hash.
   Separately dated coastlines are explicitly distinguished from the PBF snapshot.
-- Ocean additions currently affect display geometry only. Extractable source
-  features still describe the original PBF; this does not introduce an ocean
-  GeoJSON query or make water routable.
+- New ocean additions also retain queryable sea polygons in `objects/*`, with
+  `water=ocean` and a separate source fingerprint. Island holes survive. These
+  polygon edges include provider splits and clipping, so they are explicitly
+  **not physical coastline**. Physical coastline is retained from PBF
+  `natural=coastline` ways when Analysis source is enabled. No shipping graph is
+  implied. Older ocean-patched archives need repackaging for this capability.
 
 Validate the new archive before publishing it. For Britain:
 

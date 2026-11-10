@@ -1,3 +1,4 @@
+import { regionalSource, regionalSources } from "./regional-sources";
 import type { SourceLocation } from "./source-location";
 import { readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -8,6 +9,7 @@ export async function verifiedSource(
   directory: string,
   id: string,
 ): Promise<VerifiedBuildSource> {
+  if (id?.startsWith("regional-")) return regionalSource(directory, id);
   if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("Invalid cached source ID");
   let path = resolve(directory, `${id}.osm.pbf`);
   const externalFile = Bun.file(resolve(directory, `${id}.location.json`));
@@ -70,6 +72,10 @@ export async function verifiedSources(directory: string) {
     } catch {
       /* Incomplete downloads aren't build inputs. */
     }
+  }
+  for (const { source } of await regionalSources(directory)) {
+    const { path, mtimeMs, ...publicSource } = source;
+    sources.push(publicSource);
   }
   return sources;
 }

@@ -1,3 +1,8 @@
+import { FipsHosting, mapRpcHandler } from "./fips-hosting";
+import { Federation } from "./federation";
+import { ArchiveUploads } from "./archive-uploads";
+import { IMAGE_MAX_BYTES } from "../../packages/raster/src/image-plan";
+import { limitedBody } from "./request-body";
 import { MapDiscovery } from "./discovery";
 import type { MapOffer } from "../../packages/format/src/catalog";
 import { SourceCache } from "./source-cache";
@@ -73,11 +78,18 @@ const preparations = await Preparations.open(
   engine.reader.index.manifest,
   access,
 );
+const archiveUploads = await ArchiveUploads.open(
+  resolve(dataDir, "imports"),
+  preparations,
+  access,
+);
 const sourceCache = new SourceCache(
   resolve(dataDir, "sources"),
   access,
   process.env.ATLAS_SOURCE_SYSTEMD === "1",
 );
+sourceCache.beforeDelete = (id) => preparations.assertSourceUnused(id);
+sourceCache.startQueue();
 const library = new HostedLibrary(preparations, (reader) => {
   const child = new AtlasEngine(reader, async () =>
     init({
@@ -105,14 +117,36 @@ const discovery = await MapDiscovery.open(
         manifest: engine.reader.index.manifest,
       },
     },
-    ...preparations
-      .catalog()
-      .map((m) => ({
-        id: m.id,
-        path: preparations.path(m.id),
-        offer: m as MapOffer,
-      })),
+    ...preparations.catalog().map((m) => ({
+      id: m.id,
+      path: preparations.path(m.id),
+      offer: m as MapOffer,
+    })),
   ],
+);
+
+const federation = await Federation.open(
+  resolve(dataDir, "federation"),
+  access,
+  () => [
+    {
+      id: "demo",
+      path: mapPath,
+      offer: {
+        id: "demo",
+        url: "/maps/demo.atlas",
+        api: "/api",
+        bytes: snapshot.size,
+        manifest: engine.reader.index.manifest,
+      },
+    },
+    ...preparations.catalog().map((m) => ({
+      id: m.id,
+      path: preparations.path(m.id),
+      offer: m as MapOffer,
+    })),
+  ],
+  archiveUploads,
 );
 
 const releaseLibrary = preparations.beforeDelete;
@@ -120,6 +154,22 @@ preparations.beforeDelete = async (id) => {
   await discovery.remove(id);
   await releaseLibrary?.(id);
 };
+
+const publicOrigin =
+  process.env.ATLAS_PUBLIC_URL ??
+  `http://${process.env.HOST === "0.0.0.0" ? "127.0.0.1" : (process.env.HOST ?? "127.0.0.1")}:${process.env.PORT ?? 3100}`;
+const fips = await FipsHosting.open({
+  directory: resolve(dataDir, "fips"),
+  origin: publicOrigin,
+  discovery,
+  access,
+  keyPath: process.env.ATLAS_FIPS_KEY_PATH,
+  rpc: mapRpcHandler(discovery, async (request) =>
+    new URL(request.url).pathname.startsWith("/maps/demo/api/")
+      ? api(request)
+      : library.handle(request),
+  ),
+});
 
 const hostAssets = staticFiles(resolve(root, "dist/host"));
 if (!(await Bun.file(resolve(root, "dist/host/index.html")).exists()))
@@ -133,12 +183,32 @@ const server = Bun.serve<{
 }>({
   hostname: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3100),
-  maxRequestBodySize: 16384,
+  maxRequestBodySize: IMAGE_MAX_BYTES + 16384,
   // Opening a large hosted package verifies its hash before responding.
   // Bun's 10-second default otherwise drops that first request mid-verification.
   idleTimeout: 120,
   websocket: discovery.websocket,
   async fetch(request, bunServer) {
+    const remoteAddress = bunServer.requestIP(request)?.address;
+    // The upload route authenticates before consuming its larger body. Other routes retain the old bound.
+    if (
+      request.body &&
+      new URL(request.url).pathname !== "/admin/preparations/image" &&
+      !new URL(request.url).pathname.startsWith("/admin/imports")
+    ) {
+      try {
+        request = new Request(request, {
+          body: await limitedBody(
+            request,
+            new URL(request.url).pathname === "/admin/views"
+              ? 160 * 1024
+              : 16384,
+          ),
+        });
+      } catch {
+        return Response.json({ error: "Request too large" }, { status: 413 });
+      }
+    }
     if (new URL(request.url).pathname === "/nostr") {
       if (bunServer.upgrade(request, { data: { subscriptions: new Map() } }))
         return;
@@ -158,37 +228,22 @@ const server = Bun.serve<{
             headers: { "Retry-After": "5", "Cache-Control": "no-store" },
           },
         );
-      const discovered = await discovery.handle(
-        request,
-        bunServer.requestIP(request)?.address,
-      );
+      const fipsResponse = await fips.handle(request, remoteAddress);
+      if (fipsResponse) return fipsResponse;
+      const discovered = await discovery.handle(request, remoteAddress);
       if (discovered) return discovered;
+      if (path.startsWith("/admin/federation"))
+        return federation.handle(request, remoteAddress);
+      if (path.startsWith("/admin/imports"))
+        return archiveUploads.handle(request, remoteAddress);
       if (path.startsWith("/admin/sources"))
-        return sourceCache.handle(
-          request,
-          bunServer.requestIP(request)?.address,
-        );
+        return sourceCache.handle(request, remoteAddress);
       if (path.startsWith("/admin/preparations"))
-        return preparations.handle(
-          request,
-          bunServer.requestIP(request)?.address,
-        );
+        return preparations.handle(request, remoteAddress);
       if (path === "/catalog" && request.method === "GET")
         return Response.json(
           {
-            maps: [
-              {
-                id: "demo",
-                url: "/maps/demo.atlas",
-                api: "/api",
-                bytes: snapshot.size,
-                manifest: engine.reader.index.manifest,
-                hashtree: discovery.offer("demo"),
-              },
-              ...preparations
-                .catalog()
-                .map((m) => ({ ...m, hashtree: discovery.offer(m.id) })),
-            ],
+            maps: discovery.publishedOffers(),
           },
           {
             headers: {
@@ -197,10 +252,43 @@ const server = Bun.serve<{
             },
           },
         );
+      if (
+        !fips.httpEnabled &&
+        (/^\/maps\/[^/]+\.atlas$/.test(path) ||
+          path.startsWith("/api/") ||
+          /^\/maps\/[^/]+\/api\//.test(path))
+      )
+        return Response.json(
+          {
+            error:
+              "HTTP map delivery is disabled. Use the advertised FIPS providers.",
+          },
+          { status: 403 },
+        );
+      const localMap = path.match(
+        /^\/admin\/maps\/(demo|[a-f0-9-]{36})(\.atlas|\/api\/capabilities)$/,
+      );
+      if (localMap && request.method === "GET") {
+        if (!access(request, remoteAddress))
+          return Response.json(
+            { error: "Administration denied" },
+            { status: 403 },
+          );
+        const internal = new URL(request.url);
+        internal.pathname = path.replace("/admin/maps/", "/maps/");
+        const localRequest = new Request(internal, request);
+        if (localMap[1] === "demo")
+          return localMap[2] === ".atlas"
+            ? servePackage(localRequest, snapshot, etag)
+            : api(localRequest);
+        return (
+          (await library.handle(localRequest)) ??
+          new Response("Map not found", { status: 404 })
+        );
+      }
       const hosted = await library.handle(request);
       if (hosted) return hosted;
-      if (path === "/admin/operations")
-        return policy(request, bunServer.requestIP(request)?.address);
+      if (path === "/admin/operations") return policy(request, remoteAddress);
       if (path.startsWith("/api/") || path.startsWith("/maps/demo/api/"))
         return api(request);
       if (path === "/maps/demo.atlas") {
@@ -220,6 +308,8 @@ const server = Bun.serve<{
           etag,
           name: engine.reader.index.manifest.name,
           contextvm: !!cvm,
+          fips: fips.status().state,
+          httpDelivery: fips.httpEnabled,
         });
       if (path === "/" && request.method === "GET")
         return Response.json({
@@ -234,8 +324,13 @@ const server = Bun.serve<{
         return Response.json(
           {
             clientUrl,
+            discovery: {
+              pubkey: discovery.pubkey,
+              relays: discovery.relayUrls,
+            },
+            delivery: { fips: fips.settings.enabled, http: fips.httpEnabled },
             administration: {
-              allowed: access(request, bunServer.requestIP(request)?.address),
+              allowed: access(request, remoteAddress),
               message: ADMIN_DENIED,
               mode: process.env.ATLAS_ADMIN_ORIGINS
                 ? "Local and trusted LAN administration"
@@ -252,12 +347,21 @@ const server = Bun.serve<{
     });
   },
 });
+// Resolve ephemeral ports before publishing optional HTTP providers.
+const advertisedOrigin =
+  process.env.ATLAS_PUBLIC_URL ??
+  `http://${process.env.HOST === "0.0.0.0" ? "127.0.0.1" : (process.env.HOST ?? "127.0.0.1")}:${server.port}`;
+await fips.updateOrigin(advertisedOrigin);
+if (process.env.ATLAS_DISCOVERY_AUTO !== "0")
+  discovery.startAutomatic(advertisedOrigin);
 console.log(
   `ATLAS server → ${server.url}\nPackage: ${mapPath} (${(snapshot.size / 1024 / 1024).toFixed(2)} MiB)\nServing a pinned file descriptor; restart to load a regenerated package.`,
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, async () => {
+    await fips.close();
+    await federation.close();
     await discovery.close();
     await sourceCache.close();
     await preparations.close();

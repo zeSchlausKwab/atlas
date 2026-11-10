@@ -36,9 +36,18 @@ export class StreamWriter implements BlockWriter {
   constructor(
     readonly output: string,
     readonly maxBytes: number,
+    readonly directoryPath = output + ".directory.part",
   ) {}
   get bytesWritten() {
     return this.length;
+  }
+  hasPrefix(prefix: string) {
+    return !!this.db
+      .query("SELECT 1 FROM blocks WHERE substr(key,1,?)=? LIMIT 1")
+      .get(prefix.length, prefix);
+  }
+  has(key: string) {
+    return !!this.db.query("SELECT 1 FROM blocks WHERE key=?").get(key);
   }
   featureCount(prefix: string) {
     return this.db
@@ -52,8 +61,8 @@ export class StreamWriter implements BlockWriter {
     return this.count;
   }
   async open() {
-    await rm(this.output + ".directory.part", { force: true });
-    this.db = new Database(this.output + ".directory.part");
+    await rm(this.directoryPath, { force: true });
+    this.db = new Database(this.directoryPath);
     this.db
       .run(`PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE; PRAGMA cache_size=-16384;
       CREATE TABLE blocks(key TEXT PRIMARY KEY, page TEXT NOT NULL, metadata TEXT NOT NULL) WITHOUT ROWID;
@@ -205,13 +214,14 @@ export class StreamWriter implements BlockWriter {
     await this.file.close();
     await rename(this.output + ".payload.part", this.output);
     this.db.close();
-    await rm(this.output + ".directory.part");
+    await rm(this.directoryPath);
     return size;
   }
   async abort() {
     await this.file?.close().catch(() => {});
     this.db?.close();
-    for (const suffix of [".part", ".payload.part", ".directory.part"])
+    await rm(this.directoryPath, { force: true });
+    for (const suffix of [".part", ".payload.part"])
       await rm(this.output + suffix, { force: true });
   }
 }

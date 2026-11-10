@@ -38,8 +38,9 @@ export type TransferPurpose =
 export function purposeOf(key: string): TransferPurpose {
   if (key === "header" || key === "index" || key.startsWith("index/"))
     return "directory";
-  if (key.startsWith("tile/")) return "map";
-  if (key.startsWith("boundaries/")) return "features";
+  if (key.startsWith("tile/") || key.startsWith("raster/")) return "map";
+  if (key.startsWith("boundaries/") || key.startsWith("objects/"))
+    return "features";
   if (key.startsWith("features/") && key !== "features/geojson")
     return "features";
   if (key === "labels/places" || key.startsWith("labels/settlements/"))
@@ -426,10 +427,15 @@ export class AtlasReader {
   }
 
   /** Explicit full-catalog operation for auditing, never needed to display a view. */
-  async *iterateBlocks(): AsyncGenerator<Block> {
-    for (const b of this.index.blocks) yield b;
-    for (const page of this.index.pages)
-      for (const b of await this.loadPage(page)) yield b;
+  async *iterateBlocks(prefix = ""): AsyncGenerator<Block> {
+    for (const b of this.index.blocks) if (b.key.startsWith(prefix)) yield b;
+    for (const page of this.index.pages) {
+      const family = `${page.prefix ?? "tile"}/`;
+      if (prefix && !family.startsWith(prefix) && !prefix.startsWith(family))
+        continue;
+      for (const b of await this.loadPage(page))
+        if (b.key.startsWith(prefix)) yield b;
+    }
   }
   async allBlocks() {
     const result = [...this.index.blocks];

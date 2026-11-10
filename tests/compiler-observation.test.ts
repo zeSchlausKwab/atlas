@@ -37,7 +37,7 @@ test("a short pass reports its real start and completion even inside the throttl
   expect(compilerProgress(values[0]!)?.etaSeconds).toBeUndefined();
 });
 
-test.each(["source.sqlite", "source-v3.sqlite"])(
+test.each(["source.sqlite", "source-v3.sqlite", "source-v4.sqlite"])(
   "observation of %s counts sparse source rows and only augments a fresh running job",
   async (sourceKey) => {
     const directory = await mkdtemp("/tmp/atlas-progress-");
@@ -154,3 +154,107 @@ test.each(["source.sqlite", "source-v3.sqlite"])(
     }
   },
 );
+
+test("live object packing exposes its committed total and checkpoint with NAS-assisted storage", async () => {
+  const directory = await mkdtemp("/tmp/atlas-packing-progress-");
+  const compiler = `${directory}/custom-local-work/compiler`;
+  await mkdir(compiler, { recursive: true });
+  const db = new Database(`${compiler}/source-v4.sqlite.objects-index.sqlite`);
+  db.run(
+    "CREATE TABLE records(id TEXT PRIMARY KEY); INSERT INTO records VALUES('a'),('b'),('c'),('d')",
+  );
+  db.close();
+  await Bun.write(
+    `${compiler}/partitioned.json`,
+    JSON.stringify({
+      completed: {
+        "transport.atlas": { size: 100, sha256: "a" },
+        "source-v4.sqlite": { size: 200, sha256: "b" },
+      },
+    }),
+  );
+  const job = {
+    id: "fixture",
+    createdAt: "2026-11-02T08:00:00Z",
+    state: "running",
+    cachedSource: { id: "pbf" },
+    workspace: {
+      work: `${directory}/custom-local-work`,
+      artifacts: "/unmounted-nas/not-needed-for-progress",
+    },
+    selection: {
+      profiles: ["walking"],
+      layers: ["water"],
+      featureKinds: ["objects"],
+    },
+    progress: {
+      phase: "compiling",
+      message: "Packing source objects · 2 objects",
+      completed: 2,
+      total: 0,
+      unit: "stages",
+      readBytes: 0,
+      writtenBytes: 50,
+    },
+  } as PreparationJob;
+  try {
+    const before = await Bun.file(
+      `${compiler}/source-v4.sqlite.objects-index.sqlite`,
+    ).bytes();
+    const observer = new CompilerObserver();
+    const observation = await observer.sample(job, directory);
+    expect(observation?.progress.stage).toBe("semantic-object-packing");
+    expect(observation?.progress.total).toBe(4);
+    expect(observation?.progress.completed).toBe(2);
+    expect(observation?.progress.stagePercent).toBe(50);
+    expect(observation?.progress.etaSeconds).toBeUndefined();
+    expect(observation?.progress.checkpointAt).toBeTruthy();
+    expect(observation?.stages.map((s) => s.state)).toEqual([
+      "done",
+      "done",
+      "done",
+      "active",
+      "pending",
+      "pending",
+    ]);
+    // Moving into tags proves both packing and identity lookup finished.
+    // The old worker supplies no current term count: do not reuse the objects as terms.
+    job.progress.message = "Building exact tag-value index";
+    const tags = (await observer.sample(job, directory))!;
+    expect(tags.progress.stage).toBe("semantic-object-tags");
+    expect(tags.progress.total).toBe(0);
+    expect(tags.progress.stagePercent).toBeUndefined();
+    expect(
+      tags.previousPasses?.map((p) => [p.stage, p.completed, p.total]),
+    ).toEqual([
+      ["semantic-object-packing", 4, 4],
+      ["semantic-object-lookup", 4, 4],
+    ]);
+    // Browser/observer restart can recover the completed counts during this pass.
+    expect(
+      (await new CompilerObserver().sample(job, directory))?.previousPasses,
+    ).toEqual(tags.previousPasses);
+    // An unnamed native pass must not lose its existing n/x to the legacy fallback.
+    job.progress = {
+      ...job.progress,
+      message: "Finishing custom index",
+      completed: 3,
+      total: 4,
+      unit: "cells",
+    };
+    const native = (await observer.sample(job, directory))!;
+    expect([
+      native.progress.completed,
+      native.progress.total,
+      native.progress.unit,
+    ]).toEqual([3, 4, "cells"]);
+    expect(native.progress.stagePercent).toBe(75);
+    expect(
+      await Bun.file(
+        `${compiler}/source-v4.sqlite.objects-index.sqlite`,
+      ).bytes(),
+    ).toEqual(before);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

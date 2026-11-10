@@ -2,19 +2,91 @@ import { decodeTreeNode, LinkType, toHex } from "@hashtree/core";
 import { HttpSource } from "../../format/src/reader";
 import { sha256, type Block } from "../../format/src/index";
 import type { BlockStore } from "../../format/src/store";
-import { httpUrl } from "../../format/src/urls";
+import { httpUrl, mapReference } from "../../format/src/urls";
 export const HASH = /^[a-f0-9]{64}$/;
 export const CHUNK_BYTES = 64 * 1024;
 export const FANOUT = 128;
 export const MAX_BLOB_BYTES = 2 * 1024 * 1024;
+export interface FipsProvider {
+  /** Compressed transport public key; distinct from the Nostr publisher key. */
+  peerId: string;
+  seedUrls: string[];
+  /** Standard Hashtree TCP/FIPS service when omitted. */
+  servicePort?: number;
+  /** Absent means that this provider does not advertise server operations. */
+  rpcPort?: number;
+}
+export function parseFipsProviders(value: unknown): FipsProvider[] {
+  if (!Array.isArray(value) || value.length > 8)
+    throw new Error("Invalid FIPS providers");
+  const port = (value: unknown): number => {
+    if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 65535)
+      throw new Error("Invalid FIPS service port");
+    return value as number;
+  };
+  const providers: FipsProvider[] = [];
+  for (const raw of value) {
+    if (
+      !raw ||
+      typeof raw !== "object" ||
+      typeof raw.peerId !== "string" ||
+      !/^(02|03)[a-f0-9]{64}$/.test(raw.peerId) ||
+      !Array.isArray(raw.seedUrls) ||
+      !raw.seedUrls.length ||
+      raw.seedUrls.length > 8
+    )
+      throw new Error("Invalid FIPS provider");
+    const seedUrls = [
+      ...new Set<string>(
+        raw.seedUrls.map((seed: unknown) => {
+          if (typeof seed !== "string" || seed.length > 2048)
+            throw new Error("Invalid FIPS seed URL");
+          const u = new URL(seed);
+          if (
+            !["ws:", "wss:"].includes(u.protocol) ||
+            u.username ||
+            u.password ||
+            u.hash
+          )
+            throw new Error("Invalid FIPS seed URL");
+          return u.href;
+        }),
+      ),
+    ];
+    const provider: FipsProvider = {
+      peerId: raw.peerId,
+      seedUrls,
+      servicePort:
+        raw.servicePort === undefined ? 39018 : port(raw.servicePort),
+      ...(raw.rpcPort !== undefined ? { rpcPort: port(raw.rpcPort) } : {}),
+    };
+    const existing = providers.find(
+      (p) =>
+        p.peerId === provider.peerId &&
+        p.servicePort === provider.servicePort &&
+        p.rpcPort === provider.rpcPort,
+    );
+    if (existing) {
+      existing.seedUrls = [
+        ...new Set([...existing.seedUrls, ...seedUrls]),
+      ].slice(0, 8);
+    } else providers.push(provider);
+  }
+  return providers;
+}
 export interface TreeOffer {
   version: 1;
   root: string;
   bytes: number;
   chunkBytes: number;
   providers: string[];
+  fips?: FipsProvider[];
 }
-export function parseTree(value: unknown, bytes: number): TreeOffer {
+export function parseTree(
+  value: unknown,
+  bytes: number,
+  allowNoProviders = false,
+): TreeOffer {
   const v = value as TreeOffer;
   if (
     !v ||
@@ -27,9 +99,11 @@ export function parseTree(value: unknown, bytes: number): TreeOffer {
     v.chunkBytes < 16384 ||
     v.chunkBytes > MAX_BLOB_BYTES ||
     !Array.isArray(v.providers) ||
-    !v.providers.length ||
     v.providers.length > 8
   )
+    throw new Error("Invalid Hashtree offer");
+  const fips = v.fips === undefined ? undefined : parseFipsProviders(v.fips);
+  if (!allowNoProviders && !v.providers.length && !fips?.length)
     throw new Error("Invalid Hashtree offer");
   return {
     version: 1,
@@ -39,6 +113,7 @@ export function parseTree(value: unknown, bytes: number): TreeOffer {
     providers: [
       ...new Set(v.providers.map((p) => httpUrl(p).replace(/\/$/, ""))),
     ],
+    ...(fips?.length ? { fips } : {}),
   };
 }
 async function boundedResponse(response: Response, signal?: AbortSignal) {
@@ -69,7 +144,7 @@ async function boundedResponse(response: Response, signal?: AbortSignal) {
   }
   return bytes;
 }
-/** Immutable public Hashtree bytes. HTTP identity is retained for existing tool APIs.
+/** Immutable public Hashtree bytes, independent of delivery transport.
  * Provider failures never become a permanent negative cache. Every blob is verified. */
 export class HashtreeSource extends HttpSource {
   readonly tree: TreeOffer;
@@ -86,10 +161,38 @@ export class HashtreeSource extends HttpSource {
       store?: BlockStore;
       offline?: () => boolean;
       memoryBytes?: number;
+      /** Per-blob transport deadline, including time spent in an adapter's queue. Defaults to 10 seconds. */
+      requestTimeoutMs?: number;
+      /** FIPS is preferred whenever advertised. HTTP is used only if explicitly selected,
+       * allowed as fallback, or the offer is an older HTTP-only publication. */
+      transport?: "fips" | "http";
+      allowHttpFallback?: boolean;
+      fetchFipsBlob?: (
+        hash: string,
+        providers: FipsProvider[],
+        signal: AbortSignal,
+      ) => Promise<Uint8Array | null>;
+      /** Replaces all advertised providers; failures and misses never fall back to HTTP. */
+      fetchBlob?: (
+        hash: string,
+        signal: AbortSignal,
+      ) => Promise<Uint8Array | null>;
     } = {},
   ) {
     super(url, api);
-    this.tree = parseTree(tree, tree.bytes);
+    if (
+      options.requestTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.requestTimeoutMs) ||
+        options.requestTimeoutMs <= 0)
+    )
+      throw new Error("Invalid Hashtree request timeout");
+    if (
+      options.transport !== undefined &&
+      !["fips", "http"].includes(options.transport)
+    )
+      throw new Error("Invalid Hashtree transport selection");
+    this.tree = parseTree(tree, tree.bytes, !!options.fetchBlob);
+    if (url.startsWith("htree:")) mapReference(url, undefined, this.tree.root);
   }
   addProviders(providers: string[]) {
     this.tree.providers = [
@@ -98,6 +201,11 @@ export class HashtreeSource extends HttpSource {
         ...providers.map((p) => httpUrl(p).replace(/\/$/, "")),
       ]),
     ].slice(0, 8);
+  }
+  addFipsProviders(providers: FipsProvider[]) {
+    this.tree.fips = parseFipsProviders(
+      [...(this.tree.fips ?? []), ...providers].slice(0, 8),
+    );
   }
   clear() {
     this.cache.clear();
@@ -141,23 +249,56 @@ export class HashtreeSource extends HttpSource {
     if (this.options.offline?.())
       throw new Error(`Missing cached Hashtree blob ${hash}`);
     const errors: string[] = [];
-    for (const provider of this.tree.providers) {
+    const preferFips =
+      this.options.transport === "fips" ||
+      (this.options.transport !== "http" && !!this.tree.fips?.length);
+    const attempts: Array<
+      { kind: "custom" } | { kind: "fips" } | { kind: "http"; url: string }
+    > = this.options.fetchBlob
+      ? [{ kind: "custom" }]
+      : [
+          ...(preferFips ? [{ kind: "fips" } as const] : []),
+          ...(!preferFips || this.options.allowHttpFallback === true
+            ? this.tree.providers.map((url) => ({ kind: "http" as const, url }))
+            : []),
+        ];
+    if (!attempts.length)
+      throw new Error("No provider for the selected Hashtree transport");
+    for (const provider of attempts) {
       signal?.throwIfAborted();
       try {
         this.requests++;
-        const timeout = AbortSignal.timeout(10000);
+        const timeout = AbortSignal.timeout(
+          this.options.requestTimeoutMs ?? 10000,
+        );
         const requestSignal = signal
           ? AbortSignal.any([signal, timeout])
           : timeout;
-        const bytes = await boundedResponse(
-          await fetch(`${provider}/${hash}`, {
-            signal: requestSignal,
-            cache: "no-store",
-            credentials: "omit",
-            redirect: "error",
-          }),
-          requestSignal,
-        );
+        let bytes: Uint8Array | null;
+        if (provider.kind === "custom") {
+          bytes = await this.options.fetchBlob!(hash, requestSignal);
+        } else if (provider.kind === "fips") {
+          if (!this.options.fetchFipsBlob || !this.tree.fips?.length)
+            throw new Error("FIPS transport is unavailable for this map");
+          bytes = await this.options.fetchFipsBlob(
+            hash,
+            this.tree.fips,
+            requestSignal,
+          );
+        } else {
+          bytes = await boundedResponse(
+            await fetch(`${provider.url}/${hash}`, {
+              signal: requestSignal,
+              cache: "no-store",
+              credentials: "omit",
+              redirect: "error",
+            }),
+            requestSignal,
+          );
+        }
+        requestSignal.throwIfAborted();
+        if (!bytes) throw new Error("Blob unavailable");
+        if (bytes.length > MAX_BLOB_BYTES) throw new Error("Oversized blob");
         this.networkBytes += bytes.length;
         if ((await sha256(bytes)) !== hash)
           throw new Error("Blob hash mismatch");

@@ -77,3 +77,27 @@ test("saved partitioned builds restart with headroom instead of reserving the en
   );
   expect(cachedResumeSpace(gib, false, 40 * gib)).toBe(cachedBuildSpace(gib));
 });
+
+test("uncapped host estimates stay finite and storage overrides bypass only admission", async () => {
+  const {
+    NO_SIZE_LIMIT,
+    hostPreparationSpace,
+    checkStorageEstimate,
+    StorageWarning,
+  } = await import("../packages/provisioning/src/capacity");
+  expect(hostPreparationSpace(NO_SIZE_LIMIT, { atlasBytes: 20 * MIB })).toBe(
+    104 * MIB,
+  );
+  expect(
+    hostPreparationSpace(NO_SIZE_LIMIT, { sourceBytes: 407 * MIB }),
+  ).toBeLessThan(20 * 1024 ** 3);
+  expect(
+    hostPreparationSpace(NO_SIZE_LIMIT, { cached: true, partitioned: true }),
+  ).toBe(76 * 1024 ** 3);
+  expect(() => checkStorageEstimate(200, 100)).toThrow(StorageWarning);
+  expect(() => checkStorageEstimate(200, 100, true)).not.toThrow();
+  expect(() => checkStorageEstimate(200, 100, "true")).toThrow(
+    "Invalid storage override",
+  );
+  expect(BUILD_DISK_FLOOR).toBe(12 * 1024 ** 3);
+});

@@ -20,6 +20,7 @@ export class OfflineControls {
   private revision = 0;
   private blob?: Blob;
   private worker?: Worker;
+  private exportAbort?: AbortController;
   private abort = new AbortController();
   constructor(
     readonly reader: AtlasReader,
@@ -108,6 +109,7 @@ export class OfflineControls {
     this.update();
   }
   refresh() {
+    this.exportAbort?.abort();
     this.worker?.terminate();
     this.worker = undefined;
     this.busy = false;
@@ -249,13 +251,36 @@ export class OfflineControls {
     const worker = (this.worker = new Worker("/offline-worker.js", {
       type: "module",
     }));
+    const exportAbort = (this.exportAbort = new AbortController());
+    const readSignal = AbortSignal.any([this.abort.signal, exportAbort.signal]);
     const fail = (message: string) => {
+      exportAbort.abort();
       worker.terminate();
       this.busy = false;
       void this.update().then(() => this.message(message));
     };
     worker.onerror = (e) => fail(e.message);
-    worker.onmessage = (e) => {
+    worker.onmessage = async (e) => {
+      if (e.data.type === "read") {
+        const m = e.data;
+        try {
+          const bytes = await this.reader.source.read(
+            m.start,
+            m.end,
+            readSignal,
+          );
+          if (this.worker === worker)
+            worker.postMessage({ type: "reply", id: m.id, bytes });
+        } catch (error) {
+          if (this.worker === worker)
+            worker.postMessage({
+              type: "reply",
+              id: m.id,
+              error: String(error),
+            });
+        }
+        return;
+      }
       if (e.data.error) {
         fail(e.data.error);
         return;
@@ -263,6 +288,7 @@ export class OfflineControls {
       if (e.data.blob) {
         this.blob = e.data.blob;
         this.busy = false;
+        exportAbort.abort();
         worker.terminate();
         this.update();
         this.message(
@@ -270,13 +296,10 @@ export class OfflineControls {
         );
       } else this.message(e.data.message);
     };
-    const source = this.reader.source;
     worker.postMessage({
+      type: "export",
       selection: this.selection(),
       snapshot: this.reader.index.manifest.snapshot,
-      ...(source instanceof FileSource
-        ? { file: source.file }
-        : { url: new URL((source as HttpSource).url, location.href).href }),
     });
   }
   private async exportOnServer() {
@@ -302,6 +325,7 @@ export class OfflineControls {
     this.revision++;
     el("map-tools").hidden = true;
     this.worker?.terminate();
+    this.exportAbort?.abort();
     this.abort.abort();
     this.map.endPicking("offline");
   }

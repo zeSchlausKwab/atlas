@@ -28,6 +28,33 @@ A segment may touch at most 4,096 cells and its global ordinal must fit u32.
 Unsupported conditional/via-way restrictions continue to exclude incoming ways
 and are counted. This is not a navigation-grade restrictions model.
 
+## Bounded native routing output
+
+The CLI opts into compiler IPC version 1 with `ATLAS_GRAPH_OUTPUT_ACK=1`.
+The native process announces a 1 MiB output window, emits complete cell frames,
+and requests a one-byte acknowledgment before sending the next batch. The CLI
+acknowledges only after all preceding archive writes finish. One larger cell can
+occupy a batch by itself, subject to the existing 32 MiB IPC payload guard.
+This bounds producer run-ahead even when the runtime eagerly drains child pipes
+and the archive is written to slow NAS storage. Standalone native invocations
+without the flag keep the original stream. CLI and native binary must be updated
+together; an old binary produces a rebuild instruction.
+
+The North Sea recovery on 5 November 2026 reproduced an invalid frame with the
+old reader and a real NAS archive writer. Input chunks grew to nearly 2 GB;
+a read-only replay of the same checkpoint passed all 483,555 cells. The largest
+cell was 925,192 bytes, well below the payload guard. Increasing the cell limit
+would therefore hide a transport problem rather than repair an oversized cell.
+Changing only the process-stream API still allowed approximately 19 GB resident
+memory. Explicit producer acknowledgments avoid depending on runtime pipe
+backpressure. Header errors now include the stream position and previous key.
+
+This changes only temporary compiler IPC, not `.atlas`, RCL2/RCL3 cell bytes,
+source identity or checkpoint versions. Completed graph cells can be replayed
+from the existing SQLite checkpoint without repeating graph construction.
+Regression checks exercise delayed writers, fragmented frames, missing credits,
+truncation, cancellation and unchanged standalone native output.
+
 ## Search and nearest street
 
 - `search/locations`: `{schema:"locations-paged-v1",records,pages,names:true}`.
@@ -159,7 +186,7 @@ For a compiler already running on older code, `scripts/observe-compilation.ts`
 can read its job messages, completed-stage receipts and source SQLite counts. It
 never edits checkpoints or holds a database connection between samples. It writes
 only a small JSON observation file for the host console, every 15 seconds, and
-exits when no jobs remain active. Unknown legacy sub-stages stay indeterminate.
+exits when no jobs remain active or queued. Pass `--once` to capture one sample. Unknown legacy sub-stages stay indeterminate.
 The console accepts observations only for the exact running job and discards them
 after 45 seconds. This bridge permits a static console update without restarting
 an expensive build; subsequent normal deployments use the new compiler events.
@@ -172,6 +199,36 @@ The bridge is optional and temporary. Native progress remains the fallback when
 it is absent or stale. A normal deployment is still blocked while preparations
 are active. Updating the console alone does not replace an already-running
 compiler or change its recovery guarantees.
+
+### Activity panel and source-object packing
+
+The Activity rail puts running builds first and queued builds in FIFO order.
+It renders a capability-aware stage timeline even for legacy text-only workers,
+plus measured counters, current-pass elapsed time/ETA, saved stage bytes and the
+last reported checkpoint. Unknown totals stay indeterminate; “Observed this
+pass” measures only the observer’s lifetime and is not full compiler elapsed time.
+A checkpoint timestamp identifies saved work, not a promise that every unfinished
+operation resumes from its current counter.
+
+Measured n/x counters remain visible under **Previous pass counts** after a pass
+changes. A reported fraction is labeled “Last reported” unless its numerator
+reaches the measured total. New counters with no total show `n / ?`; completely
+unmeasured passes explicitly say that their item count is not reported. Counters
+are not reused as a percentage or ETA for a different pass. Counter regressions
+invalidate later observations from a previous attempt.
+
+For a legacy worker already indexing exact tag values, the observer can recover
+completed object packing and identity-lookup counts from its read-only records
+index: that compiler message is emitted only after both operations finish.
+Busy databases remain untouched. Native counters without a stage-name field are
+preserved rather than overwritten by the observer's fallback.
+
+Source-object packing and identity lookup now emit structured progress using the
+writer’s existing object counts. Tag indexing reports a growing term count until
+its total is known; object sorting and tree assembly remain indeterminate.
+These events add no full-table counting pass. The legacy observer honors the job’s
+workspace path and can read a packing denominator only when SQLite permits a
+read-only query. A busy index is left alone and its ETA remains unavailable.
 
 ### Multi-core execution
 
@@ -250,3 +307,75 @@ invalidates semantic packing (v5 introduced paged selectable features), backs up
 the old receipt as `partitioned.json.v4`, and atomically publishes the new one.
 Every retained file still passes its normal size/SHA-256 verification before use.
 Other versions, changed input and changed recipes remain rejected.
+
+## Recoverable source-object staging (6 November 2026)
+
+The source-object pass no longer expands all geometry and topology into a second
+SQLite database. It emits compressed payload blocks while reading the source,
+using at most 128 spatial/class buffers of 64 KiB each. The append-only
+`source-objects-stage.payload` follows the selected artifact workspace (NAS for
+NAS-assisted builds). `source-objects-stage.sqlite` stays on the local compiler
+disk and contains compressed attributes, payload references, block descriptors,
+identity/page indexes and checkpoint state. These indexes still grow with the
+number of objects and tags; this is bounded payload buffering, not constant
+whole-build disk usage.
+
+The native source's `(cell,rowid)` index supplies an exact resume cursor without
+a whole-source sort. Source ingestion and attribute packing commit every 10,000
+objects; identity indexing commits every 10,240 identities; tag indexing commits
+every 10,000 complete terms. Extra ocean objects checkpoint every 1,000 objects.
+Payload buffers are flushed and the payload file is synced **before** SQLite
+commits its transaction with the cursor, counters, block keys and output length.
+SQLite uses DELETE journaling and FULL synchronization. Reopen recovers its
+journal and truncates the uncommitted payload tail. The full recipe/source
+fingerprint must match. Blocks are checksum-verified when copied to the archive.
+
+Exact-tag postings are inserted once per attribute page, rather than once per
+object. An ordered postings scan replaces the old tag/object/page join and
+large DISTINCT sort. Spatial grouping keeps unrelated distant geometry out of
+the same small payload pack.
+
+A separately verified `source-objects.atlas` stage finishes **before** the
+search, labels and selectable-feature spools are allocated. Its staging files
+are reclaimed only after the archive has a size/SHA-256 receipt. The final
+package merges feature kinds and capabilities and still contains everything in
+one `.atlas` file. Existing completed v8 transport, source, display and semantic
+artifacts remain reusable; no source snapshot or routing identity changes.
+
+Recovery retains committed ingestion, packing, identity and tag batches. Spatial
+sort creation and final tree assembly may repeat if interrupted; archive copying
+and prefix finalization can also repeat, reading the completed checkpoint store.
+The host reports workspace payload bytes and local index bytes separately,
+alongside pass counts, ETA and checkpoint time. Free-space guards remain active.
+
+Validation: the source-object suite covers exact geometry, relationship roles,
+Unicode/empty tags, excerpt pruning and shared payloads. Recovery tests interrupt
+all four passes and kill a subprocess with a hot journal and uncommitted payload.
+The real Liechtenstein PBF integration produces one file with all capabilities,
+including searchable explicit addresses and readable source objects. Its 63,373
+source objects used 23.06 MiB of local index and 5.78 MiB of compressed workspace
+payload at the end of ingestion; this small fixture is not a continent-size
+forecast.
+
+## Compact search-name staging (8 November 2026)
+
+Both serial and parallel name indexing accumulate bounded batches of
+`term → sorted record IDs`. The temporary SQLite spool stores one row per
+term/batch with delta-encoded, optionally gzip-compressed uint32 IDs. A single
+ordered primary key replaces the former row-per-gram table and duplicate sorting
+index. Parallel shards cover disjoint ordinal ranges; their ordered chunk merge
+recreates the same `postings-v1` pages and term catalog. No file format or reader
+migration is required. The accumulator flushes after at most 262,144 postings
+plus the current record; decoding holds at most one posting chunk at a time.
+
+Temporary databases remain local, including during NAS-assisted builds. This
+reduces index amplification; it does not make whole-build disk use constant.
+Search/label/feature staging is still disposable and repeats after interruption.
+Completed source-object, source-geometry and routing receipts remain reusable.
+
+A repeated-address regression fixture with 20,000 records and 4,226,200 postings
+used 157,794,304 bytes before this change and 4,898,816 bytes afterward (including
+record pages). Worker time on the development Mac fell from 4.13 s to 0.54 s.
+These fixture numbers are not a forecast for a continent. An independent
+comparison against the previous compiler produced identical bytes for all 6,299
+blocks of a multilingual 8,193-record fixture, with both one and four workers.

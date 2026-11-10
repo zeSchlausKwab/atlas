@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "note": "Reduced-area replacement for the superseded 200 GB Europe experiment. All capabilities retained; no final-size target. Build the independent smaller pair first, then the large map. Every source is self-contained and the pair overlaps the North Sea map.",
+  "maps": [
+    {
+      "key": "lower-rhine-west",
+      "name": "Lower Rhine West \u00b7 coast and cross-source demo",
+      "bounds": [3, 50.5, 5.7, 53.8],
+      "probes": [
+        {
+          "name": "North Sea west",
+          "point": [3.5, 52.3],
+          "water": true
+        },
+        {
+          "name": "Antwerp land",
+          "point": [4.42, 51.22],
+          "water": false
+        }
+      ]
+    },
+    {
+      "key": "lower-rhine-east",
+      "name": "Lower Rhine East \u00b7 cross-source demo",
+      "bounds": [5.3, 50.5, 8, 53.8],
+      "probes": [
+        {
+          "name": "North Sea east",
+          "point": [6, 53.7],
+          "water": true
+        },
+        {
+          "name": "Essen land",
+          "point": [7.01, 51.46],
+          "water": false
+        }
+      ]
+    },
+    {
+      "key": "north-sea",
+      "name": "North Sea \u00b7 Britain, Benelux and northern Germany",
+      "bounds": [-5.5, 50, 10.5, 55],
+      "probes": [
+        {
+          "name": "North Sea",
+          "point": [2.5, 54],
+          "water": true
+        },
+        {
+          "name": "English Channel",
+          "point": [-1, 50.2],
+          "water": true
+        },
+        {
+          "name": "London land",
+          "point": [-0.14, 51.52],
+          "water": false
+        },
+        {
+          "name": "Hamburg land",
+          "point": [10, 53.57],
+          "water": false
+        }
+      ]
+    }
+  ]
+}

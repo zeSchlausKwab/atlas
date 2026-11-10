@@ -41,6 +41,7 @@ export async function selectedPlaces(reader: AtlasReader, polygon: Polygon) {
 export class PlacesView {
   values: Place[] = [];
   loading = false;
+  missing = false;
   private signature = "";
   private dead = false;
   constructor(
@@ -49,8 +50,10 @@ export class PlacesView {
     readonly error: (message: string) => void,
   ) {}
   update(world: [number, number, number, number], zoom: number) {
-    if (!this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY))
+    if (!this.reader.index.blocks.some((b) => b.key === PLACE_LABEL_KEY)) {
+      this.missing = false;
       return this.reader.index.manifest.places;
+    }
     const sig =
       zoom < 8
         ? "overview"
@@ -58,9 +61,13 @@ export class PlacesView {
     if (!this.loading && sig !== this.signature) {
       this.signature = sig;
       this.loading = true;
+      this.missing = true;
       void placesInView(this.reader, world, zoom)
         .then((p) => {
-          if (!this.dead) this.values = p;
+          if (!this.dead) {
+            this.values = p;
+            this.missing = false;
+          }
         })
         .catch((e) => {
           if (!this.dead) this.error(String(e));

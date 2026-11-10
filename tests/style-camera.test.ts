@@ -34,7 +34,7 @@ test("portable styles round-trip, isolate mutable state and reject unsupported v
   const compiled = compileStyle(style);
   expect(compiled.colors.length).toBe(24);
   expect([...compiled.widths].filter((_, i) => i !== 2)).toEqual([
-    1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0.5, 0.5, 1, 1, 1,
   ]);
   expect(compiled.widths[2]).toBeCloseTo(0.6);
   const legacy = JSON.parse(JSON.stringify(PAPER));

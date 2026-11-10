@@ -1,6 +1,12 @@
+import { familyCatalog } from "./families";
 import { TRANSPORT_MODES, type Manifest, type TransportMode } from "./index";
 export type RoutingCapability =
-  | { storage: "cells"; prefix: string; codec: "rcl1" | "rcl2"; zoom: number }
+  | {
+      storage: "cells";
+      prefix: string;
+      codec: "rcl1" | "rcl2" | "rcl3";
+      zoom: number;
+    }
   | { storage: "graph"; block: string; codec: "rte1" };
 /** One compatibility boundary for transport cells and legacy walking archives. */
 export function routingCapability(
@@ -137,6 +143,7 @@ export function operationCatalog(m: Manifest) {
   return {
     version: 1 as const,
     snapshot: m.snapshot,
+    families: familyCatalog(m),
     coverage: {
       bounds: m.bounds,
       polygon: m.selection?.polygon,

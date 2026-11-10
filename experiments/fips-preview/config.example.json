@@ -1,0 +1,6 @@
+{
+  "publisher": "0000000000000000000000000000000000000000000000000000000000000000",
+  "relayUrls": ["wss://relay.primal.net/", "wss://relay.snort.social/"],
+  "mapIds": [],
+  "timeoutMs": 30000
+}

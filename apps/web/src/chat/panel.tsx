@@ -1,3 +1,4 @@
+import type { BrowserAcquisition } from "../acquisition-client";
 import { RecipePanel } from "./recipe-panel";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import { createPortal } from "react-dom";
@@ -198,8 +199,9 @@ export function mountChat(
   enabled: () => Set<string>,
   offline: () => boolean,
   onTransfer?: (event: ReadEvent) => void,
+  acquisition?: BrowserAcquisition,
 ) {
-  const tools = new ChatTools(map, readers, enabled, offline, onTransfer),
+  const tools = new ChatTools(map, readers, enabled, offline, onTransfer, acquisition),
     agent = new AtlasAgentSession(tools);
   let dead = false;
   const root = createRoot(element);

@@ -1,3 +1,9 @@
+import { routingAuthority } from "./routing-authority";
+import type { PreparedOcean } from "../../provisioning/src/ocean-source";
+import { oceanObjects } from "../../objects/src/ocean";
+import { appendOcean } from "./ocean-spool";
+import { ObjectStaging } from "../../objects/src/staging";
+import { writeSourceObjects } from "../../objects/src/source-build";
 import { BoundaryWriter } from "../../boundaries/src/build";
 import { reconcilePartitionedState } from "./partitioned-state";
 import { compilerWorkers } from "../../compiler/src/settings";
@@ -36,9 +42,12 @@ import { measuredProgress } from "../../provisioning/src/compiler-progress";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 export interface PartitionedOptions {
+  ocean?: PreparedOcean;
   input: string;
   output: string;
   work: string;
+  /** Sequential archives may live on a NAS; writable databases stay in work. */
+  artifacts?: string;
   selection: PackageSelection;
   source?: Manifest["source"];
   signal?: AbortSignal;
@@ -56,6 +65,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
       ? AbortSignal.any([o.signal, abort.signal])
       : abort.signal;
   await mkdir(o.work, { recursive: true });
+  const artifactRoot = o.artifacts ?? o.work;
+  await mkdir(artifactRoot, { recursive: true });
   await mkdir(dirname(o.output), { recursive: true });
   const inputHash = await fileHash(
     o.input,
@@ -72,10 +83,22 @@ export async function compilePartitioned(o: PartitionedOptions) {
       ),
     signal,
   );
+  if (s.ocean && (!o.ocean || o.ocean.source.sha256 !== s.ocean.sha256))
+    throw new Error("Pinned ocean input is required for this build");
+  if (o.ocean && !s.ocean)
+    throw new Error("Ocean input must be pinned in the recipe");
   const statePath = join(o.work, "partitioned.json"),
     old = Bun.file(statePath);
   const previous = (await old.exists()) ? await old.json() : undefined;
-  const { state, migrated } = reconcilePartitionedState(previous, inputHash, s);
+  const { state, migrated } = reconcilePartitionedState(
+    previous,
+    o.ocean
+      ? new Bun.CryptoHasher("sha256")
+          .update(inputHash + o.ocean.clipHash)
+          .digest("hex")
+      : inputHash,
+    s,
+  );
   const identity = state.identity;
   if (migrated) {
     // Keep the old receipt for diagnostics; publish the migration atomically.
@@ -87,13 +110,18 @@ export async function compilePartitioned(o: PartitionedOptions) {
       fs.rename(statePath + ".part", statePath),
     );
     progress(
-      "Upgraded checkpoints: retaining routing and display; rebuilding source geometry and semantic pages for boundaries",
+      "Upgraded checkpoints: retaining routing and display; rebuilding source geometry and semantic pages for source semantics",
     );
   }
   let failure: Error | undefined;
   const space = async () => {
-    const fs = await statfs(o.work);
-    if (fs.bavail * fs.bsize < (o.reserveBytes ?? 2 * 1024 ** 3)) {
+    const disks = await Promise.all(
+      [...new Set([o.work, artifactRoot])].map((p) => statfs(p)),
+    );
+    if (
+      Math.min(...disks.map((fs) => fs.bavail * fs.bsize)) <
+      (o.reserveBytes ?? 2 * 1024 ** 3)
+    ) {
       failure = new Error(
         "Build paused at the free-space reserve. Completed stages remain available for resume.",
       );
@@ -132,10 +160,27 @@ export async function compilePartitioned(o: PartitionedOptions) {
       routingPaddingCells: s.paddingCells,
     },
   };
+  if (o.ocean) {
+    base.source = {
+      ...base.source,
+      inputs: [
+        ...(base.source.inputs ?? []),
+        o.ocean.source,
+        {
+          url: `atlas:clipped-ocean:${o.ocean.clipHash}`,
+          sha256: o.ocean.clipHash,
+          bytes: o.ocean.clipBytes,
+        },
+      ],
+    };
+    base.limitations.push(
+      "Sea polygons use a separately dated, fingerprinted coastline source. Provider splits and clipping edges are not physical coastlines; physical coastline ways retain the PBF snapshot. No shipping graph is implied.",
+    );
+  }
   async function stage(name: string, build: (path: string) => Promise<void>) {
     signal.throwIfAborted();
     await space();
-    const path = join(o.work, name),
+    const path = join(name.endsWith(".atlas") ? artifactRoot : o.work, name),
       receipt = state.completed[name];
     const verify = () => {
       const report = measuredProgress(
@@ -173,7 +218,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
     path: string,
     build: (w: StreamWriter) => Promise<Omit<Manifest, "snapshot">>,
   ) {
-    const w = await new StreamWriter(path, s.maxBytes).open();
+    const w = await new StreamWriter(
+      path,
+      s.maxBytes,
+      join(o.work, path.split("/").at(-1)! + ".directory.part"),
+    ).open();
     try {
       const manifest = await build(w);
       const label = path.split("/").at(-1)!;
@@ -240,6 +289,12 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 await w.add(b);
               },
             };
+            // A resumed RCL2 spool remains RCL2. Never relabel its ordinals as OSM IDs.
+            const federation = (await Bun.file(
+              join(o.work, "routing-v2.sqlite"),
+            ).exists())
+              ? undefined
+              : routingAuthority(base.source);
             const transport = await addPartitionedTransport(
               filtered,
               o.input,
@@ -248,6 +303,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
               signal,
               progress,
               inputHash,
+              federation,
             );
             for (const mode of s.profiles)
               Object.assign(transport.profiles[mode]!, counts[mode]);
@@ -258,6 +314,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
       );
     if (state.completed["transport.atlas"]) {
       for (const name of [
+        "routing-v3-needed.bits",
+        "routing-v3-coordinates.bin",
+        "routing-v3.sqlite",
+        "routing-v3.sqlite-wal",
+        "routing-v3.sqlite-shm",
         "routing-v2.sqlite",
         "routing-v2.sqlite-wal",
         "routing-v2.sqlite-shm",
@@ -275,18 +336,30 @@ export async function compilePartitioned(o: PartitionedOptions) {
       s.streetNames ||
       s.pois ||
       s.peaks;
+    const separateObjects =
+      s.featureKinds.includes("objects") &&
+      (!state.completed["semantics.atlas"] ||
+        !!state.completed["source-objects.atlas"]);
     const needsSource =
+      (separateObjects && !state.completed["source-objects.atlas"]) ||
       (needsSem && !state.completed["semantics.atlas"]) ||
       (s.layers.length && !state.completed["display.atlas"]);
     let source: Database | undefined;
     if (needsSource) {
-      const path = await stage("source-v3.sqlite", async (path) => {
+      const path = await stage("source-v4.sqlite", async (path) => {
         await runCompiler(
           [join(ROOT, "target/release/source-store"), o.input, path],
           ROOT,
           signal,
           progress,
-          { ...process.env, TMPDIR: o.work, ATLAS_SOURCE_HASH: inputHash },
+          {
+            ...process.env,
+            TMPDIR: o.work,
+            ATLAS_SOURCE_HASH: inputHash,
+            ATLAS_SOURCE_OBJECTS: s.featureKinds.includes("objects")
+              ? "1"
+              : "0",
+          },
         );
       });
       source = new Database(path, { readonly: true });
@@ -310,6 +383,64 @@ export async function compilePartitioned(o: PartitionedOptions) {
       );
     }
     try {
+      // Finish and receipt source objects before allocating search/label/feature spools.
+      // Only the compact, transactional index is on SSD; the append-only payload
+      // follows the selected artifact workspace (NAS for assisted builds).
+      if (separateObjects) {
+        const indexPath = join(o.work, "source-objects-stage.sqlite");
+        const payloadPath = join(artifactRoot, "source-objects-stage.payload");
+        artifacts.push(
+          await stage("source-objects.atlas", (path) =>
+            archive(path, async (writer) => {
+              const staging = await new ObjectStaging(
+                indexPath,
+                payloadPath,
+                identity,
+              ).open();
+              try {
+                await writeSourceObjects(
+                  source!,
+                  staging,
+                  {
+                    type: "Polygon",
+                    coordinates: [[...s.polygon, s.polygon[0]!]],
+                  },
+                  signal,
+                  progress,
+                  o.ocean
+                    ? oceanObjects(o.ocean.data, o.ocean.source.sha256)
+                    : [],
+                  staging,
+                );
+                let report: ((done: number) => void) | undefined;
+                await staging.copyTo(writer, signal, (done, total) => {
+                  report ??= measuredProgress(
+                    progress,
+                    "semantic-object-archive",
+                    "Writing source object archive",
+                    total,
+                    "blocks",
+                  );
+                  report(done);
+                });
+                return {
+                  ...base,
+                  featureKinds: ["objects"],
+                  featureZoom: FEATURE_ZOOM,
+                  featureSchema: 2,
+                  capabilities: ["feature-extraction", "source-objects"],
+                };
+              } finally {
+                await staging.close();
+              }
+            }),
+          ),
+        );
+        // Only reclaim staging after the finished archive has a verified receipt.
+        await rm(indexPath, { force: true });
+        await rm(indexPath + "-journal", { force: true });
+        await rm(payloadPath, { force: true });
+      }
       if (needsSem)
         artifacts.push(
           await stage("semantics.atlas", (path) =>
@@ -551,7 +682,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : undefined,
                   featureZoom: s.featureKinds.length ? FEATURE_ZOOM : undefined,
                   featureSchema: s.featureKinds.length ? 2 : undefined,
-                  featureKinds: s.featureKinds,
+                  featureKinds: s.featureKinds.filter((k) => k !== "objects"),
                   semantics: s.search ? SEMANTIC_RETENTION : undefined,
                   capabilities: [
                     ...(s.search
@@ -567,6 +698,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                       : []),
                     ...(s.peaks ? ["peak-query"] : []),
                     ...(s.featureKinds.length ? ["feature-extraction"] : []),
+
                     ...(s.featureKinds.includes("boundaries")
                       ? ["administrative-boundaries"]
                       : []),
@@ -597,6 +729,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   progress,
                   workers,
                 );
+                if (o.ocean && s.layers.includes("water"))
+                  await appendOcean(spool, o.ocean, base, signal, progress);
                 const packing = measuredProgress(
                   progress,
                   "display-packing",
@@ -680,7 +814,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
       source?.close();
     }
     // Derived stage archives now contain everything needed; release source/fragment spools before assembly.
-    for (const name of ["source-v3.sqlite", "display-fragments.sqlite"]) {
+    for (const name of ["source-v4.sqlite", "display-fragments.sqlite"]) {
       await rm(join(o.work, name), { force: true });
       delete state.completed[name];
     }
@@ -691,7 +825,8 @@ export async function compilePartitioned(o: PartitionedOptions) {
     // Stream every directory leaf and payload. Never collect all block descriptors.
     await archive(o.output, async (writer) => {
       let manifest = { ...base },
-        caps = new Set<string>();
+        caps = new Set<string>(),
+        featureKinds = new Set<NonNullable<Manifest["featureKinds"]>[number]>();
       const totalBytes = artifacts.reduce(
         (sum, path) => sum + state.completed[path.split("/").at(-1)!]!.size,
         0,
@@ -713,6 +848,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
           const { snapshot, ...m } = reader.index.manifest;
           manifest = { ...manifest, ...m, capabilities: [] };
           for (const c of m.capabilities) caps.add(c);
+          for (const kind of m.featureKinds ?? []) featureKinds.add(kind);
           // Optional fields from earlier artifacts survive Object.assign (absent fields are omitted in JSON).
           for await (const block of reader.iterateBlocks()) {
             signal.throwIfAborted();
@@ -740,7 +876,13 @@ export async function compilePartitioned(o: PartitionedOptions) {
         if (m.capabilities.includes("peak-query")) manifest.peaks = m.peaks;
         r.dispose();
       }
+      if (
+        o.ocean?.data.features.length &&
+        (s.layers.includes("water") || s.featureKinds.includes("objects"))
+      )
+        caps.add("land-sea-surfaces");
       manifest.capabilities = [...caps];
+      if (featureKinds.size) manifest.featureKinds = [...featureKinds];
       manifest.features = writer.featureCount("tile/");
       manifest.featureCountKind = "tile-records";
       return manifest;

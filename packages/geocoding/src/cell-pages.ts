@@ -19,8 +19,11 @@ export async function* readSearchCell(
   kind: CellKind,
   bounds?: Bounds,
   signal?: AbortSignal,
+  visit?: (key: string) => Promise<void>,
+  metadataOnly = false,
 ): AsyncGenerator<Uint8Array> {
   signal?.throwIfAborted();
+  await visit?.(key);
   const bytes = await reader.block(key);
   if (bytes.length > MAX_SEARCH_PAGE)
     throw new Error("Search cell exceeds 4 MiB");
@@ -73,6 +76,8 @@ export async function* readSearchCell(
         b[1] > bounds[3])
     )
       continue;
+    await visit?.(p.key);
+    if (metadataOnly) continue;
     const payload = await reader.block(p.key);
     signal?.throwIfAborted();
     if (payload.length > MAX_SEARCH_PAGE)

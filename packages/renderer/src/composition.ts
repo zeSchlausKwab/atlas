@@ -1,3 +1,4 @@
+import { RasterPlane, type RasterLayerViews } from "./raster";
 import { PlacesView } from "../../labels/src/place-pages";
 import type { WorkspaceMap } from "./workspace-map";
 import { defaultOverlays, type OverlayFrame } from "./overlays";
@@ -49,10 +50,13 @@ import { decodePlaces, PLACE_LABEL_KEY } from "../../labels/src/places";
 export interface CompositionMapSource extends CompositionSource {
   reader: AtlasReader;
   color: string;
+  rasterOpacity?: number;
+  rasterLayers?: RasterLayerViews;
 }
 interface Session {
   source: CompositionMapSource;
   tiles: CoveredTiles;
+  raster: RasterPlane;
   scheduler: TileScheduler;
   labels: MapLabels;
   shown: string[];
@@ -260,6 +264,7 @@ export class CompositionMap implements WorkspaceMap {
     for (const s of this.sessions.values()) {
       s.source.reader.offline = offline;
       s.scheduler.retry();
+      s.raster.retry();
       s.labels.retry();
       s.placesView?.retry();
       s.placesFailed = false;
@@ -496,6 +501,7 @@ export class CompositionMap implements WorkspaceMap {
         session.dead = true;
         session.placesView?.destroy();
         session.scheduler.destroy();
+        session.raster.destroy();
         session.labels.destroy();
         this.sessions.delete(id);
       }
@@ -518,6 +524,12 @@ export class CompositionMap implements WorkspaceMap {
         placesFailed: false,
         dead: false,
       });
+      session.raster = new RasterPlane(
+        source.reader,
+        this.overlay,
+        () => this.invalidate(),
+        (e) => this.onError(source.id, e),
+      );
       session.labels = new MapLabels(
         source.reader,
         () => this.invalidate(),
@@ -545,6 +557,9 @@ export class CompositionMap implements WorkspaceMap {
       );
       this.sessions.set(source.id, session);
     }
+    // Earlier sources paint above later sources, also after a priority reorder.
+    for (const source of [...this.sources].reverse())
+      this.sessions.get(source.id)?.raster.placeBefore(this.overlay);
     this.revision++;
     this.planned = "";
     this.invalidate();
@@ -617,6 +632,12 @@ export class CompositionMap implements WorkspaceMap {
       };
     const frames: OverlayFrame[] = [];
     for (const s of this.sessions.values()) {
+      s.raster.draw(
+        camera,
+        ratio,
+        s.source.rasterOpacity ?? 0.6,
+        s.source.rasterLayers,
+      );
       const b = coverageBounds(coverageOf(s.source.manifest));
       const w = Math.max(view[0], b[0]),
         north = Math.max(view[1], b[1]),
@@ -667,13 +688,13 @@ export class CompositionMap implements WorkspaceMap {
         state: this.state,
         labelStats: { roads: 0, pois: 0, loading: 0, missing: 0 },
       });
-      stats.wanted += result.wanted;
+      stats.wanted += result.wanted + s.raster.stats.wanted;
       stats.fallbackTiles += result.presented.filter(
         (b) => b.z !== result.view.zoom,
       ).length;
-      stats.tiles += result.tiles;
-      stats.missing += result.missing;
-      stats.loading += result.loading;
+      stats.tiles += result.tiles + s.raster.stats.tiles;
+      stats.missing += result.missing + s.raster.stats.missing;
+      stats.loading += result.loading + s.raster.stats.loading;
       stats.bytes += s.source.reader.bytesRead;
       if (active && (layers.length || s.tiles.parts.has("labels")))
         stats.sources++;
@@ -811,6 +832,7 @@ export class CompositionMap implements WorkspaceMap {
       s.dead = true;
       s.placesView?.destroy();
       s.scheduler.destroy();
+      s.raster.destroy();
       s.labels.destroy();
     }
     this.renderer.free();

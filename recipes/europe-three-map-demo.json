@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "targetTotalBytes": 200000000000,
+  "note": "Measured-size target, not a predicted size or a minimum. Adjust the large map's eastern edge after measuring; never pad output files. All three maps contain their own selected data. Every map is compiled independently from the same retained planet SHA-256; no map depends on another map finishing.",
+  "source": "verified cached planet",
+  "required": [
+    "objects",
+    "boundaries",
+    "address-search",
+    "transport-routing",
+    "land-sea-surfaces"
+  ],
+  "maps": [
+    {
+      "key": "western",
+      "name": "Western Europe · analysis and navigation",
+      "bounds": [-15, 34, 27, 65],
+      "targetBytes": 140000000000,
+      "maxBytes": 220000000000
+    },
+    {
+      "key": "rhine-alps",
+      "name": "Rhine–Alps · independent OSM demo",
+      "bounds": [1.5, 44, 11, 54],
+      "targetBytes": 30000000000,
+      "maxBytes": 60000000000
+    },
+    {
+      "key": "alps-danube",
+      "name": "Alps–Danube · independent OSM demo",
+      "bounds": [9, 44, 20, 51],
+      "targetBytes": 30000000000,
+      "maxBytes": 60000000000
+    }
+  ],
+  "buildMode": "independent-osm"
+}

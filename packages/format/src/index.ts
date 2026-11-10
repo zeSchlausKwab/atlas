@@ -1,3 +1,14 @@
+import {
+  validateTransportMetadata,
+  type RoutingFederation,
+} from "./routing-contract";
+import {
+  validateComposition,
+  MEMBER_CHUNK_BYTES,
+  type ArchiveComposition,
+} from "./composition-schema";
+import { validateFamilies, type DataFamily } from "./families";
+import { validateRasters, type RasterLayer } from "./raster";
 import { pagedZoom } from "../../geocoding/src/paging";
 /** ATLAS v0.1: immutable single-file package with independently addressed blocks. */
 export const MAGIC = "ATLAS001";
@@ -60,7 +71,7 @@ export interface TransportProfile {
   prefix: string;
   zoom: 14;
   count: number;
-  codec: "rcl2";
+  codec: "rcl2" | "rcl3";
   nodes: number;
   segments: number;
   turns: number;
@@ -72,6 +83,7 @@ export interface TransportMetadata {
   version: 1;
   /** Identity of the compiled graph whose cells are copied unchanged into excerpts. */
   graphSnapshot?: string;
+  federation?: RoutingFederation;
   profiles: Partial<Record<TransportMode, TransportProfile>>;
   statistics?: "cell-records";
 }
@@ -129,8 +141,12 @@ export interface Manifest {
     | "roads"
     | "land"
     | "boundaries"
+    | "objects"
   )[];
   tileLayers?: MapLayer[];
+  rasters?: RasterLayer[];
+  families?: DataFamily[];
+  composition?: ArchiveComposition;
   buildingHeights?: {
     tagged: number;
     estimated: number;
@@ -144,6 +160,15 @@ export interface Manifest {
     addresses: "osm-explicit";
     poiTags: boolean;
     administrativeHierarchy: boolean;
+  };
+  /** Immutable revision lineage; payload families remain self-contained. */
+  amendment?: {
+    version: 1;
+    parentSnapshot: string;
+    sourceSnapshot: string;
+    builder: string;
+    addedFamilies: string[];
+    routingPaddingCells: number;
   };
   selection?: {
     polygon: [number, number][];
@@ -176,7 +201,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|members\/m[0-9]{1,3}|raster\/[a-z][a-z0-9_-]{0,63}|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -297,6 +322,18 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       new Set(manifest.tileLayers).size !== manifest.tileLayers.length)
   )
     throw new Error("Invalid map layer catalog");
+  validateComposition(manifest.composition);
+  if (
+    manifest.capabilities.includes("map-composition") !== !!manifest.composition
+  )
+    throw new Error("Composition capability mismatch");
+  validateRasters(manifest.rasters);
+  validateFamilies(manifest.families);
+  if (
+    manifest.capabilities.includes("raster-rendering") !==
+    !!manifest.rasters?.length
+  )
+    throw new Error("Raster capability mismatch");
   if (manifest.buildingHeights) {
     const h = manifest.buildingHeights;
     if (
@@ -322,6 +359,23 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       !manifest.capabilities.includes("feature-extraction"))
   )
     throw new Error("Invalid feature schema");
+  if (manifest.amendment) {
+    const a = manifest.amendment;
+    if (
+      a.version !== 1 ||
+      !/^[a-f0-9]{64}$/.test(a.parentSnapshot) ||
+      !/^[a-f0-9]{64}$/.test(a.sourceSnapshot) ||
+      typeof a.builder !== "string" ||
+      !a.builder ||
+      !Array.isArray(a.addedFamilies) ||
+      !a.addedFamilies.length ||
+      a.addedFamilies.some((f) => typeof f !== "string" || !f) ||
+      !Number.isInteger(a.routingPaddingCells) ||
+      a.routingPaddingCells < 0 ||
+      a.routingPaddingCells > 4
+    )
+      throw new Error("Invalid amendment provenance");
+  }
   if (manifest.selection) {
     const s = manifest.selection;
     if (
@@ -355,6 +409,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
             "roads",
             "land",
             "boundaries",
+            "objects",
           ].includes(k),
       ))
   )
@@ -366,42 +421,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
       manifest.selection.routingPaddingCells > 4)
   )
     throw new Error("Invalid routing selection padding");
-  if (manifest.transport) {
-    if (
-      manifest.transport.version !== 1 ||
-      (manifest.transport.graphSnapshot !== undefined &&
-        !/^[a-f0-9]{64}$/.test(manifest.transport.graphSnapshot)) ||
-      !manifest.transport.profiles ||
-      Object.keys(manifest.transport.profiles).length === 0 ||
-      Object.keys(manifest.transport.profiles).some(
-        (k) => !TRANSPORT_MODES.includes(k as TransportMode),
-      )
-    )
-      throw new Error("Invalid transport metadata");
-    for (const mode of TRANSPORT_MODES) {
-      const p = manifest.transport.profiles[mode];
-      if (!p) continue;
-      if (
-        p.prefix !== `routing/${mode}/cells` ||
-        p.zoom !== 14 ||
-        p.codec !== "rcl2" ||
-        ![
-          p.count,
-          p.nodes,
-          p.segments,
-          p.turns,
-          p.skippedWays,
-          p.unsupportedRestrictions,
-          p.excludedRestrictionWays,
-        ].every((n) => Number.isSafeInteger(n) && n >= 0)
-      )
-        throw new Error("Invalid transport profile");
-    }
-  }
-  if (
-    manifest.capabilities.includes("transport-routing") !== !!manifest.transport
-  )
-    throw new Error("Transport capability mismatch");
+  validateTransportMetadata(manifest.transport, manifest.capabilities);
   if (manifest.routing) {
     const r = manifest.routing;
     if (
@@ -434,6 +454,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   for (const [capability, key] of [
     ["location-search", "search/locations"],
     ["administrative-boundaries", "boundaries/index"],
+    ["source-objects", "objects/index"],
     ["reverse-street", "search/streets"],
   ]) {
     if (
@@ -455,20 +476,36 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
             (p.prefix
               ? !manifest.tileLayers?.includes(p.prefix.slice(5) as MapLayer)
               : !!manifest.tileLayers)
-          : isRoutingCell(`${p.prefix}/`)
-            ? p.z !== routingZoom(manifest, p.prefix!)
-            : p.prefix === "labels/settlements" ||
-                p.prefix === "query/peaks-data"
-              ? p.z !== 8
-              : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
-                ? p.z !== manifest.labelZoom
-                : /^boundaries\/(records|geometry)$/.test(p.prefix!)
-                  ? p.z !== 16
-                  : pagedZoom(p.prefix!) !== undefined
-                    ? p.z !== pagedZoom(p.prefix!)
-                    : !/^features\/(buildings|water|railways|roads|land)$/.test(
-                        p.prefix!,
-                      ) || p.z !== manifest.featureZoom) ||
+          : p.prefix?.startsWith("raster/")
+            ? !manifest.rasters?.some(
+                (r) =>
+                  p.prefix === `raster/${r.id}` &&
+                  p.z >= r.minZoom &&
+                  p.z <= r.maxZoom,
+              )
+            : p.prefix?.startsWith("members/")
+              ? p.z !== 26 ||
+                !manifest.composition?.members.some(
+                  (m) => p.prefix === `members/${m.id}`,
+                )
+              : isRoutingCell(`${p.prefix}/`)
+                ? p.z !== routingZoom(manifest, p.prefix!)
+                : p.prefix === "labels/settlements" ||
+                    p.prefix === "query/peaks-data"
+                  ? p.z !== 8
+                  : /^labels\/(roads|pois)\/(13|14|15|16|17)$/.test(p.prefix!)
+                    ? p.z !== manifest.labelZoom
+                    : /^objects\/(geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)$/.test(
+                          p.prefix!,
+                        )
+                      ? p.z !== 26
+                      : /^boundaries\/(records|geometry)$/.test(p.prefix!)
+                        ? p.z !== 16
+                        : pagedZoom(p.prefix!) !== undefined
+                          ? p.z !== pagedZoom(p.prefix!)
+                          : !/^features\/(buildings|water|railways|roads|land)$/.test(
+                              p.prefix!,
+                            ) || p.z !== manifest.featureZoom) ||
         p.x < 0 ||
         p.y < 0 ||
         p.x >= Math.ceil(2 ** p.z / INDEX_PAGE_SIZE) ||
@@ -605,6 +642,35 @@ export function validateBlocks(
       )
         throw new Error("Invalid boundary block address or size");
     }
+    if (block.key.startsWith("members/")) {
+      const a = spatialAddress(block.key),
+        member = manifest.composition?.members.find(
+          (m) => a?.prefix === `members/${m.id}`,
+        );
+      if (
+        !a ||
+        !member ||
+        a.z !== 26 ||
+        a.y !== 0 ||
+        a.x < 0 ||
+        a.x >= Math.ceil(member.bytes / MEMBER_CHUNK_BYTES) ||
+        block.codec ||
+        block.length !==
+          Math.min(MEMBER_CHUNK_BYTES, member.bytes - a.x * MEMBER_CHUNK_BYTES)
+      )
+        throw new Error("Invalid embedded member block");
+    }
+    if (block.key.startsWith("objects/") && block.key !== "objects/index") {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== 26 ||
+        a.x >= 2 ** 26 ||
+        a.y >= 2 ** 26 ||
+        (block.rawLength ?? block.length) > 4 * 1024 ** 2
+      )
+        throw new Error("Invalid source-object block address or size");
+    }
     if (block.key.startsWith("features/") && block.key !== "features/geojson") {
       const a = spatialAddress(block.key);
       if (
@@ -644,9 +710,31 @@ export function validateBlocks(
         a.x >= 2 ** a.z ||
         a.y >= 2 ** a.z ||
         block.key !== `${a.prefix}/${a.z}/${a.x}/${a.y}` ||
-        (block.rawLength ?? block.length) > 16 * 1024 * 1024
+        (block.rawLength ?? block.length) >
+          (manifest.transport?.profiles[
+            block.key.split("/")[1] as TransportMode
+          ]?.codec === "rcl3"
+            ? 20
+            : 16) *
+            1024 *
+            1024
       )
         throw new Error("Invalid routing cell address or size");
+    }
+    if (block.key.startsWith("raster/")) {
+      const a = spatialAddress(block.key),
+        r = manifest.rasters?.find((r) => a?.prefix === `raster/${r.id}`);
+      if (
+        !a ||
+        !r ||
+        a.z < r.minZoom ||
+        a.z > r.maxZoom ||
+        a.x >= 2 ** a.z ||
+        a.y >= 2 ** a.z ||
+        block.key !== `${a.prefix}/${a.z}/${a.x}/${a.y}` ||
+        (block.rawLength ?? block.length) > 8 * 1024 ** 2
+      )
+        throw new Error("Invalid raster tile address or size");
     }
     if (block.key.startsWith("tile/")) {
       if (

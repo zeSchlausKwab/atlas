@@ -1,3 +1,4 @@
+import { readObjects } from "../../objects/src/index";
 import { readBoundaries } from "../../boundaries/src/index";
 import { cityCandidateCells } from "./selection";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
@@ -497,20 +498,55 @@ export class AtlasWorkspace {
         };
         for (const family of families) {
           if (!eligible(base, family)) continue;
-          if (family === "boundaries") {
-            phase = `Reading administrative areas in ${m.name}`;
-            const row = (f: any): Row => ({
-              id: f.id,
-              family,
-              name: f.properties.name,
-              kind: family,
-              category: family,
-              tags: f.properties.tags,
-              heightMeters: null,
-              heightSource: "unknown",
-              geometry: f.geometry,
-            });
-            for await (const f of readBoundaries(
+          if (family === "boundaries" || family === "objects") {
+            phase = `Reading ${family === "objects" ? "source objects" : "administrative areas"} in ${m.name}`;
+            const row = (f: any): Row => {
+              const tags = f.properties.tags,
+                h =
+                  tags.building || tags["building:part"]
+                    ? buildingHeight(tags)
+                    : undefined;
+              return {
+                id: f.id,
+                family,
+                name: f.properties.name,
+                kind: family,
+                category: family,
+                tags,
+                heightMeters: h && h.height >= 0 ? h.height : null,
+                heightSource:
+                  h && (h.source & 3) === 1
+                    ? "tagged"
+                    : h && (h.source & 3) === 2
+                      ? "levels-estimate"
+                      : "unknown",
+                geometry: f.geometry,
+              };
+            };
+            const selectedTag = p.where?.find(
+              (f) =>
+                f.field.startsWith("tags.") &&
+                ((f.op === "eq" && typeof f.value === "string") ||
+                  (f.op === "exists" && f.value === true)),
+            );
+            const read =
+              family === "objects"
+                ? (...args: Parameters<typeof readBoundaries>) =>
+                    readObjects(
+                      ...args,
+                      selectedTag
+                        ? {
+                            tag: {
+                              key: selectedTag.field.slice(5),
+                              ...(selectedTag.op === "eq"
+                                ? { value: String(selectedTag.value) }
+                                : {}),
+                            },
+                          }
+                        : {},
+                    )
+                : readBoundaries;
+            for await (const f of read(
               reader,
               p.bounds,
               p.geometry !== false,

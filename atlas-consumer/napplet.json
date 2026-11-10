@@ -1,0 +1,41 @@
+{
+  "schema": "space-local-project/v1",
+  "name": "atlas-consumer",
+  "template": "boilerplate",
+  "entry": "dist/index.html",
+  "previewId": "4757dbab-c86a-48d1-af67-776dc8a1542c",
+  "identifier": "n-4757dbabc86",
+  "publish": {
+    "networks": {
+      "public": {
+        "relay": "wss://relay.napplet.soy",
+        "blossom": "https://blossom.napplet.soy",
+        "grasp": "https://git.napplet.soy",
+        "site": "https://napplet.soy",
+        "mirrors": [
+          "wss://relay.primal.net",
+          "wss://relay.nos.social",
+          "wss://relay.nostr.net",
+          "wss://nostr.oxtr.dev",
+          "wss://nostr-01.yakihonne.com",
+          "wss://relay.nostr.wirednet.jp"
+        ]
+      },
+      "local": {
+        "relay": "ws://127.0.0.1:19347/relay",
+        "blossom": "http://127.0.0.1:8081",
+        "grasp": "http://127.0.0.1:8082",
+        "site": "http://localhost:8080",
+        "mirrors": []
+      }
+    }
+  },
+  "preview": {
+    "delayMs": 1500
+  },
+  "requires": [],
+  "relays": [],
+  "servers": [],
+  "license": "MIT",
+  "topics": []
+}

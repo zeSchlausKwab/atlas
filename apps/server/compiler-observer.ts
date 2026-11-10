@@ -1,11 +1,17 @@
+import { CompilerPassHistory } from "../../packages/provisioning/src/compiler-pass-history";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import type { PreparationJob } from "./preparations";
 import { ProgressRate } from "../../packages/provisioning/src/compiler-progress";
 import type { CompilerObservation } from "../../packages/provisioning/src/compiler-observation";
 /** Read-only observer for a compiler already running without structured stage events. */
 export class CompilerObserver {
   private rate = new ProgressRate();
+  private history = new CompilerPassHistory();
+  private objectTotal = 0;
+  private observedStage = "";
+  private observedSince = Date.now();
   private sourceIdentity = "";
   private featureTotal = 0;
   private cursor = -1;
@@ -35,7 +41,7 @@ export class CompilerObserver {
   ): Promise<CompilerObservation | undefined> {
     if (!job.cachedSource || !["running", "cancelling"].includes(job.state))
       return;
-    const work = join(directory, `${job.id}.work`),
+    const work = job.workspace?.work ?? join(directory, `${job.id}.work`),
       compiler = join(work, "compiler");
     const checkpoint = await Bun.file(join(compiler, "partitioned.json"))
       .json()
@@ -46,10 +52,13 @@ export class CompilerObserver {
       { size: number; sha256: string }
     >;
     const sourceKey =
-      completed["source-v3.sqlite"] ||
-      (await Bun.file(join(compiler, "source-v3.sqlite")).exists())
-        ? "source-v3.sqlite"
-        : "source.sqlite";
+      completed["source-v4.sqlite"] ||
+      (await Bun.file(join(compiler, "source-v4.sqlite")).exists())
+        ? "source-v4.sqlite"
+        : completed["source-v3.sqlite"] ||
+            (await Bun.file(join(compiler, "source-v3.sqlite")).exists())
+          ? "source-v3.sqlite"
+          : "source.sqlite";
     const hasSem =
       job.selection.featureKinds.length ||
       job.selection.search ||
@@ -101,7 +110,11 @@ export class CompilerObserver {
       Object.values(completed).reduce((n, c) => n + c.size, 0);
     const dbPath = join(compiler, sourceKey);
     const identity = completed[sourceKey]?.sha256;
-    if (identity && identity !== this.sourceIdentity) {
+    if (
+      identity &&
+      identity !== this.sourceIdentity &&
+      /^(Semantic source objects:|Display batch)/.test(progress.message)
+    ) {
       const total = this.query<{ n: number }>(
         dbPath,
         "SELECT count(*) AS n FROM features",
@@ -109,6 +122,33 @@ export class CompilerObserver {
       if (total) {
         this.sourceIdentity = identity;
         this.featureTotal = total.n;
+      }
+    }
+    // Reconstruct counters when this observer starts during legacy tag indexing.
+    // The compiler reaches this message only after packing AND identity lookup finish.
+    const tags =
+      progress.message === "Building exact tag-value index" ||
+      progress.stage === "semantic-object-tags";
+    if (tags && !completed["semantics.atlas"]) {
+      if (!this.objectTotal) {
+        const count = this.query<{ n: number }>(
+          join(compiler, sourceKey + ".objects-index.sqlite"),
+          "SELECT count(*) AS n FROM records",
+        );
+        if (count) this.objectTotal = count.n;
+      }
+      if (this.objectTotal) {
+        for (const [stage, message] of [
+          ["semantic-object-packing", "Packing source objects"],
+          ["semantic-object-lookup", "Indexing source identities"],
+        ])
+          this.history.record({
+            stage,
+            message,
+            completed: this.objectTotal,
+            total: this.objectTotal,
+            unit: "objects",
+          });
       }
     }
     // New compilers report more precise sub-stages themselves.
@@ -119,10 +159,25 @@ export class CompilerObserver {
       const display = progress.message.match(
         /^Display batch \d+ saved \(source cursor (\d+)\)$/,
       );
+      const packing = progress.message.match(
+        /^Packing source objects · (\d+) objects$/,
+      );
       let done: number | undefined,
         total = this.featureTotal,
         stage = "";
-      if (features && !completed["semantics.atlas"]) {
+      if (packing && !completed["semantics.atlas"]) {
+        if (!this.objectTotal) {
+          const count = this.query<{ n: number }>(
+            join(compiler, sourceKey + ".objects-index.sqlite"),
+            "SELECT count(*) AS n FROM records",
+          );
+          if (count) this.objectTotal = count.n;
+        }
+        done = Number(packing[1]);
+        total = this.objectTotal;
+        stage = "semantic-object-packing";
+        progress.message = "Packing source objects";
+      } else if (features && !completed["semantics.atlas"]) {
         done = Number(features[1]);
         stage = "semantic-features";
         const cursor = this.query<{ value: string }>(
@@ -164,6 +219,8 @@ export class CompilerObserver {
         stage = "display-geometry";
         progress.message =
           "Generating display tiles (completed source batches)";
+      } else if (tags) {
+        stage = "semantic-object-tags";
       } else {
         stage = derivedComplete
           ? "assembly"
@@ -175,9 +232,17 @@ export class CompilerObserver {
         // Legacy stages with no measurable denominator remain explicitly indeterminate.
       }
       progress.stage = stage;
-      progress.completed = done ?? 0;
-      progress.total = done !== undefined && done <= total ? total : 0;
-      progress.unit = "objects";
+      if (done !== undefined) {
+        progress.completed = done;
+        progress.total = done <= total ? total : 0;
+        progress.unit = "objects";
+      } else if (progress.unit === "stages") {
+        // A parent-stage count is not an item counter for this pass.
+        progress.completed = 0;
+        progress.total = 0;
+        progress.unit = undefined;
+      }
+      // Keep native n/x counters even when a worker omitted the stage-name field.
       progress.stagePercent = progress.total
         ? (100 * progress.completed) / progress.total
         : undefined;
@@ -185,7 +250,21 @@ export class CompilerObserver {
         ? this.rate.estimate(stage, progress.completed, progress.total)
         : undefined;
     }
+    if (!progress.checkpointAt) {
+      const checkpointStat = await stat(
+        join(compiler, "partitioned.json"),
+      ).catch(() => undefined);
+      if (checkpointStat)
+        progress.checkpointAt = checkpointStat.mtime.toISOString();
+    }
+    if (this.observedStage !== progress.stage) {
+      this.observedStage = progress.stage ?? "";
+      this.observedSince = Date.now();
+    }
+    this.history.record(progress);
     return {
+      previousPasses: this.history.previous(progress.stage),
+      observedElapsedSeconds: (Date.now() - this.observedSince) / 1000,
       id: job.id,
       createdAt: job.createdAt,
       observedAt: new Date().toISOString(),

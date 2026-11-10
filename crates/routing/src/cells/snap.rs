@@ -16,7 +16,7 @@ pub(super) fn snap_cells(p: [f64; 2]) -> Vec<(u32, u32)> {
 #[derive(Clone)]
 pub(super) struct Endpoint {
     pub(super) snap: Snap,
-    pub(super) id: u32,
+    pub(super) id: u128,
     pub(super) a: Node,
     pub(super) b: Node,
     pub(super) directions: u8,

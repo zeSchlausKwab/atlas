@@ -1,3 +1,4 @@
+import { NO_SIZE_LIMIT } from "./capacity";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,7 +135,9 @@ export async function importPbf(
       "--selection",
       recipe,
       "--max-bytes",
-      String(Math.max(selection.maxBytes * 2, 64 * 1048576)),
+      String(
+        Math.min(NO_SIZE_LIMIT, Math.max(selection.maxBytes * 2, 64 * 1048576)),
+      ),
       "--no-source-features",
       ...(selection.featureKinds.length ? ["--features"] : []),
     ],

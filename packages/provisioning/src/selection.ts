@@ -1,3 +1,5 @@
+import { readSearchCell } from "../../geocoding/src/cell-pages";
+import { objectRecords } from "../../objects/src/index";
 import {
   boundaryCatalog,
   boundaryRecords,
@@ -25,6 +27,10 @@ import {
   type Polygon,
 } from "../../offline/src/geometry";
 export interface PackageSelection {
+  /** Optional, pinned server-configured assembled ocean source. */
+  ocean?: { sha256: string };
+  /** Intersecting raster tiles; pixels remain unchanged. */
+  rasters?: string[];
   snapshot: string;
   name: string;
   polygon: Polygon;
@@ -66,6 +72,10 @@ export interface PreparationProgress {
   elapsedSeconds?: number;
   etaSeconds?: number;
   checkpointAt?: string;
+  /** Compressed source-object payload on the selected workspace volume. */
+  stagingBytes?: number;
+  /** Compact transactional source-object indexes on the compiler disk. */
+  indexBytes?: number;
   stagePercent?: number;
   message: string;
   completed: number;
@@ -80,7 +90,8 @@ export function availability(m: Manifest) {
       : [],
     profiles: TRANSPORT_MODES.filter((p) => !!m.transport?.profiles[p]),
     featureKinds: m.capabilities.includes("feature-extraction")
-      ? (m.featureKinds ?? FEATURE_KINDS.filter((k) => k !== "boundaries"))
+      ? (m.featureKinds ??
+        FEATURE_KINDS.filter((k) => k !== "boundaries" && k !== "objects"))
       : [],
     labels: m.capabilities.includes("map-labels"),
     search: m.capabilities.includes("location-search"),
@@ -99,6 +110,13 @@ export function validateSelection(
   value: unknown,
   m: Manifest,
 ): asserts value is PackageSelection {
+  const selected = value as PackageSelection;
+  if (
+    selected?.rasters &&
+    (!Array.isArray(selected.rasters) ||
+      selected.rasters.some((id) => !m.rasters?.some((r) => r.id === id)))
+  )
+    throw new Error("Selected raster is unavailable");
   validateSelectionScope(value, {
     snapshot: m.snapshot,
     bounds: m.bounds,
@@ -114,6 +132,11 @@ export function validateSelectionScope(
   if (!value || typeof value !== "object")
     throw new Error("Invalid package selection");
   const s = value as PackageSelection;
+  if (
+    s.ocean !== undefined &&
+    (!s.ocean || !/^[a-f0-9]{64}$/.test(s.ocean.sha256))
+  )
+    throw new Error("Invalid ocean source fingerprint");
   if (s.snapshot !== m.snapshot)
     throw new Error("Source snapshot changed. Reload the host console.");
   if (typeof s.name !== "string" || !s.name.trim() || s.name.length > 80)
@@ -179,6 +202,7 @@ export function validateSelectionScope(
       "Enter an output budget of at least 1 MiB, with an exact whole-byte value.",
     );
   if (
+    !s.rasters?.length &&
     !s.layers.length &&
     !s.profiles.length &&
     !s.featureKinds.length &&
@@ -206,7 +230,12 @@ export async function planPreparation(
   const add = (blocks: Block[]) => {
     for (const b of blocks) chosen.set(b.key, b);
   };
-  async function spatial(prefix: string, z: number, padding = 0) {
+  async function spatial(
+    prefix: string,
+    z: number,
+    padding = 0,
+    rectangle = false,
+  ) {
     signal.throwIfAborted();
     const n = 2 ** z;
     return (
@@ -220,7 +249,7 @@ export async function planPreparation(
       )
     ).filter((b) => {
       const a = spatialAddress(b.key)!;
-      return selectedCell(s.polygon, z, a.x, a.y, padding);
+      return rectangle || selectedCell(s.polygon, z, a.x, a.y, padding);
     });
   }
   for (let z = s.minZoom; z <= s.maxZoom; z++) {
@@ -232,8 +261,38 @@ export async function planPreparation(
         : [])
       add(await spatial(prefix, z));
   }
+  for (const id of s.rasters ?? []) {
+    const raster = m.rasters!.find((r) => r.id === id)!;
+    for (
+      let z = Math.max(s.minZoom, raster.minZoom);
+      z <= Math.min(s.maxZoom, raster.maxZoom);
+      z++
+    )
+      add(await spatial(`raster/${id}`, z));
+  }
   for (const kind of s.featureKinds) {
     report(`Finding ${kind} source objects…`);
+    if (kind === "objects") {
+      const keep = async (key: string) => {
+        const block = await featureBlock(reader, key);
+        if (!block) throw new Error(`Missing source object block ${key}`);
+        add([block]);
+      };
+      for await (const row of objectRecords(
+        reader,
+        { bounds: box, includeDependencies: true, includeUnlocated: true },
+        signal,
+        report,
+        keep,
+      )) {
+        for (const key of [
+          ...(row.geometry?.blocks ?? []),
+          ...(row.topology?.blocks ?? []),
+        ])
+          await keep(key);
+      }
+      continue;
+    }
     if (kind === "boundaries") {
       const catalog = await boundaryCatalog(reader);
       for (const key of [BOUNDARY_ROOT, ...catalog.pages.map((p) => p.key)]) {
@@ -302,9 +361,51 @@ export async function planPreparation(
     )
       add([b]);
   }
+  // Dependency closure for the excerpt builders. Search needs spatial records,
+  // not the source's global term/posting indexes: those are rebuilt in the output.
+  for (const kind of ["locations", "streets"] as const) {
+    if (kind === "locations" ? !s.search : !s.reverse) continue;
+    const key = `search/${kind}`;
+    const root = JSON.parse(new TextDecoder().decode(await reader.block(key)));
+    if (root.schema !== `${kind}-paged-v1`) continue;
+    const cells = await spatial(`search/${kind}-data`, 14, 0, true);
+    for (const cell of cells) {
+      report(`Planning ${cell.key} and its record pages…`);
+      for await (const _ of readSearchCell(
+        reader,
+        cell.key,
+        kind,
+        box,
+        signal,
+        async (key) => {
+          const block = await featureBlock(reader, key);
+          if (!block) throw Error(`Missing search dependency ${key}`);
+          add([block]);
+        },
+        true,
+      )) {
+        /* validation and dependency discovery share the reader's schema checks */
+      }
+    }
+  }
+  if (s.placeNames && chosen.has("labels/places")) {
+    const root = JSON.parse(
+      new TextDecoder().decode(await reader.block("labels/places")),
+    );
+    if (root.schema === "places-paged-v1")
+      add(await spatial("labels/settlements", 8, 0, true));
+  }
+  if (s.peaks && chosen.has("query/peaks")) {
+    const root = JSON.parse(
+      new TextDecoder().decode(await reader.block("query/peaks")),
+    );
+    if (root.schema === "peaks-paged-v1")
+      add(await spatial("query/peaks-data", 8, 0, true));
+  }
   signal.throwIfAborted();
   const blocks = [...chosen.values()].sort((a, b) => a.offset - b.offset);
-  if (!blocks.length) throw new Error("No selected data intersects this area.");
+  if (!blocks.length && !s.profiles.length)
+    throw new Error("No selected data intersects this area.");
   const families: Record<string, { blocks: number; bytes: number }> = {};
   for (const b of blocks) {
     const key = b.key.startsWith("tile/")

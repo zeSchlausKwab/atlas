@@ -1,3 +1,5 @@
+import type { RoutingFederation } from "../../format/src/routing-contract";
+import { addPartitionedTransport } from "./transport-partitioned";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +19,8 @@ export async function addTransport(
   writer: DiskWriter,
   input: string,
   modes: readonly TransportMode[] = TRANSPORT_MODES,
+  federation?: RoutingFederation,
+  sourceHash = "",
 ): Promise<TransportMetadata> {
   const temp = await mkdtemp(join(tmpdir(), "atlas-transport-"));
   try {
@@ -28,11 +32,22 @@ export async function addTransport(
         "-p",
         "atlas-osm-import",
         "--bin",
-        "transport-import",
+        federation ? "transport-partitioned" : "transport-import",
       ],
       { cwd: ROOT, stdout: "inherit", stderr: "inherit" },
     );
     if (await build.exited) throw new Error("Transport compiler build failed");
+    if (federation)
+      return await addPartitionedTransport(
+        writer,
+        input,
+        temp,
+        modes,
+        undefined,
+        undefined,
+        sourceHash,
+        federation,
+      );
     const process = Bun.spawn(
       [join(ROOT, "target/release/transport-import"), input, temp],
       { stdout: "inherit", stderr: "inherit" },

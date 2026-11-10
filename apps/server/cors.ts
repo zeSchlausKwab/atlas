@@ -11,6 +11,8 @@ export function publicPath(path: string) {
     path === "/health" ||
     path === "/catalog" ||
     path === "/discovery" ||
+    path === "/views" ||
+    /^\/views\/[a-f0-9]{64}$/.test(path) ||
     path.startsWith("/hashtree/") ||
     path.startsWith("/api/") ||
     path.startsWith("/maps/")

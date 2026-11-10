@@ -1,8 +1,14 @@
 # Atlas
 
-An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → byte-range delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
+An end-to-end map stack experiment: OSM PBF → a single `.atlas` package → selective Hashtree/FIPS delivery → Rust/WASM vector rendering, walking/cycling/driving routes, network isochrones and location search on the client or server in a Bun web app.
 
 This is a working prototype, not a finalized format or a MapLibre compatibility implementation. The consumer uses its own WASM renderer and reads Atlas files directly. The host preview uses OpenFreeMap; source preparation supports regional or cached planet PBFs.
+
+## Visual field guide
+
+Open [the Atlas field guide](docs/atlas-overview.html) in a browser for an interactive
+overview of the format, architecture, features, AI tools and multi-host composition.
+It is a self-contained HTML document with no build step or external assets.
 
 ## Task-local AI tools
 
@@ -23,6 +29,23 @@ cached workspaces stay in the browser. Inference needs internet. See the
 Publish a map from the host console, discover its signed offer in the client
 composer, and fetch verified chunks from one or more providers. The `.atlas`
 remains a standalone file. See [Hashtree setup, measurements and current limits](docs/HASHTREE.md).
+
+## FIPS hosting and consumption
+
+The host and standalone browser now support FIPS-first delivery, signed Nostr
+discovery, host default views and map operations without a public HTTP map origin.
+HTTP delivery is an explicit option. Existing Atlas files need no rebuild.
+See [FIPS hosting, configuration and protocol boundaries](docs/FIPS-HOSTING.md).
+
+## FIPS napplet preview
+
+The experimental [Atlas consumer napplet](atlas-consumer/README.md) reads a real
+hosted archive through FIPS and Hashtree, using a temporary Soyli preview bridge.
+The original preview uses a separate provider sidecar; the integrated host can
+replace it while preserving its provider identity. The browser verifies blobs by
+hash and renders locally. There is no HTTP map fallback in this demo.
+See [setup and transport boundaries](experiments/fips-preview/README.md).
+This preview is not yet a production Soyli/NAP integration.
 
 ## Run locally
 
@@ -65,9 +88,9 @@ To run the two apps separately after setup:
 
 ```sh
 # Terminal 1: map server and host console
-ATLAS_FILE=data/local-demo.atlas bun run server
-# Terminal 2: client, defaults to the local server
-bun run dev
+ATLAS_FILE=data/local-demo.atlas ATLAS_FIPS_ENABLED=0 ATLAS_HTTP_DELIVERY=1 ATLAS_DISCOVERY_RELAYS= bun run server
+# Terminal 2: explicitly use the local HTTP server
+ATLAS_CLIENT_TRANSPORT=http bun run dev
 ```
 
 `dev` rebuilds the client before serving; after frontend edits run
@@ -89,6 +112,121 @@ back to localhost if you previously used another host.
 `dist/client/` is also a complete static website, including workers, WASM, plugins
 and `client-config.json`. It can be hosted independently without Bun, OSM source
 files or server code. See [server/client configuration](docs/SERVER-CLIENT.md).
+
+## Amend an existing map
+
+Each map card has **Capabilities to serve** checkboxes. Checked capabilities marked
+**In file** already exist; selecting **Build when applied** queues construction of
+missing data. **Review changes** shows dependencies; **Apply & queue** creates a new,
+self-contained revision and switches serving only when it succeeds. Unchecked
+families are omitted from the replacement. The original file is retained locally,
+with **Serve this revision again** available. Publication of a new Hashtree revision
+remains explicit; copies consumers already hold cannot be recalled.
+
+Geofabrik imports retain the downloaded regional PBF in **Source library**, including
+imports made before this UI existed. Sources can be reused or deleted there. Finished
+maps remain self-contained; deletion is refused for active/queued build inputs.
+External registered NAS files are never deleted. Amendments resolve the exact original
+PBF fingerprint, a compatible Atlas donor, or the original dated download. They never
+silently substitute a newer snapshot.
+
+PBF amendments compile selected missing geometry, labels, routing, search and extraction
+families. Adding a transport mode rebuilds the selected graph modes together so that
+their identity remains coherent. Other retained compressed blocks are copied unchanged,
+including unknown custom blocks. Labels and standard feature-extraction categories are
+grouped for now because they share internal indexes. Cancelled PBF jobs retain compiler
+checkpoints. New construction needs Osmium and Cargo; donor-only amendments do not.
+
+The existing CLI below remains the precompiled-routing-donor workflow. Raster imports,
+georeferenced uploads and dependency-driven plugin installation are tracked in the
+[implementation plan](docs/AMENDMENTS-AND-RASTER.md).
+
+```sh
+# Review a plan without writing a map:
+bun run map:amend --map geometry.atlas --source complete.atlas --profiles walking,cycling --plan
+# Create a new revision (never overwrite a published archive):
+bun run map:amend --map geometry.atlas --source complete.atlas --profiles walking,cycling --output amended.atlas
+# Repeat the local geometry → routing proof after `bun run setup`:
+bun run verify:amendment
+```
+
+The CLI also accepts `--name`, `--max-mib` and `--padding`. The verification script
+uses the local Liechtenstein sample and leaves original/amended files plus a JSON
+report in the printed temporary directory. No remote server or download is needed.
+Amendments share the host preparation queue. Cancellation removes partial output;
+**Queue again** repeats the copy. The current format streams a new file rather
+than appending in place; cross-revision Hashtree leaf reuse is not guaranteed.
+
+## Raster imagery prototype
+
+`bun run demo:raster` downloads a small European Natural Earth relief pyramid via
+OpenFreeMap and builds `data/raster-relief/relief.atlas` (148 PNG tiles, about 18.6 MiB).
+This is a separate self-contained map, with projection, coverage, tile size, zooms,
+licence and attribution in its raster descriptor. It is visual relief, not a numeric DEM.
+
+Serve it through the regular server and add its catalog in the client composer:
+
+```sh
+ATLAS_FILE=data/raster-relief/relief.atlas ATLAS_DATA_DIR=data/raster-rehearsal PORT=3182 bun run server
+# Open the normal client with ?server=http://127.0.0.1:3182/&maps=demo
+```
+
+The client reads only visible raster tiles, blends relief beneath labels, and exposes
+a visibility checkbox and opacity dial per raster layer. Hidden layers and zero opacity stop scheduling reads. Raster reads are
+included in map-byte accounting and use the normal verified block cache. Natural
+Earth is coarse imagery; zooming beyond its z6 pyramid magnifies those pixels.
+This first renderer uses a bounded Canvas image plane and the existing orthographic
+camera. It does not yet provide GPU raster textures, numeric terrain,
+arbitrary reprojection or raster region exports.
+
+To upload an image, open **Host console → Place an image** (`/host#imagery`). Choose
+PNG/JPEG, position it with a rectangle or numeric bounds, and provide attribution
+and licence. The image is stretched north-up in Web Mercator; preview it before
+uploading. A background job builds a self-contained raster Atlas for the normal
+library/composer. Upload and tiling progress are visible; stopping retains completed
+tiles for resume. Transparency is preserved. The prototype accepts 64 MiB / 32 MP
+images; GeoTIFF, rotation and control-point alignment are still planned.
+
+The authenticated `POST /admin/preparations/image` endpoint accepts multipart fields
+`image` (PNG) and `placement` (JSON: `name`, `bounds: [west,south,east,north]`,
+`attribution`, `license`). The host UI converts JPEG to PNG before upload. Registration
+records the normalized PNG hash; the finished archive contains the tiled pixels,
+not a copy of the original JPEG. See the [raster roadmap](docs/AMENDMENTS-AND-RASTER.md).
+
+To embed imagery in an existing map, use **Map library → Manage imagery**. Add a
+layer from another hosted raster map, replace its pixels, rename it or uncheck it
+to remove it. Review the plan, then queue a new revision. Routing, search, vector
+and custom payloads retain their bytes; the new file includes the pixels and needs
+no donor at runtime. The prior revision stays on disk and is retired from serving
+after success. Hashtree publication remains explicit. Independent raster settings
+are saved in client compositions and shared view links.
+
+See [raster amendment API and guarantees](docs/RASTER-AMENDMENTS.md) for automation,
+coverage rules, descriptor metadata and the remaining physical-copy limitation.
+
+To import existing files through the browser, open **Host console → Import files**
+(`/host#imports`). Select multiple `.mbtiles` or `.atlas` files. Uploads use resumable
+8 MiB chunks; conversion and checksum verification join the normal build queue.
+Finished maps appear in the library. Select Compose on several maps for one client
+view, or use Manage imagery on a target to embed raster layers into one Atlas file.
+See [file imports, recovery and API](docs/FILE-IMPORTS.md).
+
+For your own pre-tiled imagery, use `bun run raster:import --help`. The importer takes
+a JPEG/PNG MBTiles file, or an XYZ directory and a JSON layer descriptor like
+`data/raster-relief/layer.json`. MBTiles ingestion reads SQLite directly, flips TMS
+rows to XYZ and preserves encoded image bytes. No GDAL or tile extraction directory
+is needed. Inspect first, then import:
+
+```sh
+bun run raster:import --mbtiles /path/to/imagery.mbtiles --dry-run
+bun run raster:import --mbtiles /path/to/imagery.mbtiles --id satellite --output data/satellite.atlas
+ATLAS_FILE=data/satellite.atlas ATLAS_DATA_DIR=data/satellite-host PORT=3183 bun run start
+```
+
+Use the normal client composer to combine this server's catalog with vector maps.
+See [MBTiles ingestion and the Alps rehearsal](docs/MBTILES.md).
+It refuses to overwrite existing archives. Different raster and vector provenance
+can coexist in a client composition. Routing uses an explicit [OSM authority contract](docs/ROUTING-FEDERATION.md) for new independent builds, or shared graph identity for legacy excerpts.
 
 ## Vienna Plus and offline drawing
 
@@ -317,3 +455,46 @@ release uses `bun run deploy --map data/vienna-plus.atlas --with-library`; subse
 See [deployment, rollback and NixOS setup](docs/DEPLOYMENT.md) and the
 [server demo roadmap](docs/DEMO-ROADMAP.md). `ATLAS_DATA_DIR` keeps runtime state
 outside code releases; `/health` reports the deployed release identifier.
+
+The host **Storage** tab can assign new cached-PBF builds to another mounted
+disk, either always or when the map disk is short of estimated space. NAS
+assistance places extracted files and intermediate archives on the share while
+keeping writable databases on the local disk. Finished maps remain standalone
+files in the normal library. See [build storage](docs/BUILD-STORAGE.md).
+
+## Analysis source retention
+
+The host's **Analysis** preset or **Analysis source** capability retains tagged
+points, way geometry, arbitrary tags and ordered relations independently of the
+map style. AI tools can inspect retention, find objects and fetch shapes or
+relationships; `workspace_prepare` can query the `objects` family. New files
+contain these indexes in the same `.atlas`. Existing archives remain readable
+and must be upgraded to recover formerly omitted data. See
+[the source contract, measurements and test prompts](docs/ANALYSIS-SOURCE.md).
+
+Independent routing federation rehearsal: `bun run verify:routing-federation`, then
+`bun scripts/verify-routing-federation-real.ts` for the local Liechtenstein fixture.
+The latter uses two independent Nostr publishers and Hashtree delivery; no public
+relay is contacted. See [the routing federation contract](docs/ROUTING-FEDERATION.md).
+
+## Coverage and consuming other hosts
+
+The host console's **Network → Coverage & peers** section compares local archives with
+verified signed offers from other Atlas hosts. Draw an area, choose a capability,
+and inspect local, remote, unknown, incompatible and missing coverage. Routing
+inspection also identifies empty and conflicting cells. Hosts can mirror a pinned
+Hashtree archive with resumable transfers, prepare the selected area, or assemble
+local archives into one self-contained file. The browser Composer uses the same
+coverage planner. See [coverage evidence, mirroring and the API](docs/COVERAGE-AND-MIRRORING.md).
+
+To upload an update while preparations are running, use
+`bun run deploy --stage-only`. This stages code without remote compilation or a
+service restart; activate it later with the printed `--resume` command.
+
+
+### Acquire an offline area from multiple publishers
+
+**Host console → Network → Coverage & peers → Complete this area** uses your selected polygon and sources. Select multiple capabilities, review local/remote/missing coverage and block sizes, then acquire via Hashtree. Pause/resume keeps verified blocks; export one self-contained `.atlas` or add it to the local map library. Independently compiled, compatible OSM routing sources retain their native identities. [Workflow, API, verification and current limits](docs/AREA-ACQUISITION.md).
+
+
+The host workbench uses **Library / Prepare / Import / Network / Tools** tabs, with downloads and preparations in a persistent Activity rail (a bottom drawer on mobile). In the client, **Offline → Save an area here** reviews and pins selected capabilities in browser storage for later map and AI-tool reuse. It supports pause/resume and overlapping saved areas. The AI tools `acquisition_catalog`, `acquisition_plan`, `acquisition_save` and `acquisition_status` share that workflow. Browser saves are persistent caches; the host flow exports a portable `.atlas`. See [area acquisition](docs/AREA-ACQUISITION.md) for scope and offline limits.

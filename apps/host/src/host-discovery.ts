@@ -1,3 +1,4 @@
+import { hostActivity, showHostSection } from "./host-workbench";
 export async function publishMap(id: string) {
   const status = document.getElementById("discovery-status")!;
   status.textContent = "Starting Hashtree publication…";
@@ -10,9 +11,7 @@ export async function publishMap(id: string) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error);
     status.textContent = "Indexing started. Progress appears below.";
-    document
-      .getElementById("discovery")!
-      .scrollIntoView({ block: "start", behavior: "smooth" });
+    showHostSection("discovery");
   } catch (e) {
     status.textContent = String(e);
   }
@@ -29,6 +28,18 @@ export async function startDiscovery() {
         const response = await fetch("/admin/discovery"),
           data = await response.json();
         if (!response.ok) throw new Error(data.error);
+        hostActivity(
+          "Publication",
+          "discovery",
+          data.jobs.map((j: any) => ({
+            id: j.id,
+            name: j.offer?.manifest.name ?? j.id,
+            state: j.state,
+            message: j.message,
+            completed: j.completed,
+            total: j.bytes,
+          })),
+        );
         const list = document.getElementById("discovery-jobs")!;
         list.replaceChildren();
         for (const job of data.jobs) {

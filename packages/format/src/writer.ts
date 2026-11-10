@@ -1,3 +1,4 @@
+import { familyCatalog } from "./families";
 import {
   HEADER_SIZE,
   MAGIC,
@@ -43,6 +44,9 @@ export async function encodePrefix(
 ) {
   if (new Set(blocks.map((b) => b.key)).size !== blocks.length)
     throw new Error("Duplicate block");
+  // Known descriptors follow the final manifest; optional extension descriptors survive.
+  if (manifest.families)
+    manifest = { ...manifest, families: familyCatalog(manifest) };
   const encoder = new TextEncoder();
   const snapshot = await sha256(
     encoder.encode(

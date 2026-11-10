@@ -3,5 +3,5 @@
 # The host's NixOS channel supplies the package versions; no global install.
 pkgs.buildEnv {
   name = "atlas-runtime";
-  paths = with pkgs; [ bun cargo rustc gcc osmium-tool pkg-config curl git coreutils ];
+  paths = with pkgs; [ bun cargo rustc gcc osmium-tool gdal pkg-config curl git coreutils ];
 }

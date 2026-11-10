@@ -1,4 +1,4 @@
-//! Construct RCL2 directly, one cell at a time. The complete graph never exists in RAM.
+//! Construct RCL2/RCL3 directly, one cell at a time. The complete graph never exists in RAM.
 //! Segment IDs follow the canonical source-way order, exactly like the regional importer.
 use crate::{
     graph_checkpoint::{next_block, seek, Needed, Progress, State},
@@ -28,10 +28,70 @@ fn frame(out: &mut impl Write, key: &str, bytes: &[u8]) -> Result<(), Error> {
     out.write_all(bytes)?;
     Ok(())
 }
+// Acknowledged batches bound output even when the host runtime eagerly drains pipes.
+// This is only the compiler IPC protocol; persisted RCL bytes and checkpoints do not change.
+const OUTPUT_WINDOW: usize = 1024 * 1024;
+struct RoutingOutput<W: Write, R: Read> {
+    output: W,
+    acknowledgments: Option<R>,
+    pending: usize,
+}
+impl<W: Write, R: Read> RoutingOutput<W, R> {
+    fn new(mut output: W, acknowledgments: Option<R>) -> Result<Self, Error> {
+        if acknowledgments.is_some() {
+            frame(
+                &mut output,
+                "protocol",
+                br#"{"version":1,"windowBytes":1048576}"#,
+            )?;
+        }
+        Ok(Self {
+            output,
+            acknowledgments,
+            pending: 0,
+        })
+    }
+    fn checkpoint(&mut self) -> Result<(), Error> {
+        if self.pending == 0 {
+            return Ok(());
+        }
+        if let Some(input) = &mut self.acknowledgments {
+            frame(&mut self.output, "ack", &[])?;
+            self.output.flush()?;
+            let mut ack = [0u8; 1];
+            input.read_exact(&mut ack)?;
+            if ack != [1] {
+                return Err("Invalid routing output acknowledgment".into());
+            }
+        }
+        self.pending = 0;
+        Ok(())
+    }
+    fn cell(&mut self, key: &str, bytes: &[u8]) -> Result<(), Error> {
+        let size = 8 + key.len() + bytes.len();
+        if self.pending > 0 && self.pending + size > OUTPUT_WINDOW {
+            self.checkpoint()?;
+        }
+        frame(&mut self.output, key, bytes)?;
+        self.pending += size;
+        Ok(())
+    }
+    fn finish(mut self, metadata: &[u8]) -> Result<(), Error> {
+        self.checkpoint()?;
+        frame(&mut self.output, "metadata", metadata)?;
+        self.output.flush()?;
+        Ok(())
+    }
+}
 pub fn import(source: &str, work: &str) -> Result<(), Error> {
     std::fs::create_dir_all(work)?;
     let work = Path::new(work);
-    let path = work.join("routing-v2.sqlite");
+    let stable_ids = std::env::var("ATLAS_ROUTING_IDS").as_deref() == Ok("osm-way-segment-v1");
+    let path = work.join(if stable_ids {
+        "routing-v3.sqlite"
+    } else {
+        "routing-v2.sqlite"
+    });
     // The old spool has no durable cursor and cannot safely be resumed.
     let legacy = work.join("routing-spool.sqlite");
     if legacy.exists() {
@@ -44,12 +104,31 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
         CREATE TABLE IF NOT EXISTS turns(mode INTEGER,via INTEGER,f INTEGER,t INTEGER,kind INTEGER,PRIMARY KEY(mode,via,f,t,kind)) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS edges(mode INTEGER,cell INTEGER,id INTEGER,a INTEGER,b INTEGER,way INTEGER,flags INTEGER,ax REAL,ay REAL,bx REAL,by REAL,c0 REAL,c1 REAL,PRIMARY KEY(mode,cell,id)) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS cells(mode INTEGER,cell INTEGER,data BLOB,PRIMARY KEY(mode,cell)) WITHOUT ROWID;")?;
+    if stable_ids {
+        let has_ordinal: bool = db
+            .prepare("PRAGMA table_info(edges)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|c| c == "ordinal");
+        if !has_ordinal {
+            db.execute_batch("ALTER TABLE edges ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0")?;
+        }
+    }
     let mut state = State::open(&db, source)?;
     db.execute_batch("BEGIN IMMEDIATE")?;
     state.commit(&db)?;
     let source_bytes = std::fs::metadata(source)?.len();
-    let needed_path = work.join("routing-needed.bits");
-    let node_path = work.join("routing-coordinates.bin");
+    let needed_path = work.join(if stable_ids {
+        "routing-v3-needed.bits"
+    } else {
+        "routing-needed.bits"
+    });
+    let node_path = work.join(if stable_ids {
+        "routing-v3-coordinates.bin"
+    } else {
+        "routing-coordinates.bin"
+    });
     if state.stage == 0 {
         let mut reader = seek(source, state.offset)?;
         let mut needed = if state.first_way.is_some() {
@@ -333,8 +412,10 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                                 if pair[0] == pair[1] || a.1[mode] || b.1[mode] {
                                     continue;
                                 }
-                                let id = u32::try_from(state.ids[mode])
-                                    .map_err(|_| "RCL2 segment identity space exhausted")?;
+                                let id = i64::try_from(state.ids[mode])?;
+                                if !stable_ids && id > u32::MAX as i64 {
+                                    return Err("RCL2 segment identity space exhausted".into());
+                                }
                                 state.ids[mode] += 1;
                                 let (ca, cb) = (cell(a.0), cell(b.0));
                                 let (xmin, xmax, ymin, ymax) = (
@@ -350,24 +431,21 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                                 for x in xmin..=xmax {
                                     for y in ymin..=ymax {
                                         db.prepare_cached(
-                                            "INSERT INTO edges VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                            if stable_ids { "INSERT INTO edges(mode,cell,id,a,b,way,flags,ax,ay,bx,by,c0,c1,ordinal) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)" }
+                                            else { "INSERT INTO edges VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)" },
                                         )?
                                         .execute(
-                                            params![
-                                                mode as u32,
-                                                (x as u64) * 16384 + y as u64,
-                                                id,
-                                                pair[0].0,
-                                                pair[1].0,
-                                                w.id.0,
-                                                directions,
-                                                a.0[0],
-                                                a.0[1],
-                                                b.0[0],
-                                                b.0[1],
-                                                meters / speeds[0],
-                                                meters / speeds[1]
-                                            ],
+                                            rusqlite::params_from_iter({
+                                                let values: [rusqlite::types::Value; 13] = [
+                                                (mode as i64).into(),
+                                                ((x as i64) * 16384 + y as i64).into(),
+                                                (id as i64).into(), pair[0].0.into(), pair[1].0.into(),
+                                                w.id.0.into(), (directions as i64).into(),
+                                                a.0[0].into(), a.0[1].into(), b.0[0].into(), b.0[1].into(),
+                                                (meters / speeds[0]).into(), (meters / speeds[1]).into(),
+                                                ];
+                                                values.into_iter().chain(if stable_ids { Some(i64::try_from(i)?.into()) } else { None })
+                                            }),
                                         )?;
                                     }
                                 }
@@ -422,7 +500,10 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                 let mut segments = Vec::new();
                 let mut costs = Vec::new();
                 let mut cell_ids = Vec::new();
-                let mut stmt=db.prepare("SELECT id,a,b,way,flags,ax,ay,bx,by,c0,c1 FROM edges WHERE mode=? AND cell=? ORDER BY id")?;
+                let mut osm_ids = Vec::new();
+                let mut stmt=db.prepare(if stable_ids {
+                    "SELECT id,a,b,way,flags,ax,ay,bx,by,c0,c1,ordinal FROM edges WHERE mode=? AND cell=? ORDER BY way,ordinal"
+                } else { "SELECT id,a,b,way,flags,ax,ay,bx,by,c0,c1 FROM edges WHERE mode=? AND cell=? ORDER BY id" })?;
                 let mut rows = stmt.query(params![mode as u32, address])?;
                 while let Some(r) = rows.next()? {
                     if segments.len() >= 300_000 {
@@ -445,7 +526,16 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                     });
                     // Preserve f64 until RTE2 encoding, which rounds costs upward.
                     costs.push([r.get::<_, f64>(9)?, r.get::<_, f64>(10)?]);
-                    cell_ids.push(r.get::<_, u32>(0)?);
+                    if !stable_ids {
+                        cell_ids.push(r.get::<_, u32>(0)?);
+                    }
+                    if stable_ids {
+                        let way = r.get::<_, i64>(3)?;
+                        if way <= 0 {
+                            return Err("Federated routing requires positive OSM way IDs".into());
+                        }
+                        osm_ids.push(((way as u128) << 32) | r.get::<_, u32>(11)? as u128);
+                    }
                 }
                 let mut turns = Vec::new();
                 for n in &graph_nodes {
@@ -473,7 +563,11 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
                 let graph =
                     Graph::new(graph_nodes, segments)?.with_costs(mode as u32, costs, turns)?;
                 let (x, y) = ((address / 16384) as u32, (address % 16384) as u32);
-                let cell = Cell::new((x, y), graph, cell_ids)?;
+                let cell = if stable_ids {
+                    Cell::osm((x, y), graph, osm_ids)?
+                } else {
+                    Cell::new((x, y), graph, cell_ids)?
+                };
                 let mut zipped =
                     flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
                 zipped.write_all(&cell.encode())?;
@@ -504,7 +598,15 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
             state.commit(&db)?;
         }
     }
-    let mut output = BufWriter::new(std::io::stdout().lock());
+    let ack = std::env::var("ATLAS_GRAPH_OUTPUT_ACK").as_deref() == Ok("1");
+    let mut output = RoutingOutput::new(
+        BufWriter::new(std::io::stdout().lock()),
+        if ack {
+            Some(std::io::stdin().lock())
+        } else {
+            None
+        },
+    )?;
     let mut metadata = serde_json::Map::new();
     let mut progress = Progress::new(0);
     let total = state.counts.iter().map(|c| c[0]).sum();
@@ -518,8 +620,7 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
             let mut bytes = Vec::new();
             flate2::read::GzDecoder::new(&compressed[..]).read_to_end(&mut bytes)?;
             let (x, y) = (address / 16384, address % 16384);
-            frame(
-                &mut output,
+            output.cell(
                 &format!("routing/{}/cells/14/{x}/{y}", transport::MODES[mode]),
                 &bytes,
             )?;
@@ -543,8 +644,54 @@ pub fn import(source: &str, work: &str) -> Result<(), Error> {
         let c = state.counts[mode];
         metadata.insert(transport::MODES[mode].into(),json!({"count":c[0],"nodes":c[1],"segments":c[2],"turns":c[3],"canonicalSegments":state.ids[mode],"skippedWays":state.skipped[mode],"unsupportedRestrictions":state.unsupported[mode],"excludedRestrictionWays":excluded}));
     }
-    frame(&mut output, "metadata", &serde_json::to_vec(&metadata)?)?;
-    output.flush()?;
+    output.finish(&serde_json::to_vec(&metadata)?)?;
     db.execute_batch("COMMIT; PRAGMA wal_checkpoint(TRUNCATE)")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    use std::io::Cursor;
+    #[test]
+    fn acknowledged_batches_preserve_payload_and_require_credit() {
+        let payload = vec![7u8; OUTPUT_WINDOW / 2];
+        let mut bytes = Vec::new();
+        let mut output = RoutingOutput::new(&mut bytes, Some(Cursor::new(vec![1, 1]))).unwrap();
+        output.cell("cell", &payload).unwrap();
+        output.cell("cell", &payload).unwrap();
+        output.finish(b"{}").unwrap();
+        let mut input = Cursor::new(bytes);
+        let mut keys = Vec::new();
+        while (input.position() as usize) < input.get_ref().len() {
+            let mut header = [0u8; 8];
+            input.read_exact(&mut header).unwrap();
+            let mut key = vec![0; u32::from_le_bytes(header[..4].try_into().unwrap()) as usize];
+            let mut body = vec![0; u32::from_le_bytes(header[4..].try_into().unwrap()) as usize];
+            input.read_exact(&mut key).unwrap();
+            input.read_exact(&mut body).unwrap();
+            let key = String::from_utf8(key).unwrap();
+            if key == "cell" {
+                assert_eq!(body, payload);
+            }
+            keys.push(key);
+        }
+        assert_eq!(keys, ["protocol", "cell", "ack", "cell", "ack", "metadata"]);
+        for credit in [vec![], vec![0]] {
+            let mut output = RoutingOutput::new(Vec::new(), Some(Cursor::new(credit))).unwrap();
+            output.cell("cell", &payload).unwrap();
+            assert!(output.cell("cell", &payload).is_err());
+        }
+    }
+    #[test]
+    fn standalone_stream_remains_byte_identical() {
+        let mut bytes = Vec::new();
+        let mut output = RoutingOutput::new(&mut bytes, None::<Cursor<Vec<u8>>>).unwrap();
+        output.cell("cell", b"payload").unwrap();
+        output.finish(b"{}").unwrap();
+        let mut expected = Vec::new();
+        frame(&mut expected, "cell", b"payload").unwrap();
+        frame(&mut expected, "metadata", b"{}").unwrap();
+        assert_eq!(bytes, expected);
+    }
 }

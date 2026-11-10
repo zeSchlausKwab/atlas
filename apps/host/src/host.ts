@@ -1,4 +1,11 @@
+import { startWorkStorage } from "./host-work-storage";
+import { startViews } from "./host-views";
+import { startWorkbench } from "./host-workbench";
+import { startFederation } from "./host-federation";
+import { startImports } from "./host-imports";
+import { startImagery } from "./host-imagery";
 import { startDiscovery } from "./host-discovery";
+import { startFips } from "./host-fips";
 import { startSources } from "./host-sources";
 import { openClient } from "./client-link";
 import { startBuilder } from "./host-builder";
@@ -96,8 +103,14 @@ async function start() {
     await Promise.all([
       load(),
       startBuilder(),
+      startWorkStorage(),
+      startViews(),
+      startImagery(),
+      startImports(),
       startSources(),
       startDiscovery(),
+      startFips(),
+      startFederation(),
     ]);
   } catch (error) {
     el("access").textContent = String(error);
@@ -119,4 +132,5 @@ async function start() {
       input.disabled = true;
   }
 }
+startWorkbench();
 void start();

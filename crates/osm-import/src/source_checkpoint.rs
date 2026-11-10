@@ -9,6 +9,8 @@ type Error = Box<dyn std::error::Error>;
 #[derive(Default, Serialize, Deserialize)]
 pub struct State {
     pub identity: String,
+    #[serde(default)]
+    pub last_object_relation: i64,
     pub stage: usize,
     pub offset: u64,
     pub coordinates: usize,
@@ -26,7 +28,8 @@ impl State {
     pub fn open(db: &Connection, source: &str) -> Result<Self, Error> {
         let meta = std::fs::metadata(source)?;
         let identity = serde_json::to_string(&(
-            3,
+            4,
+            crate::objects::enabled(),
             std::fs::canonicalize(source)?,
             meta.len(),
             meta.modified()?.duration_since(UNIX_EPOCH)?.as_nanos(),

@@ -1,3 +1,5 @@
+import { hostActivity } from "./host-workbench";
+import { storageRequest } from "./host-storage";
 import { storageSize } from "./host-budget";
 import type {
   CachedSource,
@@ -5,16 +7,8 @@ import type {
 } from "../../../packages/provisioning/src/source-cache";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(`source-${id}`) as T;
-async function post(action: string, body: unknown) {
-  const r = await fetch(`/admin/sources/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error);
-  return data;
-}
+const post = (action: string, body: unknown) =>
+  storageRequest(`/admin/sources/${action}`, body);
 export async function startSources() {
   let plan: CachedSource | undefined,
     available = 0,
@@ -22,10 +16,21 @@ export async function startSources() {
     loading = false,
     action = false;
   function canStart() {
-    el<HTMLButtonElement>("start").disabled =
-      action || !plan || available < plan.bytes + reserve;
+    el<HTMLButtonElement>("start").disabled = action || !plan;
   }
   function render(jobs: SourceJob[]) {
+    hostActivity(
+      "Source download",
+      "sources",
+      jobs.map((j) => ({
+        id: j.id,
+        name: j.name,
+        state: j.state,
+        message: j.error ?? j.message,
+        completed: j.completed,
+        total: j.bytes,
+      })),
+    );
     const list = el("jobs");
     list.replaceChildren();
     for (const job of jobs) {
@@ -55,7 +60,11 @@ export async function startSources() {
       if (job.state !== "ready") {
         const button = document.createElement("button"),
           paused = ["paused", "failed"].includes(job.state);
-        button.textContent = paused ? "Resume download" : "Pause download";
+        button.textContent = paused
+          ? "Resume download"
+          : job.state === "waiting"
+            ? "Remove from queue"
+            : "Pause download";
         button.disabled = action;
         button.onclick = async () => {
           action = true;
@@ -84,8 +93,44 @@ export async function startSources() {
       if (job.sha256) {
         const hash = document.createElement("p");
         hash.className = "quiet";
-        hash.textContent = `Published MD5 verified · SHA-256 ${job.sha256.slice(0, 20)}…`;
+        hash.textContent = `${job.md5 ? "Published MD5 verified · " : "Retained import · "}SHA-256 ${job.sha256.slice(0, 20)}…`;
         card.append(hash);
+      }
+      if (["ready", "paused", "failed"].includes(job.state)) {
+        const remove = document.createElement("button");
+        remove.textContent = "Delete source…";
+        remove.onclick = () => {
+          const dialog = document.createElement("dialog"),
+            title = document.createElement("h3"),
+            note = document.createElement("p"),
+            confirm = document.createElement("button"),
+            cancel = document.createElement("button"),
+            error = document.createElement("p");
+          dialog.className = "amend-dialog";
+          title.textContent = `Delete ${job.name} PBF?`;
+          note.textContent =
+            "Deletes this cached source and its partial download. Finished Atlas maps remain usable. Future amendments may need to download the pinned PBF again. External NAS files are never deleted.";
+          confirm.textContent = "Delete source";
+          cancel.textContent = "Keep source";
+          error.setAttribute("role", "alert");
+          cancel.onclick = () => dialog.close();
+          dialog.onclose = () => dialog.remove();
+          confirm.onclick = async () => {
+            confirm.disabled = true;
+            try {
+              await post("delete", { id: job.id });
+              dialog.close();
+              await refresh();
+            } catch (e) {
+              error.textContent = String(e);
+              confirm.disabled = false;
+            }
+          };
+          dialog.append(title, note, error, cancel, confirm);
+          document.body.append(dialog);
+          dialog.showModal();
+        };
+        card.append(remove);
       }
       list.append(card);
     }
@@ -107,7 +152,9 @@ export async function startSources() {
         selected = locations.value;
       locations.replaceChildren(
         ...data.jobs
-          .filter((j: SourceJob) => j.state === "ready")
+          .filter(
+            (j: SourceJob) => j.state === "ready" && j.kind !== "regional",
+          )
           .map((j: SourceJob) => new Option(j.name, j.id)),
       );
       if ([...locations.options].some((o) => o.value === selected))
@@ -143,7 +190,7 @@ export async function startSources() {
       if (kind !== el<HTMLSelectElement>("kind").value) return;
       plan = result;
       el("plan").textContent =
-        `${plan.name} · ${storageSize(plan.bytes)} (${plan.bytes.toLocaleString()} bytes) · published ${new Date(plan.lastModified).toLocaleDateString()}. ${available < plan.bytes + reserve ? "Not enough free space including the reserve." : "Ready to download; the final file is published only after checksum verification."}`;
+        `${plan.name} · ${storageSize(plan.bytes)} (${plan.bytes.toLocaleString()} bytes) · published ${new Date(plan.lastModified).toLocaleDateString()}. ${available < plan.bytes + reserve ? "This download might exceed available space. You can review the warning and start anyway." : "Ready to download; the final file is published only after checksum verification."}`;
     } catch (e) {
       el("plan").textContent = String(e);
     } finally {

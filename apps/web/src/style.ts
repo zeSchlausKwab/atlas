@@ -21,6 +21,8 @@ export class StyleControls {
       const saved = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
       if (saved) {
         this.style = parseStyle(saved.style);
+        // Adopt the slimmer baseline once without losing the saved palette or camera.
+        if (saved.roadBaseline !== 2) this.style.widths.roads = 1;
         this.scene = parseScene(saved.scene);
       }
     } catch {
@@ -120,6 +122,14 @@ export class StyleControls {
     };
     this.sync();
   }
+  load(style: MapStyle, scene: MapScene) {
+    this.style = parseStyle(style);
+    this.scene = parseScene(scene);
+    this.map()?.setStyle(this.style);
+    this.map()?.setScene(this.scene);
+    this.save();
+    this.sync();
+  }
   receiveScene(scene: MapScene) {
     this.scene = parseScene(scene);
     this.save();
@@ -133,7 +143,11 @@ export class StyleControls {
     try {
       localStorage.setItem(
         STORAGE,
-        JSON.stringify({ style: this.style, scene: this.scene }),
+        JSON.stringify({
+          style: this.style,
+          scene: this.scene,
+          roadBaseline: 2,
+        }),
       );
     } catch {}
   }
@@ -141,12 +155,15 @@ export class StyleControls {
     this.map()?.setStyle(this.style);
     this.save();
     this.sync();
-    el("style-status").textContent = "";
+    el("style-status").textContent =
+      "Appearance updated · no additional map data requested.";
+    document.dispatchEvent(new Event("atlas-view-change"));
   }
   private applyScene() {
     this.map()?.setScene(this.scene);
     this.save();
     this.sync();
+    document.dispatchEvent(new Event("atlas-view-change"));
   }
   private sync() {
     for (const b of document.querySelectorAll<HTMLButtonElement>(
