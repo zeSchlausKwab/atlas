@@ -2,7 +2,8 @@ import { FipsNode, generateIdentity } from '@fips/core';
 import { WebSocketTransport } from '@fips/transport-websocket';
 import { TcpBlobTransport } from '@hashtree/fips-transport';
 import { fromHex, toHex } from '@hashtree/core';
-import { parsePreviewConfig, type PreviewStats, type PreviewStatus } from './protocol';
+import { ACTIVE_TRANSFERS, MAX_PENDING_BLOBS, TRANSFER_ATTEMPTS, TRANSFER_RETRY_DELAY_MS, blobRequestTimeoutMs, parsePreviewConfig,
+  type PreviewStats, type PreviewStatus } from './protocol';
 import { TransferQueue } from './transfer-queue';
 
 declare const ATLAS_PREVIEW_CONFIG: unknown;
@@ -13,10 +14,10 @@ const pending = new Map<string, { frame: Window; cancelled: boolean }>();
 const cache = new Map<string, Uint8Array>();
 const transfers = new Map<string, Promise<Uint8Array>>();
 const connected = new Set<string>();
-const transferQueue = new TransferQueue(8);
+const transferQueue = new TransferQueue(ACTIVE_TRANSFERS);
 const stats: PreviewStats = {
-  requests: 0, networkRequests: 0, fipsBytes: 0, verifiedBlobs: 0,
-  cacheHits: 0, errors: 0, pending: 0,
+  requests: 0, networkRequests: 0, retries: 0, fipsBytes: 0, verifiedBlobs: 0,
+  cacheHits: 0, errors: 0, cancelledRequests: 0, pending: 0,
   activeTransfers: 0, queuedTransfers: 0,
 };
 let state: PreviewStatus['state'] = 'starting';
@@ -31,6 +32,7 @@ let currentFrame: Window | null = null;
 function status(): PreviewStatus {
   return { state, error: lastError, peerId, providerPeerId: config.providerPeerId,
     seedUrls: config.seedUrls, map: config.map, connectedPeers: connected.size,
+    requestTimeoutMs: blobRequestTimeoutMs(config),
     stats: { ...stats, pending: pending.size, activeTransfers: transferQueue.active,
       queuedTransfers: transferQueue.queued } };
 }
@@ -77,6 +79,29 @@ const ready = (async () => {
 })();
 void ready.catch(() => {});
 
+// Retry only known transport failures. Corrupt/authenticated-missing data is terminal.
+function transientTransferError(error: unknown): boolean {
+  if (error instanceof AggregateError)
+    return error.errors.length > 0 && error.errors.every(transientTransferError);
+  return error instanceof Error && (error.name === 'TimeoutError' ||
+    /TCP\/FIPS (?:connect|read|write) timed out/.test(error.message));
+}
+
+async function fetchBlob(hash: string): Promise<Uint8Array | null> {
+  for (let attempt = 0; ; attempt++) {
+    if (closed || !transport) throw new Error('Preview transport is closed');
+    stats.networkRequests++;
+    changed();
+    try { return await transport.get(fromHex(hash), [config.providerPeerId], 0); }
+    catch (error) {
+      if (closed || attempt + 1 >= TRANSFER_ATTEMPTS || !transientTransferError(error)) throw error;
+      stats.retries++;
+      changed();
+      await new Promise(resolve => setTimeout(resolve, TRANSFER_RETRY_DELAY_MS));
+    }
+  }
+}
+
 async function getBlob(hash: string): Promise<Uint8Array> {
   const hit = cache.get(hash);
   if (hit) {
@@ -86,14 +111,16 @@ async function getBlob(hash: string): Promise<Uint8Array> {
   }
   const existing = transfers.get(hash);
   if (existing) return existing;
-  if (transfers.size >= 32) throw new Error('Preview transfer queue is full');
+  if (transfers.size >= MAX_PENDING_BLOBS) throw new Error('Preview transfer queue is full');
   const task = (async () => {
     await ready;
-    const release = await transferQueue.acquire();
+    const slot = transferQueue.acquire();
+    changed();
+    const release = await slot;
     try {
       if (closed || !transport) throw new Error('Preview transport is closed');
-      stats.networkRequests++;
-      const bytes = await transport.get(fromHex(hash), [config.providerPeerId], 0);
+      changed();
+      const bytes = await fetchBlob(hash);
       if (!bytes) throw new Error(`Pinned provider does not have blob ${hash}`);
       stats.fipsBytes += bytes.byteLength;
       if (bytes.byteLength > MAX_BLOB_BYTES) throw new Error('Atlas blob exceeds the 2 MiB preview bound');
@@ -109,7 +136,7 @@ async function getBlob(hash: string): Promise<Uint8Array> {
         }
       }
       return bytes;
-    } finally { release(); }
+    } finally { release(); changed(); }
   })();
   transfers.set(hash, task);
   try { return await task; } finally { transfers.delete(hash); }
@@ -124,7 +151,11 @@ function listen(event: MessageEvent) {
   const id: string = message.id;
   if (message.type === 'atlas-preview.cancel') {
     const request = pending.get(id);
-    if (request) { request.cancelled = true; pending.delete(id); }
+    if (request) {
+      request.cancelled = true; pending.delete(id);
+      stats.cancelledRequests++;
+      changed();
+    }
     return;
   }
   if (message.type === 'atlas-preview.status') {
@@ -133,7 +164,7 @@ function listen(event: MessageEvent) {
   }
   if (message.type !== 'atlas-preview.getBlob') return;
   if (pending.has(id)) return;
-  if (pending.size >= 32 || typeof message.hash !== 'string' || !/^[a-f0-9]{64}$/.test(message.hash) ||
+  if (pending.size >= MAX_PENDING_BLOBS || typeof message.hash !== 'string' || !/^[a-f0-9]{64}$/.test(message.hash) ||
       (message.providerPeerId !== undefined && message.providerPeerId !== config.providerPeerId)) {
     frame.postMessage({ type: 'atlas-preview.getBlob.error', id,
       error: 'Invalid blob request, unpinned provider, or preview request limit reached', stats: status().stats }, '*');
@@ -141,6 +172,7 @@ function listen(event: MessageEvent) {
   }
   const request = { frame, cancelled: false };
   pending.set(id, request); stats.requests++;
+  changed();
   const live = () => !closed && !request.cancelled && activeFrame() === frame && pending.get(id) === request;
   void getBlob(message.hash).then((data) => {
     if (!live()) return;

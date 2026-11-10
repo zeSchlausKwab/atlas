@@ -21,6 +21,7 @@ let reader: AtlasReader | undefined;
 let latest: Partial<PreviewStatus> = {};
 let generation = 0;
 let opening = false;
+let failed = false;
 const bridge = new PreviewBridge(update);
 function update(status: Partial<PreviewStatus>) {
   latest = { ...latest, ...status };
@@ -29,7 +30,7 @@ function update(status: Partial<PreviewStatus>) {
     el('bytes').textContent = bytes(s.fipsBytes);
     el('blobs').textContent = s.verifiedBlobs.toLocaleString();
     el('reuse').textContent = `${s.cacheHits.toLocaleString()} bridge cache hits · ${reader?.cacheHits ?? 0} Atlas cache hits`;
-    el('requests').textContent = `${s.networkRequests} FIPS requests · ${s.pending} pending · ${s.errors} errors`;
+    el('requests').textContent = `${s.networkRequests} FIPS requests · ${s.activeTransfers} active · ${s.queuedTransfers} queued · ${s.retries} retries · ${s.errors} errors · ${s.cancelledRequests} cancelled`;
   }
   if (latest.map) {
     el('map-name').textContent = latest.map.name;
@@ -38,12 +39,19 @@ function update(status: Partial<PreviewStatus>) {
     el('provider').textContent = latest.providerPeerId ?? '';
   }
   if (latest.state === 'error') fail(latest.error ?? 'FIPS connection failed');
-  else if (map) {
+  else if (!failed && map) {
     el('status').textContent = 'Reading over FIPS · no HTTP map delivery';
     document.body.dataset.state = 'ready';
-  } else if (latest.state === 'ready') el('status').textContent = 'FIPS node ready · opening Atlas directory…';
+  } else if (!failed && latest.state === 'ready') {
+    const s = latest.stats;
+    el('status').textContent = s
+      ? `Opening Atlas directory · ${s.verifiedBlobs} verified blobs · ${s.activeTransfers} active · ${s.queuedTransfers} queued${s.retries ? ` · ${s.retries} retries` : ''}`
+      : 'FIPS node ready · opening Atlas directory…';
+  }
 }
 function fail(message: string) {
+  failed = true;
+  el('status').textContent = 'Map loading paused · try the connection again';
   el('error').textContent = message; el('error').hidden = false;
   el('retry').hidden = false; document.body.dataset.state = 'error';
 }
@@ -53,7 +61,7 @@ function renderStats(s: MapStats) {
 }
 async function start() {
   if (opening) return;
-  opening = true;
+  opening = true; failed = false;
   const run = ++generation;
   el('error').hidden = true; el('retry').hidden = true;
   map?.destroy(); map = undefined; reader?.dispose(); reader = undefined;
@@ -68,6 +76,9 @@ async function start() {
       chunkBytes: status.map.chunkBytes, providers: [],
     }, undefined, {
       memoryBytes: 16 * 1024 ** 2,
+      // The preview owns queue + FIPS attempt deadlines. Do not cut off its work
+      // with the reader's shorter HTTP-oriented default.
+      requestTimeoutMs: status.requestTimeoutMs + 1000,
       fetchBlob: (hash, signal) => bridge.blob(hash, status.providerPeerId, signal),
     });
     reader = new AtlasReader(source, () => update({}), { purposes: ['map', 'labels'] });

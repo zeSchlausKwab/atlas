@@ -90,6 +90,8 @@ export class HashtreeSource extends HttpSource {
       store?: BlockStore;
       offline?: () => boolean;
       memoryBytes?: number;
+      /** Per-blob transport deadline, including time spent in an adapter's queue. Defaults to 10 seconds. */
+      requestTimeoutMs?: number;
       /** Replaces HTTP providers; failures and misses never fall back to HTTP. */
       fetchBlob?: (
         hash: string,
@@ -98,6 +100,12 @@ export class HashtreeSource extends HttpSource {
     } = {},
   ) {
     super(url, api);
+    if (
+      options.requestTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.requestTimeoutMs) ||
+        options.requestTimeoutMs <= 0)
+    )
+      throw new Error("Invalid Hashtree request timeout");
     this.tree = parseTree(tree, tree.bytes, !!options.fetchBlob);
   }
   addProviders(providers: string[]) {
@@ -157,7 +165,9 @@ export class HashtreeSource extends HttpSource {
       signal?.throwIfAborted();
       try {
         this.requests++;
-        const timeout = AbortSignal.timeout(10000);
+        const timeout = AbortSignal.timeout(
+          this.options.requestTimeoutMs ?? 10000,
+        );
         const requestSignal = signal
           ? AbortSignal.any([signal, timeout])
           : timeout;

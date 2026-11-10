@@ -48,3 +48,11 @@ pan/zoom, with no horizontal overflow or runtime errors. A second cold run took
 50.7 seconds to settle the initial map over the public seeds. This first proof is
 not a performance claim: persistent caching, concurrent range traversal and
 transport tuning are follow-up work.
+
+## Slow mesh transfers
+
+The reader uses the preview's advertised queue-and-transfer deadline rather than
+the HTTP reader's ten-second default. The connection card shows directory progress;
+transfer details include active, queued, retried and cancelled work. A known
+transient TCP/FIPS timeout gets one automatic reattempt, retaining verified cached
+blobs. Hash failures and authenticated missing blobs are never retried as timeouts.

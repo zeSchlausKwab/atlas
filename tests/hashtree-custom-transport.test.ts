@@ -157,3 +157,161 @@ test("custom transport errors and misses remain retryable and never fall through
     await f.close();
   }
 });
+
+test("custom transport allows a valid blob beyond the default deadline when configured", async () => {
+  const f = await fixture();
+  const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(
+    new Error("HTTP forbidden"),
+  );
+  let elapsed = 0;
+  const deadlines: Array<{
+    delay: number;
+    expiresAt: number;
+    controller: AbortController;
+  }> = [];
+  // Drive the real request signal without waiting ten wall-clock seconds.
+  // Each timeout still aborts with the same reason the browser reports.
+  const timeoutSpy = spyOn(AbortSignal, "timeout").mockImplementation(
+    (delay) => {
+      const controller = new AbortController();
+      deadlines.push({ delay, expiresAt: elapsed + delay, controller });
+      return controller.signal;
+    },
+  );
+  const advance = (milliseconds: number) => {
+    elapsed += milliseconds;
+    for (const deadline of deadlines)
+      if (deadline.expiresAt <= elapsed && !deadline.controller.signal.aborted)
+        deadline.controller.abort(
+          new DOMException("signal timed out", "TimeoutError"),
+        );
+  };
+  let calls = 0;
+  try {
+    const options = {
+      requestTimeoutMs: 30_000,
+      fetchBlob: async (hash: string, signal: AbortSignal) => {
+        const bytes = await f.index.get(hash);
+        if (++calls === 1) advance(12_000);
+        signal.throwIfAborted();
+        return bytes;
+      },
+    };
+    const source = new HashtreeSource(
+      "fips://peer/root",
+      { ...f.tree, providers: [] },
+      undefined,
+      options,
+    );
+
+    expect(await source.read(0, 1)).toEqual(new Uint8Array(f.data.slice(0, 1)));
+    expect(deadlines[0]?.delay).toBe(30_000);
+    expect(calls).toBe(2);
+    expect(source.failovers).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  } finally {
+    timeoutSpy.mockRestore();
+    fetchSpy.mockRestore();
+    await f.close();
+  }
+});
+
+test("custom transport enforces an explicitly short deadline without HTTP fallback", async () => {
+  const f = await fixture();
+  const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(
+    new Error("HTTP forbidden"),
+  );
+  try {
+    const source = new HashtreeSource(
+      "fips://peer/root",
+      { ...f.tree, providers: [] },
+      undefined,
+      {
+        requestTimeoutMs: 10,
+        fetchBlob: (_hash, signal) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          }),
+      },
+    );
+    await expect(source.read(0, 1)).rejects.toThrow("TimeoutError");
+    expect(source.requests).toBe(1);
+    expect(source.failovers).toBe(1);
+    expect(source.networkBytes).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  } finally {
+    fetchSpy.mockRestore();
+    await f.close();
+  }
+}, 1000);
+
+test("caller cancellation interrupts a custom transport with a longer configured deadline", async () => {
+  const f = await fixture();
+  const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(
+    new Error("HTTP forbidden"),
+  );
+  const caller = new AbortController();
+  const started = Promise.withResolvers<AbortSignal>();
+  try {
+    const source = new HashtreeSource(
+      "fips://peer/root",
+      { ...f.tree, providers: [] },
+      undefined,
+      {
+        requestTimeoutMs: 30_000,
+        fetchBlob: (_hash, signal) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+            started.resolve(signal);
+          }),
+      },
+    );
+    const reading = source.read(0, 1, caller.signal);
+    void reading.catch(() => {});
+    const transportSignal = await started.promise;
+    const reason = new DOMException("Map closed", "AbortError");
+    caller.abort(reason);
+    await expect(reading).rejects.toBe(reason);
+    expect(transportSignal.aborted).toBe(true);
+    expect(source.failovers).toBe(0);
+    expect(source.networkBytes).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  } finally {
+    caller.abort();
+    fetchSpy.mockRestore();
+    await f.close();
+  }
+}, 1000);
+
+test("Hashtree request deadlines must be positive finite safe integers", async () => {
+  const f = await fixture();
+  try {
+    for (const requestTimeoutMs of [
+      0,
+      -1,
+      1.5,
+      NaN,
+      Infinity,
+      Number.MAX_SAFE_INTEGER + 1,
+    ])
+      expect(
+        () =>
+          new HashtreeSource("https://unused.example/map", f.tree, undefined, {
+            requestTimeoutMs,
+          }),
+      ).toThrow("Invalid Hashtree request timeout");
+    for (const requestTimeoutMs of [1, 30_000, Number.MAX_SAFE_INTEGER])
+      expect(
+        () =>
+          new HashtreeSource("https://unused.example/map", f.tree, undefined, {
+            requestTimeoutMs,
+          }),
+      ).not.toThrow();
+  } finally {
+    await f.close();
+  }
+});

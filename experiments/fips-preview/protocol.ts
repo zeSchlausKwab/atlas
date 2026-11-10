@@ -1,4 +1,9 @@
 /** Private, temporary preview interface. This is not a NAP domain. */
+export const MAX_PENDING_BLOBS = 32;
+export const ACTIVE_TRANSFERS = 8;
+export const TRANSFER_ATTEMPTS = 2;
+export const TRANSFER_RETRY_DELAY_MS = 750;
+
 export interface PreviewConfig {
   seedUrls: string[];
   providerPeerId: string;
@@ -12,13 +17,21 @@ export interface PreviewConfig {
   timeoutMs?: number;
 }
 
+/** Includes a full accepted queue plus the transport's existing retry budget. */
+export function blobRequestTimeoutMs(config: Pick<PreviewConfig, 'timeoutMs'>): number {
+  return Math.ceil(MAX_PENDING_BLOBS / ACTIVE_TRANSFERS) *
+    ((config.timeoutMs ?? 30000) * TRANSFER_ATTEMPTS + TRANSFER_RETRY_DELAY_MS * (TRANSFER_ATTEMPTS - 1)) + 10000;
+}
+
 export interface PreviewStats {
   requests: number;
   networkRequests: number;
+  retries: number;
   fipsBytes: number;
   verifiedBlobs: number;
   cacheHits: number;
   errors: number;
+  cancelledRequests: number;
   pending: number;
   activeTransfers: number;
   queuedTransfers: number;
@@ -32,6 +45,7 @@ export interface PreviewStatus {
   seedUrls: string[];
   map: PreviewConfig['map'];
   connectedPeers: number;
+  requestTimeoutMs: number;
   stats: PreviewStats;
 }
 

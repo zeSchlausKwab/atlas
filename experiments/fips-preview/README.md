@@ -42,7 +42,7 @@ The child posts to `window.parent` using target origin `*` (its origin is opaque
 
 - `{type:'atlas-preview.status', id}` → `atlas-preview.status.result`, with
   `state`, optional `error`, public `peerId`, `providerPeerId`, `seedUrls`, `map`,
-  `connectedPeers`, and `stats` at the top level.
+  `connectedPeers`, `requestTimeoutMs`, and `stats` at the top level.
 - `{type:'atlas-preview.getBlob', id, hash, providerPeerId?}` →
   `atlas-preview.getBlob.result` with a transferred `bytes: ArrayBuffer` and `stats`,
   or `atlas-preview.getBlob.error` with `error` and `stats`.
@@ -54,13 +54,29 @@ Only the actual current `#stage > iframe`, with origin `null`, can request blobs
 Requests are pinned to the configured provider. Both the underlying transport and
 bridge verify SHA-256. At most eight unique reads run at once; bursts queue within
 the 32 accepted child-request limit rather than failing at the ninth transfer.
-blobs are bounded to 2 MiB and the parent cache to 32 MiB. Account reloads are not
+Blobs are bounded to 2 MiB and the parent cache to 32 MiB. Account reloads are not
 needed; replacing the child drops its requests. Page teardown closes the node.
 
 `stats.fipsBytes` counts blob payload bytes returned by FIPS, not wire traffic.
-`requests` counts accepted child reads; `networkRequests` counts unique uncached
-transport reads. `activeTransfers` and `queuedTransfers` expose the concurrency
-limit. There is no HTTP blob fallback and no inbound blob serving.
+`requests` counts accepted child reads; `networkRequests` counts uncached transport attempts, including retries.
+`retries` counts automatic reattempts after transient TCP/FIPS timeouts. `activeTransfers` and `queuedTransfers` expose the concurrency
+limit. `cancelledRequests` counts accepted child reads cancelled before reply;
+unknown or repeated cancellations do not increase it. Pending, queue, active-slot
+and cancellation changes emit status immediately, even when no blob has completed.
+There is no HTTP blob fallback and no inbound blob serving.
+
+`timeoutMs` is the FIPS transport budget, including its existing retry. A child
+request also waits for a transfer slot. Status therefore advertises
+`requestTimeoutMs = ceil(32 / 8) * (2 * timeoutMs + 750) + 10000`: four full
+transfer waves, each allowing one additional transport read after a 750 ms pause,
+plus ten seconds of grace (**253 seconds** at the default 30-second budget). This
+is a worst-case queue deadline, not a delay before reporting success. The child bridge uses this total deadline; the Hashtree reader's outer
+deadline must exceed it. Applying the ordinary HTTP reader's ten-second deadline
+would cancel queued FIPS reads before their transport budget expires. Only known
+transient TCP/FIPS connect/read/write timeouts are retried; missing blobs and
+invalid bytes remain errors. Cancellation
+suppresses the reply; an already shared transport read may still finish and cache
+its verified result. This is a caller-side deadline: underlying serialized FIPS work can outlast its nominal transport budget.
 
 This is a preview experiment, not a portable production napplet capability.
 
@@ -95,7 +111,11 @@ the FIPS service and closes the index. Provider logs count served payload bytes.
 ## Verification and limits
 
 `bun test` checks the bridge's frame/provider boundary, verified cache, corrupt-blob
-rejection, cancellation, burst queue and descriptor conversion. Real FIPS transport requires a separately running
+rejection, cancellation, burst queue, bounded timeout recovery and descriptor conversion.
+A Brave regression check on 2026-11-10 delayed a real 64 KiB FIPS reply by 12 seconds:
+the old reader reproduced `TimeoutError: signal timed out`; the corrected reader
+rendered 18/18 tiles (44 verified blobs) with zero errors and no HTTP map requests.
+Real FIPS transport requires a separately running
 provider and a browser visit to the preview. There is no preview permission domain
 in the published artifact: opening it in an unmodified production Soyli shell does
 not grant this private bridge. The experiment deliberately keeps transport in the
