@@ -1,73 +1,55 @@
-import type { PublicFipsStatus } from "../../../experiments/fips-preview/public-status";
-
+import { updateClientDiscovery } from "./client-link";
+interface FipsStatus {
+  version: 2;
+  state: "connected" | "connecting" | "stopped" | "failed";
+  updatedAt: string;
+  startedAt: string;
+  error?: string;
+  peerId?: string;
+  settings: {
+    enabled: boolean;
+    httpEnabled: boolean;
+    seedUrls: string[];
+    relayUrls: string[];
+  };
+  connectedPeers: string[];
+  counters: {
+    blobLookups: number;
+    blobBytes: number;
+    rpcRequests: number;
+    websocket: Record<string, number>;
+  };
+  discovery: { pubkey: string; relays: string[] };
+  maps: Array<{
+    id: string;
+    name: string;
+    root: string;
+    bytes: number;
+    publication?: string;
+    relayErrors: string[];
+  }>;
+}
 const STALE_MS = 30_000;
 export function fipsStatusView(
-  status: PublicFipsStatus | undefined,
+  status: { state: string; updatedAt: string } | undefined,
   now = Date.now(),
 ) {
   if (!status) return { state: "unavailable", title: "Status unavailable" };
   if (status.state === "stopped")
-    return { state: "stopped", title: "Provider stopped" };
+    return { state: "stopped", title: "FIPS delivery is off" };
+  if (status.state === "failed")
+    return { state: "failed", title: "FIPS needs attention" };
   if (now - Date.parse(status.updatedAt) > STALE_MS)
     return { state: "stale", title: "Status is stale" };
   return status.state === "connected"
     ? { state: "connected", title: "Connected to the FIPS network" }
     : { state: "connecting", title: "Connecting to FIPS peers" };
 }
-
-function readStatus(value: unknown): PublicFipsStatus {
-  const status = value as PublicFipsStatus;
-  if (
-    !status ||
-    status.version !== 1 ||
-    !["connected", "connecting", "stopped"].includes(status.state) ||
-    !Number.isFinite(Date.parse(status.updatedAt)) ||
-    !Number.isFinite(Date.parse(status.startedAt)) ||
-    !status.descriptor ||
-    !/^(02|03)[a-f0-9]{64}$/.test(status.descriptor.peerId) ||
-    !/^[a-f0-9]{64}$/.test(status.descriptor.root) ||
-    !Array.isArray(status.descriptor.seedUrls) ||
-    !status.descriptor.seedUrls.every((url) => typeof url === "string") ||
-    !Number.isSafeInteger(status.descriptor.bytes) ||
-    status.descriptor.bytes <= 0 ||
-    !Number.isSafeInteger(status.descriptor.chunkBytes) ||
-    status.descriptor.chunkBytes <= 0 ||
-    !Number.isSafeInteger(status.descriptor.servicePort) ||
-    typeof status.mapName !== "string" ||
-    !Number.isFinite(status.requestTimeoutMs) ||
-    !Number.isSafeInteger(status.connectedPeers) ||
-    status.connectedPeers < 0 ||
-    !status.counters ||
-    ![
-      "blobLookups",
-      "blobBytes",
-      "framesSent",
-      "framesReceived",
-      "bytesSent",
-      "bytesReceived",
-      "reconnects",
-      "invalidFrames",
-    ].every((key) => {
-      const n = status.counters[key as keyof PublicFipsStatus["counters"]];
-      return Number.isSafeInteger(n) && n >= 0;
-    })
-  )
-    throw new Error("The FIPS provider returned an invalid status snapshot.");
-  return status;
-}
-
 const byteSize = (value: number) => {
   if (value < 1024) return `${value.toLocaleString()} B`;
   const power = Math.min(4, Math.floor(Math.log(value) / Math.log(1024)));
   return `${(value / 1024 ** power).toFixed(power > 1 ? 2 : 1)} ${["B", "KiB", "MiB", "GiB", "TiB"][power]}`;
 };
-const elapsed = (milliseconds: number) => {
-  const minutes = Math.max(0, Math.floor(milliseconds / 60_000));
-  if (!minutes) return "<1 minute";
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-};
-
 export function startFips() {
   const section = document.getElementById("fips");
   if (!section) return;
@@ -79,67 +61,105 @@ export function startFips() {
   const refresh = el<HTMLButtonElement>("refresh"),
     auto = el<HTMLInputElement>("auto"),
     interval = el<HTMLSelectElement>("interval");
-  let snapshot: PublicFipsStatus | undefined,
-    timer: ReturnType<typeof setTimeout> | undefined,
-    freshnessTimer: ReturnType<typeof setTimeout> | undefined;
+  let snapshot: FipsStatus | undefined,
+    timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false,
-    pending: AbortController | undefined;
+    pending: AbortController | undefined,
+    settingsLoaded = false;
   const active = () => location.hash === "#fips" && !document.hidden;
   function paint() {
     const view = fipsStatusView(snapshot);
-    clearTimeout(freshnessTimer);
-    if (
-      snapshot &&
-      active() &&
-      ["connected", "connecting"].includes(view.state)
-    )
-      freshnessTimer = setTimeout(
-        paint,
-        Math.max(1, Date.parse(snapshot.updatedAt) + STALE_MS + 1 - Date.now()),
-      );
     section!.dataset.state = view.state;
     text("state", view.title);
     if (!snapshot) return;
-    const status = snapshot,
-      c = status.counters,
-      d = status.descriptor;
+    const s = snapshot,
+      c = s.counters,
+      w = c.websocket;
+    text("updated", `Snapshot ${new Date(s.updatedAt).toLocaleTimeString()}`);
+    text("peers", s.connectedPeers.length.toLocaleString());
     text(
-      "updated",
-      `Snapshot ${new Date(status.updatedAt).toLocaleTimeString()}${view.state === "stale" ? " · provider availability unknown" : ""}`,
+      "lookups",
+      `${c.blobLookups.toLocaleString()} / ${c.rpcRequests.toLocaleString()}`,
     );
-    text("peers", status.connectedPeers.toLocaleString());
-    text("lookups", c.blobLookups.toLocaleString());
     text("blob-bytes", byteSize(c.blobBytes));
     text(
       "uptime",
-      elapsed(Date.parse(status.updatedAt) - Date.parse(status.startedAt)),
+      `${Math.max(0, Math.floor((Date.parse(s.updatedAt) - Date.parse(s.startedAt)) / 60_000))} min`,
     );
-    text("map", `${status.mapName} · ${byteSize(d.bytes)}`);
-    text("root", d.root);
-    text("identity", d.peerId);
-    text("blocks", `${byteSize(d.chunkBytes)} / ${d.servicePort}`);
-    text("seeds", d.seedUrls.join("\n"));
-    text("traffic", `${byteSize(c.bytesSent)} / ${byteSize(c.bytesReceived)}`);
+    text(
+      "map",
+      `${s.maps.length} published maps · ${byteSize(s.maps.reduce((n, m) => n + m.bytes, 0))}`,
+    );
+    text("root", `${s.maps.length} independently verified Hashtree roots`);
+    text("identity", s.peerId ?? "No active FIPS identity");
+    text("blocks", "64 KiB typical blocks · data 39018 · operations 39019");
+    text("seeds", s.settings.seedUrls.join("\n"));
+    text(
+      "traffic",
+      `${byteSize(w.bytesSent ?? 0)} / ${byteSize(w.bytesReceived ?? 0)}`,
+    );
     text(
       "frames",
-      `${c.framesSent.toLocaleString()} / ${c.framesReceived.toLocaleString()}`,
+      `${(w.framesSent ?? 0).toLocaleString()} / ${(w.framesReceived ?? 0).toLocaleString()}`,
     );
     text(
       "reconnects",
-      `${c.reconnects.toLocaleString()} / ${c.invalidFrames.toLocaleString()}`,
+      `${(w.reconnectsScheduled ?? 0).toLocaleString()} / ${(w.invalidFrames ?? 0).toLocaleString()}`,
     );
-    text(
-      "activity",
-      status.lastActivityAt
-        ? new Date(status.lastActivityAt).toLocaleString()
-        : "No peer reads in this session",
-    );
+    text("activity", "Live counters include all published maps");
     text(
       "policy",
-      `Request deadline: ${status.requestTimeoutMs / 1000} seconds. Provider configuration is read-only here.`,
+      `FIPS ${s.settings.enabled ? "enabled" : "off"} · HTTP map delivery ${s.settings.httpEnabled ? "enabled" : "off"}. Administration stays on this local/LAN address.`,
     );
-    text("json", JSON.stringify(d, null, 2));
-    el<HTMLButtonElement>("copy").disabled = false;
+    const list = el("maps");
+    list.replaceChildren();
+    for (const map of s.maps) {
+      const item = document.createElement("details"),
+        summary = document.createElement("summary"),
+        info = document.createElement("p"),
+        root = document.createElement("code");
+      summary.textContent = `${map.name} · ${byteSize(map.bytes)}`;
+      info.textContent = map.relayErrors.length
+        ? `Discovery relay delivery pending: ${map.relayErrors.join("; ")}`
+        : (map.publication ?? "Published");
+      root.textContent = map.root;
+      item.append(summary, info, root);
+      list.append(item);
+    }
+    text(
+      "json",
+      JSON.stringify(
+        {
+          discovery: s.discovery,
+          providers: {
+            peerId: s.peerId,
+            seedUrls: s.settings.seedUrls,
+            servicePort: 39018,
+            rpcPort: 39019,
+          },
+          maps: s.maps.map(({ id, root }) => ({ id, root })),
+        },
+        null,
+        2,
+      ),
+    );
+    el<HTMLButtonElement>("copy").disabled = !s.peerId;
+    if (!settingsLoaded) {
+      el<HTMLInputElement>("enabled").checked = s.settings.enabled;
+      el<HTMLInputElement>("http").checked = s.settings.httpEnabled;
+      el<HTMLTextAreaElement>("seed-input").value =
+        s.settings.seedUrls.join("\n");
+      el<HTMLTextAreaElement>("relay-input").value =
+        s.settings.relayUrls.join("\n");
+      settingsLoaded = true;
+    }
+    text(
+      "message",
+      s.error ??
+        (!s.settings.relayUrls.length
+          ? "Choose at least one discovery relay so consumers can find this host without an HTTP address."
+          : "Enabled library maps share this provider. Signed announcements carry coverage, capabilities and transport details."),
+    );
   }
   function schedule() {
     clearTimeout(timer);
@@ -154,34 +174,71 @@ export function startFips() {
     try {
       const response = await fetch("/fips-status.json", {
         cache: "no-store",
-        credentials: "same-origin",
         signal: AbortSignal.any([pending.signal, AbortSignal.timeout(5000)]),
       });
       if (!response.ok)
-        throw new Error(
-          response.status === 404
-            ? "No FIPS provider status is available on this host."
-            : `Status request failed (HTTP ${response.status}).`,
-        );
-      snapshot = readStatus(await response.json());
+        throw new Error(`Status request failed (HTTP ${response.status})`);
+      const value = await response.json();
+      if (
+        value.version !== 2 ||
+        !Array.isArray(value.maps) ||
+        !value.settings ||
+        !value.discovery
+      )
+        throw new Error("This host needs the integrated FIPS provider update.");
+      snapshot = value;
       paint();
-      text(
-        "message",
-        fipsStatusView(snapshot).state === "stale"
-          ? "This snapshot is over 30 seconds old. The provider may be stopped or disconnected from status reporting."
-          : "The provider runs independently of Atlas map preparation. Refresh settings affect this view only.",
-      );
     } catch (error) {
-      if (closed) return;
-      paint();
-      if (!snapshot) text("updated", "No live snapshot");
-      text("message", error instanceof Error ? error.message : String(error));
+      if (!closed) text("message", String(error));
     } finally {
       pending = undefined;
       refresh.disabled = false;
       schedule();
     }
   }
+  el<HTMLFormElement>("settings").onsubmit = async (event) => {
+    event.preventDefault();
+    const save = el<HTMLButtonElement>("save");
+    save.disabled = true;
+    text(
+      "settings-status",
+      "Applying delivery settings and updating signed announcements…",
+    );
+    const urls = (id: string) =>
+      el<HTMLTextAreaElement>(id)
+        .value.split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    try {
+      const response = await fetch("/admin/fips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: el<HTMLInputElement>("enabled").checked,
+          httpEnabled: el<HTMLInputElement>("http").checked,
+          seedUrls: urls("seed-input"),
+          relayUrls: urls("relay-input"),
+        }),
+      });
+      const value = await response.json();
+      if (!response.ok)
+        throw new Error(value.error ?? `HTTP ${response.status}`);
+      snapshot = value;
+      settingsLoaded = false;
+      paint();
+      updateClientDiscovery(value.discovery, value.settings.enabled);
+      text(
+        "settings-status",
+        value.error
+          ? `Settings saved; provider needs attention: ${value.error}`
+          : "Settings saved. Map files and build checkpoints are unchanged.",
+      );
+    } catch (error) {
+      text("settings-status", String(error));
+    } finally {
+      save.disabled = false;
+    }
+  };
   refresh.onclick = () => void poll();
   auto.onchange = () => {
     interval.disabled = !auto.checked;
@@ -189,27 +246,16 @@ export function startFips() {
   };
   interval.onchange = schedule;
   el<HTMLButtonElement>("copy").onclick = async () => {
-    if (!snapshot) return;
     try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(
-        JSON.stringify(snapshot.descriptor, null, 2),
-      );
+      await navigator.clipboard.writeText(el("json").textContent!);
       text("copy-status", "Connection descriptor copied.");
     } catch {
       el<HTMLDetailsElement>("descriptor").open = true;
-      const range = document.createRange();
-      range.selectNodeContents(el("json"));
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      text("copy-status", "Descriptor selected. Use your copy shortcut.");
+      text("copy-status", "Copy the descriptor below.");
     }
   };
   const changed = () => {
     clearTimeout(timer);
-    clearTimeout(freshnessTimer);
     if (active()) {
       paint();
       void poll();
@@ -222,7 +268,6 @@ export function startFips() {
     () => {
       closed = true;
       clearTimeout(timer);
-      clearTimeout(freshnessTimer);
       pending?.abort();
       window.removeEventListener("hashchange", changed);
       document.removeEventListener("visibilitychange", changed);

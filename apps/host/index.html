@@ -699,20 +699,27 @@
         </p>
         <form id="federation-peer-form" class="host-inline">
           <label
-            >Atlas host URL<input
+            >Discovery relay or HTTP host<input
               id="federation-peer-url"
               type="url"
-              placeholder="http://192.168.0.180:3100"
+              placeholder="wss://relay.damus.io"
               required /></label
+          ><label
+            >Publisher key<input
+              id="federation-peer-pubkey"
+              type="text"
+              pattern="[a-fA-F0-9]{64}"
+              placeholder="64-character key · required for relay discovery" /></label
           ><button type="submit">Add trusted host</button
           ><button type="button" id="federation-refresh">
             Refresh coverage
           </button>
         </form>
         <p class="quiet">
-          Adding a host pins its publisher key. The server verifies signed
-          announcements and reads their Hashtree archives; an announcement alone
-          is not verified coverage.
+          Use a discovery relay and the host’s publisher key to find maps
+          without a public HTTP address. An HTTP host URL can also provide its
+          key. The server verifies signed announcements and reads their Hashtree
+          archives over FIPS; an announcement alone is not verified coverage.
         </p>
         <div id="federation-peers"></div>
         <p id="federation-status" role="status" aria-live="polite"></p>
@@ -926,12 +933,56 @@
             Open this tab to check the provider.
           </p>
         </div>
+        <form id="fips-settings" class="fips-settings">
+          <h3>How consumers reach your maps</h3>
+          <p>
+            FIPS carries verified map data and map operations. Nostr announces
+            your maps, capabilities and default views.
+          </p>
+          <div class="host-actions">
+            <label
+              ><input id="fips-enabled" type="checkbox" checked /> Serve maps
+              over FIPS</label
+            >
+            <label
+              ><input id="fips-http" type="checkbox" /> Also allow HTTP map
+              delivery</label
+            >
+          </div>
+          <div class="fips-panels">
+            <label
+              >FIPS bootstrap seeds<textarea
+                id="fips-seed-input"
+                rows="3"
+                spellcheck="false"
+                placeholder="wss://seed.example/fips"
+              ></textarea>
+            </label>
+            <label
+              >Nostr discovery relays<textarea
+                id="fips-relay-input"
+                rows="3"
+                spellcheck="false"
+                placeholder="wss://relay.example"
+              ></textarea>
+            </label>
+          </div>
+          <p class="quiet">
+            One URL per line. Consumers can find your maps through your
+            publisher identity; your server needs no public HTTP address. HTTP
+            fallback is a consumer choice. Local/LAN administration stays
+            available here.
+          </p>
+          <button id="fips-save" type="submit">Apply delivery settings</button>
+          <p id="fips-settings-status" role="status"></p>
+        </form>
         <div class="fips-metrics">
           <article>
             <span>Connected peers</span><strong id="fips-peers">—</strong>
           </article>
           <article>
-            <span>Blob lookups</span><strong id="fips-lookups">—</strong>
+            <span>Blob reads / tool calls</span
+            ><strong id="fips-lookups">—</strong>
           </article>
           <article>
             <span>Blob bytes read</span><strong id="fips-blob-bytes">—</strong>
@@ -942,10 +993,11 @@
         </div>
         <div class="fips-panels">
           <article class="fips-card">
-            <h3>Published map</h3>
+            <h3>Your published library</h3>
             <p id="fips-map">Provider status has not arrived yet.</p>
+            <div id="fips-maps" class="fips-map-list"></div>
             <dl>
-              <dt>Root hash</dt>
+              <dt>Content identities</dt>
               <dd id="fips-root">—</dd>
               <dt>Provider identity</dt>
               <dd id="fips-identity">—</dd>
@@ -999,7 +1051,7 @@
           >
         </div>
         <p id="fips-message" class="quiet" role="status">
-          The provider runs independently of Atlas map preparation.
+          Map delivery continues while new maps are prepared.
         </p>
       </section>
       <section id="operations">

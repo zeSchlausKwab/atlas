@@ -180,7 +180,7 @@ export async function startFederation() {
           remove = text("button", "Remove host") as HTMLButtonElement;
         remove.onclick = () =>
           run(async () => {
-            await post("remove-peer", { url: peer.url });
+            await post("remove-peer", { url: peer.url, pubkey: peer.pubkey });
             invalidate();
             await refresh();
           });
@@ -501,7 +501,10 @@ export async function startFederation() {
     e.preventDefault();
     run(async () => {
       status("Checking publisher identity…");
-      await post("peer", { url: el<HTMLInputElement>("peer-url").value });
+      await post("peer", {
+        url: el<HTMLInputElement>("peer-url").value,
+        pubkey: el<HTMLInputElement>("peer-pubkey").value.trim() || undefined,
+      });
       await refresh();
     });
   };

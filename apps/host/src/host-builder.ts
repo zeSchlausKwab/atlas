@@ -539,8 +539,8 @@ function jobs(values: PreparationJob[]) {
       links.className = "host-actions";
       for (const [label, url] of [
         ["Open in client ↗", openClient({ maps: [job.id] })],
-        ["Download .atlas", `/maps/${job.id}.atlas`],
-        ["Capabilities ↗", `/maps/${job.id}/api/capabilities`],
+        ["Download .atlas", `/admin/maps/${job.id}.atlas`],
+        ["Capabilities ↗", `/admin/maps/${job.id}/api/capabilities`],
       ]) {
         const a = document.createElement("a");
         a.href = url!;

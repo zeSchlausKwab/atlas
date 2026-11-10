@@ -8,12 +8,18 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { generateSecretKey, getPublicKey, type Event } from "nostr-tools/pure";
+import {
+  generateSecretKey,
+  getPublicKey,
+  finalizeEvent,
+  type Event,
+} from "nostr-tools/pure";
 import { toHex, fromHex } from "@hashtree/core";
 import { buildTreeIndex, IndexedTree } from "../../packages/hashtree/src/build";
 import {
   mapAnnouncement,
   publishAnnouncement,
+  MAP_KIND,
 } from "../../packages/hashtree/src/discovery";
 import { parseCatalog, type MapOffer } from "../../packages/format/src/catalog";
 import { parseViewRecipe } from "../../packages/views/src/index";
@@ -22,6 +28,13 @@ import {
   parseViewAnnouncement,
 } from "../../packages/views/src/announcement";
 import type { AdminAccess } from "./admin-access";
+import type { FipsProvider } from "../../packages/hashtree/src/source";
+export interface DiscoveryDelivery {
+  origin: string;
+  httpEnabled: boolean;
+  fips: FipsProvider[];
+  relays: string[];
+}
 export type DiscoveryPeer = ServerWebSocket<{
   subscriptions: Map<string, Record<string, unknown>[]>;
 }>;
@@ -33,6 +46,8 @@ interface Publication {
   message: string;
   event?: Event;
   offer?: MapOffer;
+  lastEventAt?: number;
+  relayErrors?: string[];
 }
 /** This host's read-only Nostr relay. It never accepts or forwards third-party events. */
 export class MapDiscovery {
@@ -46,6 +61,206 @@ export class MapDiscovery {
   private pending?: Promise<void>;
   private automatic?: ReturnType<typeof setInterval>;
   private automaticBusy = false;
+  private delivery?: DiscoveryDelivery;
+  private withdrawals = new Map<string, Event>();
+  private lastRelayAttempt = 0;
+  private announcementWrites: Promise<unknown> = Promise.resolve();
+  private pendingWithdrawals = new Set<string>();
+  private updateAnnouncements<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.announcementWrites.then(work);
+    this.announcementWrites = next.catch(() => {});
+    return next;
+  }
+  private isLive(job: Publication) {
+    const live = this.maps().find((m) => m.id === job.id);
+    return (
+      job.state === "ready" &&
+      live &&
+      live.offer.manifest.snapshot === job.offer?.manifest.snapshot
+    );
+  }
+  /** Every data transport uses the same current served-map allow-list. */
+  async getBlob(hash: string): Promise<Uint8Array | null> {
+    if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+    const roots = new Set(
+      [...this.jobs.values()]
+        .filter((j) => this.isLive(j) && j.event)
+        .map((j) => j.offer?.hashtree?.root)
+        .filter((r): r is string => !!r),
+    );
+    for (const root of roots) {
+      const index = this.indexes.get(root);
+      if (!index) continue;
+      const bytes = await index.get(hash);
+      if (bytes) return bytes;
+    }
+    return null;
+  }
+  publishedOffers(): MapOffer[] {
+    return [...this.jobs.values()]
+      .filter((j) => this.isLive(j) && j.event && j.offer)
+      .map((j) => j.offer!);
+  }
+  publishedMap(root: string) {
+    return this.publishedOffers().find((m) => m.hashtree?.root === root);
+  }
+  get relayUrls() {
+    return (
+      this.delivery?.relays ??
+      (process.env.ATLAS_DISCOVERY_RELAYS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
+  }
+  async setDelivery(value: DiscoveryDelivery) {
+    await this.pending;
+    await this.updateAnnouncements(async () => {
+      this.delivery = value;
+      await this.refreshAnnouncementsNow(true);
+    });
+  }
+  private timestamp(job?: Publication) {
+    return Math.max(
+      Math.floor(Date.now() / 1000),
+      Math.max(
+        job?.lastEventAt ?? job?.event?.created_at ?? 0,
+        job ? (this.withdrawals.get(job.id)?.created_at ?? 0) : 0,
+      ) + 1,
+    );
+  }
+  private async relay(event: Event) {
+    const errors: string[] = [];
+    await Promise.all(
+      this.relayUrls.map(async (url) => {
+        try {
+          await publishAnnouncement(url, event);
+        } catch (error) {
+          errors.push(`${url}: ${String(error)}`);
+        }
+      }),
+    );
+    return errors;
+  }
+  private offerFor(job: Publication, origin: string): MapOffer | undefined {
+    const live = this.maps().find((m) => m.id === job.id);
+    const tree = job.offer?.hashtree;
+    if (!live || !tree) return;
+    const delivery = this.delivery ?? {
+      origin,
+      httpEnabled: true,
+      fips: [],
+      relays: this.relayUrls,
+    };
+    if (!delivery.httpEnabled && !delivery.fips.length) return;
+    return parseCatalog(
+      {
+        maps: [
+          {
+            ...live.offer,
+            url: delivery.fips.length ? `htree://${tree.root}` : live.offer.url,
+            api: delivery.httpEnabled ? live.offer.api : undefined,
+            hashtree: {
+              ...tree,
+              providers: delivery.httpEnabled
+                ? [
+                    `${delivery.origin.replace(/\/$/, "")}/hashtree/${tree.root}`,
+                  ]
+                : [],
+              ...(delivery.fips.length
+                ? { fips: delivery.fips }
+                : { fips: undefined }),
+            },
+          },
+        ],
+      },
+      delivery.origin,
+    )[0];
+  }
+  private async saveWithdrawals() {
+    const path = join(this.directory, "withdrawals.json");
+    await writeFile(
+      path + ".tmp",
+      JSON.stringify([...this.withdrawals.values()].slice(-1000)),
+    );
+    await rename(path + ".tmp", path);
+  }
+  private async withdraw(job: Publication) {
+    if (!job.event) return;
+    const event = finalizeEvent(
+      {
+        kind: 5,
+        created_at: this.timestamp(job),
+        tags: [
+          ["e", job.event.id],
+          ["a", `${MAP_KIND}:${this.pubkey}:atlas/${job.id}`],
+        ],
+        content: "Map is no longer offered by this host",
+      },
+      this.key,
+    );
+    job.lastEventAt = event.created_at;
+    job.event = undefined;
+    this.withdrawals.set(job.id, event);
+    await this.saveWithdrawals();
+    this.broadcast(event);
+    job.relayErrors = await this.relay(event);
+    if (job.relayErrors.length) this.pendingWithdrawals.add(job.id);
+    else this.pendingWithdrawals.delete(job.id);
+  }
+  /** Renew offers before their seven-day expiry, and retry failed relay delivery. */
+  async refreshAnnouncements(force = false) {
+    await this.updateAnnouncements(() => this.refreshAnnouncementsNow(force));
+  }
+  private async refreshAnnouncementsNow(force = false) {
+    const now = Math.floor(Date.now() / 1000);
+    const retry = Date.now() - this.lastRelayAttempt > 60_000;
+    if (retry) this.lastRelayAttempt = Date.now();
+    for (const job of this.jobs.values()) {
+      if (!this.isLive(job)) {
+        if (job.state === "ready" && job.event) {
+          await this.withdraw(job);
+          await this.save(job);
+        }
+        continue;
+      }
+      const offer = this.offerFor(job, this.delivery?.origin ?? job.offer!.url);
+      if (!offer) {
+        await this.withdraw(job);
+        await this.save(job);
+        continue;
+      }
+      if (force || !job.event || now - job.event.created_at >= 86400) {
+        job.offer = offer;
+        job.event = mapAnnouncement(offer, this.key, this.timestamp(job));
+        job.lastEventAt = job.event.created_at;
+        this.withdrawals.delete(job.id);
+        this.pendingWithdrawals.delete(job.id);
+        await this.saveWithdrawals();
+        this.broadcast(job.event);
+        job.relayErrors = await this.relay(job.event);
+        job.message = job.relayErrors.length
+          ? "Published locally; discovery relay delivery will retry."
+          : "Published with the current delivery settings.";
+        await this.save(job);
+      } else if (retry && job.relayErrors?.length) {
+        job.relayErrors = await this.relay(job.event);
+        await this.save(job);
+      }
+    }
+    if (force) {
+      await this.saveWithdrawals();
+      for (const event of this.views.values()) await this.relay(event);
+    }
+    if (force || retry) {
+      for (const [id, event] of this.withdrawals) {
+        if (!force && !this.pendingWithdrawals.has(id)) continue;
+        const errors = await this.relay(event);
+        if (errors.length) this.pendingWithdrawals.add(id);
+        else this.pendingWithdrawals.delete(id);
+      }
+    }
+  }
   /** Publish finished served files serially; no second copy of the archive is made. */
   startAutomatic(origin: string) {
     clearInterval(this.automatic);
@@ -62,6 +277,7 @@ export class MapDiscovery {
           await this.publish(next.id, origin);
           await this.settled();
         }
+        await this.refreshAnnouncements();
       } catch (error) {
         console.error("Hashtree publication:", error);
       } finally {
@@ -116,7 +332,19 @@ export class MapDiscovery {
             throw e;
           }
           d.indexes.set(index.info.root, index);
-          job.event = mapAnnouncement(job.offer, key);
+          // A stopped host can have a valid index without a publishable offer.
+          // The delivery controller republishes it after loading settings.
+          if (job.event) {
+            job.event = mapAnnouncement(
+              job.offer,
+              key,
+              Math.max(
+                Math.floor(Date.now() / 1000),
+                (job.lastEventAt ?? job.event.created_at) + 1,
+              ),
+            );
+            job.lastEventAt = job.event.created_at;
+          }
         } else {
           job.state = "failed";
           job.message = "Indexing interrupted. Publish again to restart.";
@@ -143,6 +371,31 @@ export class MapDiscovery {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         console.error("Saved views unavailable:", error);
     }
+    try {
+      for (const event of JSON.parse(
+        await readFile(join(directory, "withdrawals.json"), "utf8"),
+      )) {
+        const id = event.tags
+          ?.find((t: string[]) => t[0] === "a")?.[1]
+          ?.split(":atlas/")[1];
+        if (id && event.pubkey === d.pubkey && event.kind === 5) {
+          d.withdrawals.set(id, event);
+          d.pendingWithdrawals.add(id);
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        console.error("Saved withdrawals unavailable:", error);
+    }
+    if (d.defaultView) {
+      const event = d.views.get(d.defaultView)!;
+      if (!event.tags.some((t) => t[0] === "default" && t[1] === "true"))
+        await d
+          .publishView(parseViewAnnouncement(event).recipe, true, false)
+          .catch((error) =>
+            console.error("Default view migration deferred:", error),
+          );
+    }
     return d;
   }
   private viewCatalog() {
@@ -152,13 +405,17 @@ export class MapDiscovery {
       views: [...this.views.values()],
     };
   }
-  private async publishView(value: unknown, makeDefault: boolean) {
+  private async publishView(
+    value: unknown,
+    makeDefault: boolean,
+    publish = true,
+  ) {
     const recipe = parseViewRecipe(value);
     for (const source of recipe.sources) {
       const offer = [...this.jobs.values()].find(
-        (j) => j.state === "ready" && j.offer?.hashtree?.root === source.root,
+        (j) => this.isLive(j) && j.offer?.hashtree?.root === source.root,
       )?.offer;
-      if (!offer || offer.url !== source.url)
+      if (!offer)
         throw new Error(
           "Every view source must be published on this host at the pinned revision",
         );
@@ -170,11 +427,22 @@ export class MapDiscovery {
     if (!this.views.has(recipe.id) && this.views.size >= 100)
       throw new Error("At most 100 published views per host");
     const previous = this.views.get(recipe.id);
-    const event = viewAnnouncement(
+    const basic = viewAnnouncement(
       recipe,
       this.key,
       Math.max(Math.floor(Date.now() / 1000), (previous?.created_at ?? 0) + 1),
     );
+    const event = makeDefault
+      ? finalizeEvent(
+          {
+            kind: basic.kind,
+            created_at: basic.created_at,
+            tags: [...basic.tags, ["default", "true"]],
+            content: basic.content,
+          },
+          this.key,
+        )
+      : basic;
     const views = new Map(this.views).set(recipe.id, event);
     const revisions = new Map(this.viewRevisions).set(event.id, event);
     const defaultView = makeDefault
@@ -182,6 +450,26 @@ export class MapDiscovery {
       : this.defaultView === recipe.id
         ? undefined
         : this.defaultView;
+    let replacedDefault: Event | undefined;
+    if (makeDefault && this.defaultView && this.defaultView !== recipe.id) {
+      const old = this.views.get(this.defaultView);
+      if (old) {
+        replacedDefault = finalizeEvent(
+          {
+            kind: old.kind,
+            created_at: Math.max(
+              Math.floor(Date.now() / 1000),
+              old.created_at + 1,
+            ),
+            tags: old.tags.filter((t) => t[0] !== "default"),
+            content: old.content,
+          },
+          this.key,
+        );
+        views.set(this.defaultView, replacedDefault);
+        revisions.set(replacedDefault.id, replacedDefault);
+      }
+    }
     const path = join(this.directory, "views.json");
     await writeFile(
       path + ".tmp",
@@ -192,15 +480,22 @@ export class MapDiscovery {
       }),
     );
     await rename(path + ".tmp", path);
-    this.views.set(recipe.id, event);
+    this.views.clear();
+    for (const [id, value] of views) this.views.set(id, value);
     this.viewRevisions = revisions;
     this.defaultView = defaultView;
+    if (replacedDefault) {
+      this.broadcast(replacedDefault);
+      if (publish) await this.relay(replacedDefault);
+    }
     this.broadcast(event);
+    if (publish) await this.relay(event);
     return event;
   }
   offer(id: string) {
-    return this.jobs.get(id)?.state === "ready"
-      ? this.jobs.get(id)!.offer?.hashtree
+    const job = this.jobs.get(id);
+    return job && this.isLive(job) && job.event
+      ? job.offer?.hashtree
       : undefined;
   }
   private async save(job: Publication) {
@@ -221,9 +516,9 @@ export class MapDiscovery {
       message: "Indexing map bytes…",
     };
     this.jobs.set(id, job);
-    await this.save(job);
     this.pending = (async () => {
       try {
+        await this.save(job);
         const path = join(this.directory, `${id}.sqlite`);
         const info = await buildTreeIndex(m.path, path, {
           signal: this.abort.signal,
@@ -231,43 +526,37 @@ export class MapDiscovery {
             job.completed = bytes;
           },
         });
-        const index = IndexedTree.open(path);
-        this.indexes.get(info.root)?.close();
-        this.indexes.set(info.root, index);
-        const offer = parseCatalog(
-          {
-            maps: [
-              {
-                ...m.offer,
-                hashtree: {
-                  version: 1,
-                  root: info.root,
-                  bytes: info.bytes,
-                  chunkBytes: info.chunkBytes,
-                  providers: [`${origin}/hashtree/${info.root}`],
-                },
-              },
-            ],
-          },
-          origin,
-        )[0]!;
-        job.offer = offer;
-        job.event = mapAnnouncement(offer, this.key);
-        job.state = "ready";
-        job.message =
-          "Published to this host’s Nostr relay. Atlas file remains independently downloadable.";
-        await this.save(job);
-        this.broadcast(job.event);
-        for (const relay of (process.env.ATLAS_DISCOVERY_RELAYS ?? "")
-          .split(",")
-          .filter(Boolean)) {
-          try {
-            await publishAnnouncement(relay.trim(), job.event);
-          } catch (e) {
-            job.message += ` Relay publication failed: ${String(e)}`;
-          }
-        }
-        await this.save(job);
+        await this.updateAnnouncements(async () => {
+          const index = IndexedTree.open(path);
+          this.indexes.get(info.root)?.close();
+          this.indexes.set(info.root, index);
+          job.offer = {
+            ...m.offer,
+            hashtree: {
+              version: 1,
+              root: info.root,
+              bytes: info.bytes,
+              chunkBytes: info.chunkBytes,
+              providers: [],
+            },
+          };
+          job.state = "ready";
+          const offer = this.offerFor(job, origin);
+          if (offer) {
+            job.offer = offer;
+            job.event = mapAnnouncement(offer, this.key, this.timestamp(job));
+            job.lastEventAt = job.event.created_at;
+            this.withdrawals.delete(job.id);
+            await this.saveWithdrawals();
+            this.broadcast(job.event);
+            job.relayErrors = await this.relay(job.event);
+            job.message = job.relayErrors.length
+              ? "Published locally; discovery relay delivery will retry."
+              : "Published with the current delivery settings.";
+          } else
+            job.message = "Indexed; enable a delivery transport to publish.";
+          await this.save(job);
+        });
       } catch (e) {
         job.state = "failed";
         job.message = String(e);
@@ -284,17 +573,21 @@ export class MapDiscovery {
   async remove(id: string) {
     // A publication may be reading this file; settle it before closing/removing indexes.
     if (this.jobs.get(id)?.state === "indexing") await this.pending;
-    const root = this.jobs.get(id)?.offer?.hashtree?.root;
-    this.jobs.delete(id);
-    if (
-      root &&
-      ![...this.jobs.values()].some((j) => j.offer?.hashtree?.root === root)
-    ) {
-      this.indexes.get(root)?.close();
-      this.indexes.delete(root);
-    }
-    await rm(join(this.directory, `${id}.json`), { force: true });
-    await rm(join(this.directory, `${id}.sqlite`), { force: true });
+    await this.updateAnnouncements(async () => {
+      const root = this.jobs.get(id)?.offer?.hashtree?.root;
+      const removed = this.jobs.get(id);
+      if (removed) await this.withdraw(removed);
+      this.jobs.delete(id);
+      if (
+        root &&
+        ![...this.jobs.values()].some((j) => j.offer?.hashtree?.root === root)
+      ) {
+        this.indexes.get(root)?.close();
+        this.indexes.delete(root);
+      }
+      await rm(join(this.directory, `${id}.json`), { force: true });
+      await rm(join(this.directory, `${id}.sqlite`), { force: true });
+    });
   }
   async handle(request: Request, peer?: string): Promise<Response | undefined> {
     const u = new URL(request.url);
@@ -302,9 +595,10 @@ export class MapDiscovery {
       return Response.json({
         relay: `${u.protocol === "https:" ? "wss:" : "ws:"}//${u.host}/nostr`,
         profile: "atlas-map-v1",
+        relays: this.relayUrls,
         ...this.viewCatalog(),
         publications: [...this.jobs.values()]
-          .filter((j) => j.state === "ready")
+          .filter((j) => this.isLive(j) && j.event)
           .map((j) => j.event),
       });
     if (u.pathname === "/views" && request.method === "GET")
@@ -328,7 +622,7 @@ export class MapDiscovery {
         return Response.json({
           ...this.viewCatalog(),
           maps: [...this.jobs.values()]
-            .filter((j) => j.state === "ready")
+            .filter((j) => this.isLive(j) && j.event)
             .map((j) => j.offer),
         });
       if (
@@ -360,7 +654,14 @@ export class MapDiscovery {
     if (blob) {
       if (!["GET", "HEAD"].includes(request.method))
         return new Response(null, { status: 405 });
-      const tree = this.indexes.get(blob[1]!);
+      if (this.delivery && !this.delivery.httpEnabled)
+        return new Response(
+          "HTTP map delivery is disabled; use the advertised FIPS providers",
+          { status: 403 },
+        );
+      const tree = this.publishedMap(blob[1]!)
+        ? this.indexes.get(blob[1]!)
+        : undefined;
       if (!tree) return new Response(null, { status: 404 });
       try {
         const bytes = await tree.get(blob[2]!);
@@ -488,9 +789,11 @@ export class MapDiscovery {
           throw new Error();
         ws.data.subscriptions.set(sub, filters);
         for (const job of this.jobs.values())
-          if (job.state === "ready" && job.event)
+          if (this.isLive(job) && job.event)
             this.send(ws, sub, filters, job.event);
         for (const event of this.views.values())
+          this.send(ws, sub, filters, event);
+        for (const event of this.withdrawals.values())
           this.send(ws, sub, filters, event);
         ws.send(JSON.stringify(["EOSE", sub]));
       } catch {
@@ -503,6 +806,7 @@ export class MapDiscovery {
     this.abort.abort();
     await this.pending;
     await this.viewWrites;
+    await this.announcementWrites;
     for (const p of this.peers) p.close();
     for (const i of this.indexes.values()) i.close();
   }

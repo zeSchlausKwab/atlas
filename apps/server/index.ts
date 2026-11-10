@@ -1,3 +1,4 @@
+import { FipsHosting, mapRpcHandler } from "./fips-hosting";
 import { Federation } from "./federation";
 import { ArchiveUploads } from "./archive-uploads";
 import { IMAGE_MAX_BYTES } from "../../packages/raster/src/image-plan";
@@ -154,6 +155,22 @@ preparations.beforeDelete = async (id) => {
   await releaseLibrary?.(id);
 };
 
+const publicOrigin =
+  process.env.ATLAS_PUBLIC_URL ??
+  `http://${process.env.HOST === "0.0.0.0" ? "127.0.0.1" : (process.env.HOST ?? "127.0.0.1")}:${process.env.PORT ?? 3100}`;
+const fips = await FipsHosting.open({
+  directory: resolve(dataDir, "fips"),
+  origin: publicOrigin,
+  discovery,
+  access,
+  keyPath: process.env.ATLAS_FIPS_KEY_PATH,
+  rpc: mapRpcHandler(discovery, async (request) =>
+    new URL(request.url).pathname.startsWith("/maps/demo/api/")
+      ? api(request)
+      : library.handle(request),
+  ),
+});
+
 const hostAssets = staticFiles(resolve(root, "dist/host"));
 if (!(await Bun.file(resolve(root, "dist/host/index.html")).exists()))
   throw new Error("Build the host console first: bun run build:host");
@@ -211,6 +228,8 @@ const server = Bun.serve<{
             headers: { "Retry-After": "5", "Cache-Control": "no-store" },
           },
         );
+      const fipsResponse = await fips.handle(request, remoteAddress);
+      if (fipsResponse) return fipsResponse;
       const discovered = await discovery.handle(request, remoteAddress);
       if (discovered) return discovered;
       if (path.startsWith("/admin/federation"))
@@ -224,19 +243,7 @@ const server = Bun.serve<{
       if (path === "/catalog" && request.method === "GET")
         return Response.json(
           {
-            maps: [
-              {
-                id: "demo",
-                url: "/maps/demo.atlas",
-                api: "/api",
-                bytes: snapshot.size,
-                manifest: engine.reader.index.manifest,
-                hashtree: discovery.offer("demo"),
-              },
-              ...preparations
-                .catalog()
-                .map((m) => ({ ...m, hashtree: discovery.offer(m.id) })),
-            ],
+            maps: discovery.publishedOffers(),
           },
           {
             headers: {
@@ -245,6 +252,40 @@ const server = Bun.serve<{
             },
           },
         );
+      if (
+        !fips.httpEnabled &&
+        (/^\/maps\/[^/]+\.atlas$/.test(path) ||
+          path.startsWith("/api/") ||
+          /^\/maps\/[^/]+\/api\//.test(path))
+      )
+        return Response.json(
+          {
+            error:
+              "HTTP map delivery is disabled. Use the advertised FIPS providers.",
+          },
+          { status: 403 },
+        );
+      const localMap = path.match(
+        /^\/admin\/maps\/(demo|[a-f0-9-]{36})(\.atlas|\/api\/capabilities)$/,
+      );
+      if (localMap && request.method === "GET") {
+        if (!access(request, remoteAddress))
+          return Response.json(
+            { error: "Administration denied" },
+            { status: 403 },
+          );
+        const internal = new URL(request.url);
+        internal.pathname = path.replace("/admin/maps/", "/maps/");
+        const localRequest = new Request(internal, request);
+        if (localMap[1] === "demo")
+          return localMap[2] === ".atlas"
+            ? servePackage(localRequest, snapshot, etag)
+            : api(localRequest);
+        return (
+          (await library.handle(localRequest)) ??
+          new Response("Map not found", { status: 404 })
+        );
+      }
       const hosted = await library.handle(request);
       if (hosted) return hosted;
       if (path === "/admin/operations") return policy(request, remoteAddress);
@@ -267,6 +308,8 @@ const server = Bun.serve<{
           etag,
           name: engine.reader.index.manifest.name,
           contextvm: !!cvm,
+          fips: fips.status().state,
+          httpDelivery: fips.httpEnabled,
         });
       if (path === "/" && request.method === "GET")
         return Response.json({
@@ -281,6 +324,11 @@ const server = Bun.serve<{
         return Response.json(
           {
             clientUrl,
+            discovery: {
+              pubkey: discovery.pubkey,
+              relays: discovery.relayUrls,
+            },
+            delivery: { fips: fips.settings.enabled, http: fips.httpEnabled },
             administration: {
               allowed: access(request, remoteAddress),
               message: ADMIN_DENIED,
@@ -299,18 +347,20 @@ const server = Bun.serve<{
     });
   },
 });
-// Local deployments need no external relay or account. LAN deployments pin their advertised origin.
+// Resolve ephemeral ports before publishing optional HTTP providers.
+const advertisedOrigin =
+  process.env.ATLAS_PUBLIC_URL ??
+  `http://${process.env.HOST === "0.0.0.0" ? "127.0.0.1" : (process.env.HOST ?? "127.0.0.1")}:${server.port}`;
+await fips.updateOrigin(advertisedOrigin);
 if (process.env.ATLAS_DISCOVERY_AUTO !== "0")
-  discovery.startAutomatic(
-    process.env.ATLAS_PUBLIC_URL ??
-      `http://${process.env.HOST === "0.0.0.0" ? "127.0.0.1" : (process.env.HOST ?? "127.0.0.1")}:${server.port}`,
-  );
+  discovery.startAutomatic(advertisedOrigin);
 console.log(
   `ATLAS server → ${server.url}\nPackage: ${mapPath} (${(snapshot.size / 1024 / 1024).toFixed(2)} MiB)\nServing a pinned file descriptor; restart to load a regenerated package.`,
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, async () => {
+    await fips.close();
     await federation.close();
     await discovery.close();
     await sourceCache.close();
