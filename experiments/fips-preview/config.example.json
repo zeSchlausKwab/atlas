@@ -1,14 +1,6 @@
 {
-  "seedUrls": [
-    "wss://fips1.iris.to/fips",
-    "wss://fips2.iris.to/fips"
-  ],
-  "providerPeerId": "020000000000000000000000000000000000000000000000000000000000000000",
-  "map": {
-    "name": "Your Atlas map",
-    "rootHash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "size": 1,
-    "chunkBytes": 65536
-  },
+  "publisher": "0000000000000000000000000000000000000000000000000000000000000000",
+  "relayUrls": ["wss://relay.primal.net/", "wss://relay.snort.social/"],
+  "mapIds": [],
   "timeoutMs": 30000
 }

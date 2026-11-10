@@ -4,19 +4,36 @@
 <body><main id="app">
   <div class="map-scene"><canvas id="map" aria-label="Interactive Atlas map" tabindex="0"></canvas></div>
   <section class="connection" aria-label="Map connection">
-    <span class="signal" aria-hidden="true"></span><div><strong id="map-name">A map without a map-server URL.</strong><p id="status" role="status">Connecting to the preview’s FIPS node…</p></div>
+    <span class="signal" aria-hidden="true"></span><div><strong id="map-name">Choose maps to explore</strong><p id="status" role="status">Discovering signed maps from the host…</p></div>
   </section>
-  <nav class="map-controls" aria-label="Map controls"><button id="zoom-in" aria-label="Zoom in" disabled>+</button><button id="zoom-out" aria-label="Zoom out" disabled>−</button><button id="fit" aria-label="Fit map" disabled>⌖</button></nav>
-  <aside class="proof" aria-label="Transfer evidence">
-    <div class="proof-heading"><span class="eyeline">LIVE · FIPS / HASHTREE</span><span id="zoom">—</span></div>
-    <div class="numbers"><div><strong id="bytes">0 B</strong><span>FIPS payload received</span></div><div><strong id="blobs">0</strong><span>verified blobs</span></div></div>
-    <p id="render-status">The napplet keeps map rendering on this device.</p>
-    <details id="details"><summary>Follow the bytes <span aria-hidden="true">↗</span></summary>
-      <p>Atlas ranges → Hashtree blobs → FIPS peer → this map. There is no HTTP map fallback.</p>
-      <dl><dt>Archive</dt><dd id="archive">Waiting for provider</dd><dt>Root hash</dt><dd id="root"></dd><dt>Provider identity</dt><dd id="provider"></dd><dt>Session reuse</dt><dd id="reuse">0 cache hits</dd><dt>Transfers</dt><dd id="requests">0 requests</dd><dt>Transport</dt><dd>TCP/FIPS · encrypted mesh via WSS seeds</dd></dl>
-      <p class="preview-note">Experimental Soyli preview bridge. Shell support and discovery come next.</p>
+  <nav class="map-controls" aria-label="Map controls"><button id="zoom-in" aria-label="Zoom in" disabled>+</button><button id="zoom-out" aria-label="Zoom out" disabled>−</button><button id="fit" aria-label="Fit selected maps" disabled>⌖</button></nav>
+  <aside class="workspace" aria-label="Map composition and transfer evidence">
+    <details class="picker" open><summary>Maps &amp; display <span id="zoom">—</span></summary>
+      <div class="panel-body">
+        <div class="discovery-row"><p id="discovery">Waiting for discovery</p><button id="refresh" type="button">Refresh</button></div>
+        <p id="discovery-notes" class="muted"></p>
+        <div id="catalog" role="group" aria-label="Signed maps"></div>
+        <p id="selection" class="muted">Select maps to compose a view.</p>
+        <details><summary>Layers &amp; optional detail</summary>
+          <fieldset><legend>Geometry layers</legend><div id="layers" class="options"></div></fieldset>
+          <fieldset><legend>Load labels on demand</legend><div class="options"><label><input id="labels-places" type="checkbox">Places</label><label><input id="labels-streets" type="checkbox">Streets</label><label><input id="labels-pois" type="checkbox">Points of interest</label></div></fieldset>
+          <label class="option"><input id="imagery" type="checkbox">Imagery from selected maps</label>
+          <label class="option"><input id="coverage" type="checkbox">Show coverage outlines</label>
+          <p class="muted">Geometry loads by default. Labels and imagery read additional data only when enabled.</p>
+        </details>
+      </div>
     </details>
-    <p id="error" role="alert" hidden></p><button id="retry" hidden>Try connection again</button>
+    <section class="proof" aria-label="Transfer evidence">
+      <div class="numbers"><div><strong id="bytes">0 B</strong><span>FIPS payload received</span></div><div><strong id="blobs">0</strong><span>verified blobs</span></div></div>
+      <p id="render-status">Map rendering stays on this device.</p>
+      <details><summary>Follow the bytes</summary>
+        <p>Signed Nostr discovery → selected Atlas roots → Hashtree blobs over FIPS. No HTTP map fallback.</p>
+        <dl><dt>Selected roots</dt><dd id="roots">No map selected</dd><dt>FIPS providers</dt><dd id="provider"></dd><dt>Nostr publishers</dt><dd id="publishers"></dd><dt>Discovery relays</dt><dd id="relays"></dd><dt>Session reuse</dt><dd id="reuse">0 cache hits</dd><dt>Transfers</dt><dd id="requests">0 requests</dd></dl>
+        <p class="preview-note">Experimental Soyli preview bridge. This is not a production NAP capability.</p>
+      </details>
+    </section>
+    <p id="error" role="alert" hidden></p><button id="retry" hidden>Try connection</button>
   </aside>
+  <p class="minimum-notice">More room for map controls<br><small>Resize to at least 260 × 220. Your view is kept.</small></p>
   <footer>© OpenStreetMap contributors · ODbL <span>Drag to pan · scroll to zoom</span></footer>
 </main><script type="module" src="/src/main.ts"></script></body></html>

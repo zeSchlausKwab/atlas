@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { publicFipsStatus, writePublicFipsStatus } from "./public-status";
-import { fipsStatusView } from "../../apps/host/src/host-fips";
+import { fipsStatusView } from "../../apps/shared/fips-status-view";
 
 const descriptor = {
   type: "atlas-fips" as const,

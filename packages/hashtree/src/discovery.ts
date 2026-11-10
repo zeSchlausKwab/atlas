@@ -98,6 +98,8 @@ export async function watchMaps(
   acceptView?: (view: ReturnType<typeof parseViewAnnouncement>) => void,
   options: {
     ready?: () => void;
+    /** Observe validated deletions, including unknown event IDs, across relay subscriptions. */
+    deleted?: (event: Event) => void;
     withdrawn?: (id: string, publisher: string, event: Event) => void;
   } = {},
 ) {
@@ -146,6 +148,7 @@ export async function watchMaps(
               deletion.created_at > Math.floor(Date.now() / 1000) + 300
             )
               return;
+            options.deleted?.(deletion);
             const keys = new Map<string, boolean>();
             for (const tag of deletion.tags) {
               if (

@@ -1,5 +1,104 @@
 # Atlas FIPS preview experiment
 
+The current consumer uses **signed discovery and multi-map composition**. A trusted
+Soyli preview parent verifies the configured publisher's Nostr offers, opens the
+advertised FIPS providers and transfers verified bytes into the network-disabled
+napplet. It reuses Atlas's integrated FIPS client; no separate provider sidecar is
+needed when the host already runs FIPS.
+
+This is the explicitly authorized experimental `atlas-preview.*` bridge. It does
+not add a production NAP or change Soyli's sandbox policy.
+
+## Current discovery-based consumer
+
+Install the Atlas root dependencies and the existing napplet toolchain. The sibling
+`napplet-space` checkout must have its dependencies installed. Then, from the Atlas
+repository root:
+
+```sh
+cp experiments/fips-preview/config.example.json experiments/fips-preview/config.local.json
+# Set the public publisher key and relay hints in config.local.json.
+bun experiments/fips-preview/preview.ts experiments/fips-preview/config.local.json atlas-consumer
+```
+
+```json
+{
+  "publisher": "64_HEX_NOSTR_PUBLISHER_KEY",
+  "relayUrls": ["wss://relay.primal.net/", "wss://relay.snort.social/"],
+  "mapIds": ["OPTIONAL_INITIAL_MAP_ID"],
+  "timeoutMs": 30000
+}
+```
+
+The config pins the trusted publisher, not a single archive or provider. Signed map
+offers carry immutable roots and provider/seed hints. `mapIds` selects initial maps;
+all valid maps from this publisher can be offered in the picker. Without initial
+IDs, the consumer can use an announced default view or a discovered display map.
+Geometry is the default vector payload; labels and imagery require opting in.
+Routing, search and analysis payloads are not prefetched by this display demo.
+
+`ATLAS_PREVIEW_PORT` defaults to 4188. `ATLAS_SOYLI_SOURCE` overrides the sibling
+Soyli checkout. The discovery bridge uses the Atlas root's pinned FIPS packages;
+the older `ATLAS_FIPS_MODULES` override applies only to legacy pinned-map configs.
+No private keys belong in the config or browser bundle.
+
+The new parent modules are `consumer-protocol.ts`, `consumer-session.ts` and
+`consumer-bridge.ts`. The session merges valid revisions across relays, retains
+withdrawal tombstones across refresh, and authorizes only current roots and their
+verified Merkle descendants. Cache hits cannot bypass withdrawal. RPC paths are
+root-pinned and limited to public map operations. There is no HTTP fallback or
+incoming blob service in the preview.
+
+Wire requests remain private to this experiment:
+
+- `atlas-preview.status` returns a version-2 catalog, discovery status and counters.
+- `atlas-preview.getBlob` carries `root` and `hash`; replies transfer verified bytes.
+- `atlas-preview.refresh` reopens discovery without discarding immutable byte caches.
+- `atlas-preview.rpc` carries a root and permitted map request for future tools.
+- `atlas-preview.cancel` cancels a caller's pending request.
+- `atlas-preview.changed` carries catalog changes; `atlas-preview.stats` carries
+  transfer counters without copying the whole catalog on every read.
+
+Only the current `#stage > iframe` with opaque origin is accepted. Replacing it
+cancels outstanding requests; closing the parent closes relay/FIPS connections.
+Transfers use the shared bounded queue and transient recovery in Atlas's FIPS
+client. The map can retry missing tiles without replacing its reader or camera.
+`fipsBytes` counts verified blob payload, not protocol or encrypted wire overhead.
+
+See [the consumer README](../../atlas-consumer/README.md) for UI and conformance
+boundaries. The production napplet.soy/Soyli adapter is still separate work.
+
+## Verification — 2026-11-10
+
+- Preview tests: **51 passed**, including discovery lifecycle, root authorization,
+  cancellation, timeout cleanup and public status. Napplet verification passed
+  **6 guidance checks and 11 recovery tests**, TypeScript and the single-file build.
+  Repository TypeScript and the host build also passed.
+- A visible Brave run discovered **6 signed maps**, selected both Lower Rhine
+  maps and rendered **27/27 tiles** (100,499 triangles). Initial verified payload
+  was **4.34 MiB**. There were **no browser errors or HTTP map requests**.
+- Selecting maps, toggling optional place labels and refreshing discovery worked;
+  refresh preserved selection and zoom. The later sample recorded **60 cache hits**.
+  Cold rendering took a few minutes through the public FIPS relay path; this is
+  functional verification, not a latency guarantee.
+- Real preview iframe sizes checked: 200 × 160 (resize notice), 320 × 560,
+  900 × 600 and 1400 × 850, without horizontal page overflow. Physical mobile
+  devices, touch-specific interaction and both host themes were not tested.
+- Upstream conformance: **4 passed, 2 failed, 4 skipped**. The failures are the
+  private wire envelope and dormant `fetch` references in reused reader code.
+  Manifest evidence and teardown measurement remain incomplete. The production
+  shell adapter is still required; these checks are not suppressed.
+
+The live test used read-only discovery and FIPS delivery. It did not restart the
+Atlas server or interrupt the North Sea preparation.
+
+## Legacy pinned-map proof
+
+The following configuration and sidecar notes document the original experiment.
+The launcher retains it for transport regression fixtures. The updated consumer
+expects the discovery-based version-2 bridge above; do not launch it with a legacy
+pinned-map config.
+
 This uses the real Soyli `startPreviewServer` and compiled preview runtime, adding a
 parent-page FIPS client. It makes no changes to Soyli or its production NAP domains.
 The napplet remains in the ordinary opaque, no-network, no-worker iframe.

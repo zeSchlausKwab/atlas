@@ -1,10 +1,10 @@
 import './styles.css';
-import { AtlasReader } from '../../packages/format/src/reader';
-import { HashtreeSource } from '../../packages/hashtree/src/source';
-import { AtlasMap, type MapStats } from '../../packages/renderer/src/map';
+import { MAP_LAYERS } from '../../packages/format/src/index';
+import { CompositionMap, type CompositionStats } from '../../packages/renderer/src/composition';
 import init from '../../packages/renderer/pkg/atlas_renderer';
 import wasmBase64 from 'atlas-renderer-wasm';
-import { PreviewBridge, type PreviewStatus } from './bridge';
+import { PreviewBridge, type ConsumerStatus, type PreviewUpdate } from './bridge';
+import { MapComposition } from './composition';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -16,106 +16,156 @@ function bytes(value: number) {
   const power = Math.min(3, Math.floor(Math.log(value) / Math.log(1024)));
   return `${(value / 1024 ** power).toFixed(power > 1 ? 2 : 1)} ${['B', 'KiB', 'MiB', 'GiB'][power]}`;
 }
-let map: AtlasMap | undefined;
-let reader: AtlasReader | undefined;
-let latest: Partial<PreviewStatus> = {};
-let generation = 0;
-let opening = false;
-let failed = false;
+let map: CompositionMap | undefined;
+let composition: MapComposition | undefined;
+let latest: ConsumerStatus | undefined;
+let generation = 0, opening = false, failed = false, closed = false;
 const bridge = new PreviewBridge(update);
-function update(status: Partial<PreviewStatus>) {
-  latest = { ...latest, ...status };
-  if (latest.stats) {
-    const s = latest.stats;
-    el('bytes').textContent = bytes(s.fipsBytes);
-    el('blobs').textContent = s.verifiedBlobs.toLocaleString();
-    el('reuse').textContent = `${s.cacheHits.toLocaleString()} bridge cache hits · ${reader?.cacheHits ?? 0} Atlas cache hits`;
-    el('requests').textContent = `${s.networkRequests} FIPS requests · ${s.activeTransfers} active · ${s.queuedTransfers} queued · ${s.retries} retries · ${s.errors} errors · ${s.cancelledRequests} cancelled`;
-  }
-  if (latest.map) {
-    el('map-name').textContent = latest.map.name;
-    el('archive').textContent = `${bytes(latest.map.size)} · read only the needed parts`;
-    el('root').textContent = latest.map.rootHash;
-    el('provider').textContent = latest.providerPeerId ?? '';
-  }
-  if (latest.state === 'error') fail(latest.error ?? 'FIPS connection failed');
-  else if (!failed && map) {
-    el('status').textContent = 'Reading over FIPS · no HTTP map delivery';
-    document.body.dataset.state = 'ready';
-  } else if (!failed && latest.state === 'ready') {
-    const s = latest.stats;
-    el('status').textContent = s
-      ? `Opening Atlas directory · ${s.verifiedBlobs} verified blobs · ${s.activeTransfers} active · ${s.queuedTransfers} queued${s.retries ? ` · ${s.retries} retries` : ''}`
-      : 'FIPS node ready · opening Atlas directory…';
-  }
+function diagnostics() {
+  if (!latest) return;
+  const s = latest.stats;
+  el('bytes').textContent = bytes(s.fipsBytes);
+  el('blobs').textContent = s.verifiedBlobs.toLocaleString();
+  el('reuse').textContent = `${s.cacheHits.toLocaleString()} bridge cache hits · ${composition?.cacheHits ?? 0} Atlas cache hits`;
+  el('requests').textContent = `${s.networkRequests} FIPS requests · ${s.activeTransfers} active · ${s.queuedTransfers} queued · ${s.retries} retries · ${s.errors} errors · ${s.cancelledRequests} cancelled`;
+}
+function update(status: PreviewUpdate) {
+  if (closed) return;
+  if ('catalog' in status) {
+    latest = status;
+    composition?.setCatalog(status);
+    el('discovery').textContent = `${status.catalog.length} signed maps · ${status.discovery.ready ? 'discovery current' : 'discovering…'}`;
+    el('publishers').textContent = status.discovery.publishers.join('\n');
+    el('relays').textContent = status.discovery.relayUrls.join('\n');
+    el('discovery-notes').textContent = status.discovery.messages.join(' · ');
+    if (status.state === 'error') fail(status.error ?? 'FIPS discovery failed');
+    if (status.state === 'closed') { fail('The preview session closed. Reopen the hosted preview to continue.'); shutdown(); }
+  } else if (latest) latest.stats = status.stats;
+  diagnostics(); connection();
+}
+function connection() {
+  if (closed || failed) return;
+  const active = composition?.active ?? [];
+  el('map-name').textContent = active.length === 1 ? active[0].offer.manifest.name : active.length ? `${active.length} maps · one view` : 'Choose maps to explore';
+  el('status').textContent = composition?.opening ? 'Opening selected Atlas directories over FIPS…'
+    : active.length ? 'Reading over FIPS · geometry first'
+    : latest?.catalog.length ? 'Select one or more signed maps below'
+    : latest?.discovery.ready ? 'No signed maps found · refresh discovery to try again'
+    : 'Discovering signed maps from the host…';
+  document.body.dataset.state = composition?.readyCount ? 'ready' : 'starting';
 }
 function fail(message: string) {
+  if (closed) return;
   failed = true;
-  el('status').textContent = map ? 'Some map data could not load · you can keep exploring' : 'Could not open the map · try the connection again';
+  el('status').textContent = composition?.readyCount ? 'Some map data could not load · you can keep exploring' : 'Could not open selected maps · retry or refresh discovery';
   el('retry').textContent = map ? 'Retry map loading' : 'Try connection';
   el('error').textContent = message; el('error').hidden = false;
   el('retry').hidden = false; document.body.dataset.state = 'error';
 }
-function renderStats(s: MapStats) {
+function renderStats(s: CompositionStats) {
   el('zoom').textContent = `z${s.zoom.toFixed(1)}`;
-  const loading = s.loading + s.labels.loading;
-  const complete = s.wanted > 0 && s.tiles === s.wanted && s.missing === 0 && loading === 0 && s.labels.missing === 0;
-  el('render-status').textContent = `${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${loading ? ' · receiving…' : complete ? ' · ready' : ' · partial view'}`;
-  if (failed && complete && latest.state === 'ready') {
-    failed = false;
-    el('error').hidden = true; el('retry').hidden = true;
-    update({});
+  const complete = s.wanted > 0 && s.tiles === s.wanted && s.missing === 0 && s.loading === 0 && s.labels.loading === 0 && s.labels.missing === 0;
+  el('render-status').textContent = `${s.sources} sources in view · ${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${s.loading ? ' · receiving…' : complete ? ' · ready' : ' · partial view'}`;
+  if (failed && complete && !composition?.errors.length && !composition?.opening && latest?.state === 'ready') {
+    failed = false; el('error').hidden = true; el('retry').hidden = true; connection();
   }
 }
+function renderCatalog() {
+  if (!composition || closed) return;
+  const list = el('catalog'); list.replaceChildren();
+  const active = composition.active;
+  const ordered = [...active, ...composition.catalog.filter(e => !composition!.isSelected(e))];
+  for (const entry of ordered) {
+    const row = document.createElement('div'); row.className = 'map-option';
+    const label = document.createElement('label');
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = composition.isSelected(entry);
+    input.addEventListener('change', () => composition?.select(entry, input.checked));
+    const copy = document.createElement('span');
+    const title = document.createElement('strong'); title.textContent = entry.offer.manifest.name;
+    const detail = document.createElement('small');
+    const imageryOnly = entry.offer.manifest.tileLayers?.length === 0 && !!entry.offer.manifest.rasters?.length;
+    detail.textContent = `${composition.state(entry)} · ${bytes(entry.offer.bytes)}${imageryOnly ? ' · enable imagery to display' : ''}`;
+    copy.append(title, detail); label.append(input, copy); row.append(label);
+    if (input.checked) {
+      const raise = document.createElement('button'); raise.type = 'button'; raise.textContent = '↑';
+      raise.setAttribute('aria-label', `Move ${entry.offer.manifest.name} above other maps`);
+      raise.disabled = active[0]?.key === entry.key;
+      raise.addEventListener('click', () => composition?.raise(entry)); row.append(raise);
+    }
+    list.append(row);
+  }
+  el('selection').textContent = `${active.length} selected · first map has priority where coverage overlaps`;
+  el('roots').textContent = active.map(e => `${e.offer.manifest.name}\n${e.offer.hashtree!.root}`).join('\n\n') || 'No map selected';
+  el('provider').textContent = [...new Set(active.flatMap(e => e.offer.hashtree?.fips?.map(p => p.peerId) ?? []))].join('\n') || 'No active FIPS provider';
+  diagnostics(); connection();
+}
 async function start() {
-  if (opening) return;
+  if (opening || closed || map) return;
   opening = true; failed = false;
   const run = ++generation;
   el('error').hidden = true; el('retry').hidden = true;
-  map?.destroy(); map = undefined; reader?.dispose(); reader = undefined;
-  document.body.dataset.state = 'starting';
-  el('status').textContent = 'Connecting to the preview’s FIPS node…';
+  el('status').textContent = 'Connecting to the preview’s discovery host…';
   try {
     const status = await bridge.status();
-    if (run !== generation) return;
+    if (closed || run !== generation) return;
     update(status);
-    if (status.state === 'error') throw new Error(status.error);
-    const identity = `fips://${status.providerPeerId}/${status.map.rootHash}`;
-    const source = new HashtreeSource(identity, {
-      version: 1, root: status.map.rootHash, bytes: status.map.size,
-      chunkBytes: status.map.chunkBytes, providers: [],
-    }, undefined, {
-      memoryBytes: 16 * 1024 ** 2,
-      // The preview owns queue + FIPS attempt deadlines. Do not cut off its work
-      // with the reader's shorter HTTP-oriented default.
-      requestTimeoutMs: status.requestTimeoutMs + 1000,
-      fetchBlob: (hash, signal) => bridge.blob(hash, status.providerPeerId, signal),
-    });
-    reader = new AtlasReader(source, () => { if (run === generation) update({}); }, { purposes: ['map', 'labels'] });
-    await reader.open();
-    const binary = Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0));
-    await init({ module_or_path: binary });
-    if (run !== generation) return;
-    let createdMap: AtlasMap | undefined;
-    const current = () => run === generation && createdMap !== undefined && map === createdMap;
-    createdMap = await AtlasMap.create(el<HTMLCanvasElement>('map'), reader,
-      (stats) => { if (current()) renderStats(stats); },
-      (message) => { if (current()) fail(message); },
-      { placeNames: true, streetNames: true, pois: false });
-    if (run !== generation) { createdMap.destroy(); return; }
-    map = createdMap;
+    if (closed) return;
+    // Embedded bytes initialize WASM before CompositionMap's shared loader is called.
+    await init({ module_or_path: Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0)) });
+    if (closed || run !== generation) return;
+    let created: CompositionMap | undefined;
+    const current = () => !closed && run === generation && created !== undefined && map === created;
+    created = await CompositionMap.create(el<HTMLCanvasElement>('map'),
+      stats => { if (current()) renderStats(stats); },
+      (id, message) => { if (current() && composition?.active.some(e => e.key === id)) fail(message); });
+    if (closed || run !== generation) { created.destroy(); return; }
+    map = created;
+    composition = new MapComposition(map, bridge, renderCatalog, fail, diagnostics);
+    composition.setLayers(MAP_LAYERS.filter(layer => el<HTMLInputElement>(`layer-${layer}`).checked));
+    composition.setLabels({ places: el<HTMLInputElement>('labels-places').checked,
+      streets: el<HTMLInputElement>('labels-streets').checked, pois: el<HTMLInputElement>('labels-pois').checked });
+    composition.setImagery(el<HTMLInputElement>('imagery').checked);
+    map.coverage = el<HTMLInputElement>('coverage').checked;
+    composition.setCatalog(latest ?? status);
     for (const id of ['zoom-in', 'zoom-out', 'fit']) el<HTMLButtonElement>(id).disabled = false;
-    update({});
-  } catch (error) { if (run === generation) fail(error instanceof Error ? error.message : String(error)); }
+    connection();
+  } catch (error) { if (!closed && run === generation) fail(error instanceof Error ? error.message : String(error)); }
   finally { opening = false; }
 }
+for (const layer of MAP_LAYERS) {
+  const label = document.createElement('label'), input = document.createElement('input');
+  input.type = 'checkbox'; input.checked = true; input.value = layer;
+  input.addEventListener('change', () => composition?.setLayers(MAP_LAYERS.filter(l => el<HTMLInputElement>(`layer-${l}`).checked)));
+  input.id = `layer-${layer}`; label.append(input, document.createTextNode(layer)); el('layers').append(label);
+}
+for (const label of ['places', 'streets', 'pois'] as const) el(`labels-${label}`).addEventListener('change', () => composition?.setLabels({
+  places: el<HTMLInputElement>('labels-places').checked,
+  streets: el<HTMLInputElement>('labels-streets').checked,
+  pois: el<HTMLInputElement>('labels-pois').checked,
+}));
+el('imagery').addEventListener('change', () => composition?.setImagery(el<HTMLInputElement>('imagery').checked));
+el('coverage').addEventListener('change', () => { if (map) { map.coverage = el<HTMLInputElement>('coverage').checked; map.invalidate(); } });
 el('zoom-in').addEventListener('click', () => map?.zoomBy(1));
 el('zoom-out').addEventListener('click', () => map?.zoomBy(-1));
 el('fit').addEventListener('click', () => map?.fit());
+async function refresh() {
+  const button = el<HTMLButtonElement>('refresh'); button.disabled = true;
+  try { update(await bridge.refresh()); if (!map) await start(); }
+  catch (error) { fail(error instanceof Error ? error.message : String(error)); }
+  finally { if (!closed) button.disabled = false; }
+}
+el('refresh').addEventListener('click', () => { void refresh(); });
 el('retry').addEventListener('click', () => {
   if (!map) { void start(); return; }
-  map.retryLoads();
+  composition?.retry();
+  if (latest?.state === 'error') void refresh();
   el('status').textContent = 'Retrying missing map data…';
 });
-window.addEventListener('pagehide', () => { generation++; map?.destroy(); reader?.dispose(); bridge.dispose(); }, { once: true });
+function shutdown() {
+  if (closed) return;
+  closed = true; generation++;
+  composition?.dispose(); map?.destroy(); bridge.dispose();
+  for (const id of ['zoom-in', 'zoom-out', 'fit', 'refresh', 'retry']) el<HTMLButtonElement>(id).disabled = true;
+}
+window.addEventListener('pagehide', shutdown, { once: true });
 void start();

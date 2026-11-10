@@ -14,7 +14,7 @@
   "scripts": {
     "preview": "bun preview.ts",
     "serve": "bun serve-atlas.ts",
-    "test": "bun test bridge.test.ts public-status.test.ts timeout-cleanup.test.ts",
+    "test": "bun test bridge.test.ts public-status.test.ts timeout-cleanup.test.ts consumer-session.test.ts consumer-bridge.test.ts",
     "config:from-descriptor": "bun config-from-descriptor.ts",
     "deploy": "python3 deploy/deploy.py"
   }
