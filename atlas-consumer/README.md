@@ -34,6 +34,42 @@ The normal soyLI command starts the project's configured Vite build watcher and
 serves its built artifact. There is no custom launcher or injected script. Do not
 run the historical `experiments/fips-preview/preview.ts` for this workflow.
 
+## Prepare publication source
+
+This directory imports shared Atlas packages and the renderer in its parent
+repository. Publishing it directly would not produce a standalone, rebuildable
+project. soyLI also publishes reachable Git history, so the private Atlas
+repository must not be passed directly to publication.
+
+From the Atlas root, export a reviewed commit into a new private directory:
+
+```sh
+bun scripts/prepare-consumer-release.ts /path/to/private/atlas-release COMMIT
+cd /path/to/private/atlas-release
+bun run setup
+bun run verify
+```
+
+The exporter preserves the committed consumer under `app/`, its transitive
+TypeScript dependencies under `packages/`, and the renderer/routing Rust source.
+It includes the reviewed generated WASM and bindings with hashes, both dependency
+lockfiles, build wrappers, source provenance and an explicit file inventory. It
+excludes the host, administration, map compiler, private configuration and Git
+history. Output must be empty; the source checkout is never rewritten.
+
+The repository is private and has no root license. An export is a **private
+release candidate**, not permission to disclose or relicense the selected Atlas
+code. Review `SOURCE-INVENTORY.json`, set the intended source license and obtain
+the owner's publication decision before uploading either source or the napplet.
+The starter's MIT license does not automatically license the surrounding Atlas
+implementation. After that review, initialize and commit a separate publication
+repository, capture a loaded map, and use ordinary `soyli check`/`soyli publish`.
+
+Exported builds use a documented custom command recipe. A fresh source archive
+needs `bun run setup` before `soyli build`; a browser or hosted Studio builder
+needs the corresponding Atlas toolchain profile. No such hosted profile is
+claimed by this change. Compatible shell/soyLI support must ship first.
+
 Shell settings expose **Trusted map publisher** (hex public key), **Discovery relay
 hints**, and optional **Preferred map IDs** through NAP-CONFIG. Restart the napplet
 to apply changes. Empty preferred IDs follows an available signed default view.

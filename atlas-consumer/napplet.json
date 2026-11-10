@@ -1,6 +1,8 @@
 {
   "schema": "space-local-project/v1",
   "name": "atlas-consumer",
+  "title": "Atlas map viewer",
+  "description": "Explore and compose signed maps with local 3D rendering and selective, verified FIPS downloads. Public map viewing needs no account. Requires a shell with the experimental soy.fips/1 resource profile; map sources and optional layers remain your choice.",
   "template": "boilerplate",
   "entry": "dist/index.html",
   "previewId": "4757dbab-c86a-48d1-af67-776dc8a1542c",
@@ -40,5 +42,5 @@
   "relays": [],
   "servers": [],
   "license": "MIT",
-  "topics": []
+  "topics": ["maps", "geography", "3d", "fips"]
 }
