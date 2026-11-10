@@ -1,6 +1,6 @@
 import { AtlasReader } from '../../packages/format/src/reader';
 import { MAP_LAYERS, type MapLayer } from '../../packages/format/src/index';
-import { HashtreeSource } from '../../packages/hashtree/src/source';
+import { HashtreeReader } from '../../packages/hashtree/src/reader';
 import { verifyPublishedMap } from '../../packages/hashtree/src/published-map';
 import type { CompositionMap, CompositionMapSource } from '../../packages/renderer/src/composition';
 import type { ConsumerStatus, PreviewBridge } from './bridge';
@@ -100,7 +100,7 @@ export class MapComposition {
         continue;
       }
       const tree = entry.offer.hashtree!;
-      const source = new HashtreeSource(`htree://${tree.root}`, tree, undefined, {
+      const source = new HashtreeReader(`htree://${tree.root}`, tree, undefined, {
         memoryBytes: 16 * 1024 ** 2, requestTimeoutMs: this.timeoutMs + 1000,
         fetchBlob: (hash, signal) => this.bridge.blob(hash, tree.root, signal),
       });

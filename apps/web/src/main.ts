@@ -1,3 +1,4 @@
+import initCompositionRenderer from "../../../packages/renderer/pkg/atlas_renderer";
 import { closeMapTransport } from "./transport";
 import { HashtreeSource } from "../../../packages/hashtree/src/source";
 import { setupMapWorkbench } from "./map-workbench";
@@ -42,6 +43,7 @@ let extractor: ExtractControls | undefined;
 import {
   AtlasReader,
   HttpSource,
+  RemoteSource,
   FileSource,
   type ReadEvent,
   type ByteSource,
@@ -357,7 +359,7 @@ async function open(source: ByteSource) {
     {
       store: blockStore,
       sourceId:
-        source instanceof HttpSource
+        source instanceof RemoteSource
           ? new URL(source.url, location.href).href
           : undefined,
     },
@@ -432,10 +434,10 @@ function bindTools() {
   el("feature-label").textContent =
     m.featureCountKind === "tile-records" ? "Tile records" : "Features";
   const directDownload =
-    reader.source instanceof HttpSource && /^https?:/.test(reader.source.url);
+    reader.source instanceof RemoteSource && /^https?:/.test(reader.source.url);
   el("download").hidden = !directDownload;
   if (directDownload)
-    el<HTMLAnchorElement>("download").href = (reader.source as HttpSource).url;
+    el<HTMLAnchorElement>("download").href = (reader.source as RemoteSource).url;
   el<HTMLAnchorElement>("download").download =
     `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
   el("feature-count").textContent = number(m.features);
@@ -596,6 +598,7 @@ async function openComposition(local?: ByteSource) {
   el<HTMLInputElement>("offline").checked = false;
   el("render-status").textContent = "Opening map composition…";
   try {
+    await initCompositionRenderer({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
     const next = await CompositionMap.create(
       el<HTMLCanvasElement>("map"),
       stats,
@@ -812,7 +815,7 @@ el("reopen-map").onclick = async () => {
   if (saved.composition) await openComposition(saved.compositionInput);
   else
     await open(
-      saved.source instanceof HttpSource &&
+      saved.source instanceof RemoteSource &&
         !(saved.source instanceof HashtreeSource)
         ? new HttpSource(saved.source.url, saved.source.apiUrl)
         : saved.source,

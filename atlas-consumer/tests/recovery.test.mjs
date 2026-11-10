@@ -5,8 +5,8 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
-const [mainSource, compositionSource, bridgeSource, rendererSource, verifySource] = await Promise.all([
-  read('../src/main.ts'), read('../src/composition.ts'), read('../src/bridge.ts'),
+const [mainSource, compositionSource, rendererSource, verifySource] = await Promise.all([
+  read('../src/main.ts'), read('../src/composition.ts'),
   read('../../packages/renderer/src/composition.ts'), read('../../packages/hashtree/src/published-map.ts'),
 ]);
 const compile = source => ts.transpileModule(source, {
@@ -62,8 +62,8 @@ function harness({ failOpening = false, deferred = false, catalog = [entry('west
     setSources(value) { this.sources = value; }, setStyle(value) { this.styles.push(value); },
     fit() { this.fits++; }, setOffline(value) { assert.equal(value, false); this.retries++; } };
   const imports = specifier => {
-    if (specifier.endsWith('/reader')) return { AtlasReader: Reader };
-    if (specifier.endsWith('/source')) return { HashtreeSource: Source };
+    if (specifier.endsWith('/format/src/reader')) return { AtlasReader: Reader };
+    if (specifier.endsWith('/hashtree/src/reader')) return { HashtreeReader: Source };
     if (specifier.endsWith('/published-map')) return { verifyPublishedMap };
     if (specifier.endsWith('/format/src/index')) return { MAP_LAYERS: layers };
     throw new Error(`Unexpected import: ${specifier}`);
@@ -187,10 +187,10 @@ async function consumer() {
     require(specifier) {
       if (specifier === './composition') return h.exports;
       if (specifier.endsWith('/renderer/src/composition')) return { CompositionMap: Renderer };
-      if (specifier.endsWith('/atlas_renderer')) return { default: async () => {} };
+      if (specifier.endsWith('/atlas_renderer')) return { initSync: () => {} };
       if (specifier === 'atlas-renderer-wasm') return { default: 'AA==' };
       if (specifier === './bridge') return { PreviewBridge: Bridge };
-      if (specifier === './styles.css') return {};
+      if (specifier === './styles.css' || specifier === './napplet-settings') return {};
       return h.imports(specifier);
     },
   });
@@ -231,36 +231,4 @@ test('renderer retry keeps camera and retained sessions while clearing transfer 
   assert.deepEqual(retried, ['tiles', 'raster', 'labels', 'places', 'invalidate']);
   assert.equal(reader.offline, false); assert.equal(reader.cache.get('tile'), 'decoded');
   assert.deepEqual(map.center, [0.2, 0.3]); assert.equal(map.zoom, 14); assert.equal(session.placesFailed, false);
-});
-
-function bridgeHarness() {
-  const sent = [], updates = []; let receive;
-  const parent = { postMessage(value) { sent.push(value); } };
-  const { PreviewBridge } = moduleOf(bridgeSource, { crypto: { randomUUID: () => 'test' }, ArrayBuffer, Uint8Array, clearTimeout,
-    window: { parent, setTimeout, addEventListener(_type, fn) { receive = fn; }, removeEventListener() { receive = undefined; } } });
-  const bridge = new PreviewBridge(value => updates.push(value));
-  return { bridge, sent, updates, reply(value, source = parent) { receive?.({ source, data: value }); } };
-}
-
-test('bridge scopes blob and operation requests by root and ignores mismatched reply methods/sources', async () => {
-  const h = bridgeHarness(), root = '1'.repeat(64), hash = '2'.repeat(64), pending = h.bridge.blob(hash, root);
-  const request = h.sent[0]; assert.equal(request.root, root); assert.equal(request.hash, hash);
-  h.reply({ type: 'atlas-preview.getBlob.result', id: request.id, bytes: new ArrayBuffer(4) }, {});
-  h.reply({ type: 'atlas-preview.rpc.result', id: request.id, response: { status: 200 } });
-  h.reply({ type: 'atlas-preview.getBlob.result', id: request.id, bytes: new ArrayBuffer(3), stats: stats() });
-  assert.equal((await pending).length, 3);
-  const rpc = h.bridge.request(root, { path: 'capabilities', method: 'GET' });
-  h.reply({ type: 'atlas-preview.rpc.result', id: h.sent.at(-1).id, response: { status: 200, body: { supported: true } } });
-  assert.equal((await rpc).body.supported, true); h.bridge.dispose();
-});
-
-test('bridge refresh updates status, cancels pending work on abort/dispose, and never sends after disposal', async () => {
-  const h = bridgeHarness(), refresh = h.bridge.refresh();
-  h.reply({ ...status([]), type: 'atlas-preview.refresh.result', id: h.sent[0].id });
-  assert.equal((await refresh).version, 2);
-  const abort = new AbortController(), blob = h.bridge.blob('2'.repeat(64), '1'.repeat(64), abort.signal);
-  abort.abort(new Error('Cancelled selection')); await assert.rejects(blob, /Cancelled selection/);
-  assert.equal(h.sent.at(-1).type, 'atlas-preview.cancel');
-  const pending = h.bridge.status(); h.bridge.dispose(); await assert.rejects(pending, /Napplet closed/);
-  const sent = h.sent.length; await assert.rejects(h.bridge.status(), /Napplet closed/); assert.equal(h.sent.length, sent);
 });

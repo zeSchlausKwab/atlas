@@ -1,6 +1,6 @@
 import { validateTransportMetadata } from "./routing-contract";
 import { validateRasters } from "./raster";
-import { parseTree, type TreeOffer } from "../../hashtree/src/source";
+import { parseTree, type TreeOffer } from "../../hashtree/src/offer";
 import { MAP_LAYERS, type Manifest } from "./index";
 export interface MapOffer {
   id: string;

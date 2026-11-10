@@ -143,7 +143,7 @@ export class Acquisitions {
     request: AcquisitionRequest,
     sources: AcquisitionPin[],
   ) {
-    this.idle();
+    await this.idle();
     validateAcquisition(request);
     const pins = sources.filter((s) => request.sourceIds.includes(s.id));
     if (pins.length !== new Set(request.sourceIds).size)
@@ -164,10 +164,14 @@ export class Acquisitions {
     await mkdir(this.folder(j.id), { recursive: true });
     await this.save(j);
     this.jobs.set(j.id, j);
-    this.run(j, false);
+    await this.run(j, false);
     return j.id;
   }
-  private idle() {
+  private async idle() {
+    // Review/terminal states are visible before their final durable save finishes.
+    // Wait for that cleanup, but do not queue commands behind work still running.
+    if (this.active && !activeStates.has(this.jobs.get(this.active.id)!.state))
+      await this.active.done;
     if (this.active || this.closing)
       throw Error("Pause the active area acquisition before starting another.");
   }
@@ -175,7 +179,7 @@ export class Acquisitions {
     return this.command(() => this.resumeJob(id, force, acceptPartial));
   }
   private async resumeJob(id: string, force: boolean, acceptPartial: boolean) {
-    this.idle();
+    await this.idle();
     const j = this.jobs.get(id);
     if (!j) throw Error("Acquisition not found");
     if (j.state === "ready") return;
@@ -197,7 +201,7 @@ export class Acquisitions {
       j.allowStorageRisk = force;
       j.acceptedPartial = acceptPartial || j.acceptedPartial;
     }
-    this.run(j, !!j.plan);
+    await this.run(j, !!j.plan);
   }
   async pause(id: string) {
     if (this.active?.id === id) {
@@ -239,8 +243,8 @@ export class Acquisitions {
     if (!j || j.state !== "ready") throw Error("Finished file not found");
     return Bun.file(join(this.folder(id), "complete.atlas"));
   }
-  private run(j: Job, execute: boolean) {
-    this.idle();
+  private async run(j: Job, execute: boolean) {
+    await this.idle();
     const abort = new AbortController();
     const signal = abort.signal;
     const done = (async () => {

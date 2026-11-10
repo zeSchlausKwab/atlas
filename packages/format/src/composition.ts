@@ -1,4 +1,4 @@
-import { AtlasReader, HttpSource, type ByteSource } from "./reader";
+import { AtlasReader, RemoteSource, type ByteSource } from "./reader";
 import type { Manifest } from "./index";
 import {
   MEMBER_CHUNK_BYTES,
@@ -46,13 +46,13 @@ export class MemberSource implements ByteSource {
     return output;
   }
 }
-export class RemoteMemberSource extends HttpSource {
+export class RemoteMemberSource extends RemoteSource {
   private memberSource: MemberSource;
   constructor(
     readonly parent: AtlasReader,
     readonly member: ArchiveComposition["members"][number],
   ) {
-    const remote = parent.source as HttpSource;
+    const remote = parent.source as RemoteSource;
     super(
       `${remote.url}#member=${member.id}`,
       remote.apiUrl ? `${remote.apiUrl}/members/${member.id}` : undefined,
@@ -72,7 +72,7 @@ export async function openMembers(parent: AtlasReader) {
   try {
     for (const member of composition.members) {
       const reader = await new AtlasReader(
-        parent.source instanceof HttpSource
+        parent.source instanceof RemoteSource
           ? new RemoteMemberSource(parent, member)
           : new MemberSource(parent, member),
       ).open();
