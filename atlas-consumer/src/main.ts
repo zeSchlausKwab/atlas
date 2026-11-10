@@ -1,0 +1,92 @@
+import './styles.css';
+import { AtlasReader } from '../../packages/format/src/reader';
+import { HashtreeSource } from '../../packages/hashtree/src/source';
+import { AtlasMap, type MapStats } from '../../packages/renderer/src/map';
+import init from '../../packages/renderer/pkg/atlas_renderer';
+import wasmBase64 from 'atlas-renderer-wasm';
+import { PreviewBridge, type PreviewStatus } from './bridge';
+
+function el<T extends HTMLElement = HTMLElement>(id: string): T {
+  const value = document.getElementById(id);
+  if (!value) throw new Error(`Missing element ${id}`);
+  return value as T;
+}
+function bytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  const power = Math.min(3, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / 1024 ** power).toFixed(power > 1 ? 2 : 1)} ${['B', 'KiB', 'MiB', 'GiB'][power]}`;
+}
+let map: AtlasMap | undefined;
+let reader: AtlasReader | undefined;
+let latest: Partial<PreviewStatus> = {};
+let generation = 0;
+let opening = false;
+const bridge = new PreviewBridge(update);
+function update(status: Partial<PreviewStatus>) {
+  latest = { ...latest, ...status };
+  if (latest.stats) {
+    const s = latest.stats;
+    el('bytes').textContent = bytes(s.fipsBytes);
+    el('blobs').textContent = s.verifiedBlobs.toLocaleString();
+    el('reuse').textContent = `${s.cacheHits.toLocaleString()} bridge cache hits · ${reader?.cacheHits ?? 0} Atlas cache hits`;
+    el('requests').textContent = `${s.networkRequests} FIPS requests · ${s.pending} pending · ${s.errors} errors`;
+  }
+  if (latest.map) {
+    el('map-name').textContent = latest.map.name;
+    el('archive').textContent = `${bytes(latest.map.size)} · read only the needed parts`;
+    el('root').textContent = latest.map.rootHash;
+    el('provider').textContent = latest.providerPeerId ?? '';
+  }
+  if (latest.state === 'error') fail(latest.error ?? 'FIPS connection failed');
+  else if (map) {
+    el('status').textContent = 'Reading over FIPS · no HTTP map delivery';
+    document.body.dataset.state = 'ready';
+  } else if (latest.state === 'ready') el('status').textContent = 'FIPS node ready · opening Atlas directory…';
+}
+function fail(message: string) {
+  el('error').textContent = message; el('error').hidden = false;
+  el('retry').hidden = false; document.body.dataset.state = 'error';
+}
+function renderStats(s: MapStats) {
+  el('zoom').textContent = `z${s.zoom.toFixed(1)}`;
+  el('render-status').textContent = `${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${s.loading ? ' · receiving…' : ' · ready'}`;
+}
+async function start() {
+  if (opening) return;
+  opening = true;
+  const run = ++generation;
+  el('error').hidden = true; el('retry').hidden = true;
+  map?.destroy(); map = undefined; reader?.dispose(); reader = undefined;
+  document.body.dataset.state = 'starting';
+  el('status').textContent = 'Connecting to the preview’s FIPS node…';
+  try {
+    const status = await bridge.status(); update(status);
+    if (status.state === 'error') throw new Error(status.error);
+    const identity = `fips://${status.providerPeerId}/${status.map.rootHash}`;
+    const source = new HashtreeSource(identity, {
+      version: 1, root: status.map.rootHash, bytes: status.map.size,
+      chunkBytes: status.map.chunkBytes, providers: [],
+    }, undefined, {
+      memoryBytes: 16 * 1024 ** 2,
+      fetchBlob: (hash, signal) => bridge.blob(hash, status.providerPeerId, signal),
+    });
+    reader = new AtlasReader(source, () => update({}), { purposes: ['map', 'labels'] });
+    await reader.open();
+    const binary = Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0));
+    await init({ module_or_path: binary });
+    if (run !== generation) return;
+    const createdMap = await AtlasMap.create(el<HTMLCanvasElement>('map'), reader, renderStats, fail,
+      { placeNames: true, streetNames: true, pois: false });
+    if (run !== generation) { createdMap.destroy(); return; }
+    map = createdMap;
+    for (const id of ['zoom-in', 'zoom-out', 'fit']) el<HTMLButtonElement>(id).disabled = false;
+    update({});
+  } catch (error) { if (run === generation) fail(error instanceof Error ? error.message : String(error)); }
+  finally { opening = false; }
+}
+el('zoom-in').addEventListener('click', () => map?.zoomBy(1));
+el('zoom-out').addEventListener('click', () => map?.zoomBy(-1));
+el('fit').addEventListener('click', () => map?.fit());
+el('retry').addEventListener('click', () => { void start(); });
+window.addEventListener('pagehide', () => { generation++; map?.destroy(); reader?.dispose(); bridge.dispose(); }, { once: true });
+void start();

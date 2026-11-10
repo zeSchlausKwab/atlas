@@ -30,6 +30,15 @@ Publish a map from the host console, discover its signed offer in the client
 composer, and fetch verified chunks from one or more providers. The `.atlas`
 remains a standalone file. See [Hashtree setup, measurements and current limits](docs/HASHTREE.md).
 
+## FIPS napplet preview
+
+The experimental [Atlas consumer napplet](atlas-consumer/README.md) reads a real
+hosted archive through FIPS and Hashtree, using a temporary Soyli preview bridge.
+The provider runs independently of the Atlas HTTP server; the browser verifies
+blobs by hash and renders locally. There is no HTTP map fallback in this demo.
+See [setup and transport boundaries](experiments/fips-preview/README.md).
+This preview is not yet a production Soyli/NAP integration.
+
 ## Run locally
 
 No remote Atlas server, account, SSH access, Nostr relay or planet download is

@@ -1,0 +1,24 @@
+[Unit]
+Description=Atlas FIPS preview provider
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@APP@
+EnvironmentFile=@ROOT@/preview.env
+ExecStart=@BUN@ serve-atlas.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+KillMode=control-group
+UMask=0077
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=100%
+MemoryHigh=256M
+MemoryMax=512M
+TasksMax=64
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Atlas · FIPS field demo</title></head>
+<body><main id="app">
+  <div class="map-scene"><canvas id="map" aria-label="Interactive Atlas map" tabindex="0"></canvas></div>
+  <section class="connection" aria-label="Map connection">
+    <span class="signal" aria-hidden="true"></span><div><strong id="map-name">A map without a map-server URL.</strong><p id="status" role="status">Connecting to the preview’s FIPS node…</p></div>
+  </section>
+  <nav class="map-controls" aria-label="Map controls"><button id="zoom-in" aria-label="Zoom in" disabled>+</button><button id="zoom-out" aria-label="Zoom out" disabled>−</button><button id="fit" aria-label="Fit map" disabled>⌖</button></nav>
+  <aside class="proof" aria-label="Transfer evidence">
+    <div class="proof-heading"><span class="eyeline">LIVE · FIPS / HASHTREE</span><span id="zoom">—</span></div>
+    <div class="numbers"><div><strong id="bytes">0 B</strong><span>FIPS payload received</span></div><div><strong id="blobs">0</strong><span>verified blobs</span></div></div>
+    <p id="render-status">The napplet keeps map rendering on this device.</p>
+    <details id="details"><summary>Follow the bytes <span aria-hidden="true">↗</span></summary>
+      <p>Atlas ranges → Hashtree blobs → FIPS peer → this map. There is no HTTP map fallback.</p>
+      <dl><dt>Archive</dt><dd id="archive">Waiting for provider</dd><dt>Root hash</dt><dd id="root"></dd><dt>Provider identity</dt><dd id="provider"></dd><dt>Session reuse</dt><dd id="reuse">0 cache hits</dd><dt>Transfers</dt><dd id="requests">0 requests</dd><dt>Transport</dt><dd>TCP/FIPS · encrypted mesh via WSS seeds</dd></dl>
+      <p class="preview-note">Experimental Soyli preview bridge. Shell support and discovery come next.</p>
+    </details>
+    <p id="error" role="alert" hidden></p><button id="retry" hidden>Try connection again</button>
+  </aside>
+  <footer>© OpenStreetMap contributors · ODbL <span>Drag to pan · scroll to zoom</span></footer>
+</main><script type="module" src="/src/main.ts"></script></body></html>
