@@ -129,6 +129,14 @@ export async function prepareConsumerRelease(options: {
     throw new Error('The consumer must pin its pnpm version.');
   if (!files.has('bun.lock') || !files.has('app/pnpm-lock.yaml'))
     throw new Error('Both frozen dependency lockfiles are required.');
+  const index = files.get('app/index.html');
+  if (!index) throw new Error('The consumer source index.html is required.');
+  // soyLI keeps a root source entry even for custom builds with dist/index.html.
+  // The app's actual Vite build still uses app/index.html unchanged.
+  files.set(
+    'index.html',
+    Buffer.from(index.toString().replaceAll('src="/src/', 'src="./app/src/')),
+  );
   const json = (path: string, value: unknown) =>
     files.set(path, Buffer.from(`${JSON.stringify(value, null, 2)}\n`));
   // Keep both dependency graphs unchanged; script changes do not alter either lockfile.
@@ -208,7 +216,7 @@ export async function prepareConsumerRelease(options: {
       'renderer/routing Rust source and manifests',
       'bun.lock',
     ],
-    generated: ['root publication configuration, command wrappers and README'],
+    generated: ['root publication configuration, source entry, command wrappers and README'],
     prebuiltArtifacts: artifacts,
     rebuild: 'bun run build:wasm && bun run verify',
   });

@@ -27,6 +27,8 @@ async function fixture(importPath = '../../packages/view/src/index') {
     'atlas-consumer/package.json': JSON.stringify({ packageManager: 'pnpm@10.8.0' }),
     'atlas-consumer/pnpm-lock.yaml': 'locked-consumer',
     'atlas-consumer/napplet.json': JSON.stringify({ title: 'Atlas map viewer', license: 'MIT' }),
+    'atlas-consumer/index.html':
+      '<main id="app"></main><script type="module" src="/src/main.ts"></script>',
     'atlas-consumer/src/main.ts': `import { view } from '${importPath}';\nconsole.log(view);`,
     'atlas-consumer/LICENSE': 'Upstream starter license',
     'packages/view/src/index.ts': 'export { view } from "./value.js";',
@@ -76,6 +78,8 @@ test('publication export preserves the committed dependency closure and excludes
     (file: { path: string }) => file.path,
   );
   expect(paths).toContain('app/src/main.ts');
+  expect(paths).toContain('index.html');
+  expect(await readFile(join(f.output, 'index.html'), 'utf8')).toContain('src="./app/src/main.ts"');
   expect(paths).toContain('packages/view/src/value.ts');
   expect(paths).toContain('crates/renderer/src/lib.rs');
   expect(paths).not.toContain('crates/osm-import/src/lib.rs');
