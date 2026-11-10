@@ -1,3 +1,17 @@
+import {
+  initialPublishedView,
+  requestedMapIds,
+  resolveViewSources,
+} from "../apps/web/src/composition-selection";
+import {
+  defaultPresentation,
+  type ViewRecipe,
+} from "../packages/views/src/index";
+import {
+  viewAnnouncement,
+  parseViewAnnouncement,
+} from "../packages/views/src/announcement";
+import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
 import { expect, spyOn, test } from "bun:test";
 import {
   deliveryChoice,
@@ -290,6 +304,21 @@ test("a signed discovery launch never requests an HTTP bootstrap or client confi
     expect(connection.delivery.transport).toBe("fips");
     expect(nodes.get("host-console")!.hidden).toBe(true);
     expect(http).not.toHaveBeenCalled();
+    url.searchParams.set("source", "https://map.example/demo.atlas");
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: { search: url.search, href: url.href },
+    });
+    await expect(clientConnection()).rejects.toThrow("explicit HTTP delivery");
+    url.searchParams.set("transport", "http");
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: { search: url.search, href: url.href },
+    });
+    expect((await clientConnection()).source).toBe(
+      "https://map.example/demo.atlas",
+    );
+    expect(http).not.toHaveBeenCalled();
   } finally {
     http.mockRestore();
     if (previousDocument)
@@ -313,4 +342,99 @@ test("switching to an explicit HTTP bootstrap clears a prior publisher address",
   expect(url.searchParams.has("publisher")).toBe(false);
   expect(url.searchParams.has("relay")).toBe(false);
   expect(url.searchParams.get("transport")).toBe("http");
+});
+
+test("stateful FIPS tools stay on one provider across reordered offers and reject its withdrawal", async () => {
+  const offer = structuredClone(tree);
+  const peer = offer.fips![0]!;
+  const other = { ...peer, peerId: "03" + "d".repeat(64) };
+  const dispatched: Parameters<FipsRequest>[] = [];
+  const request = fipsOperationRequest(offer, async (...args) => {
+    dispatched.push(args);
+    return { status: 200, body: {} };
+  });
+  await request("/workspace.prepare", { method: "POST", body: "{}" });
+  offer.fips = [other, peer];
+  await request("/workspace.query", { method: "POST", body: "{}" });
+  expect(dispatched.map(([provider]) => provider.peerId)).toEqual([
+    peer.peerId,
+    peer.peerId,
+  ]);
+  offer.fips = [other];
+  await expect(
+    request("/workspace.query", { method: "POST", body: "{}" }),
+  ).rejects.toThrow("withdrawn");
+  expect(dispatched).toHaveLength(2);
+});
+
+test("legacy map IDs use the same selection policy as multi-map discovery", () => {
+  expect(requestedMapIds(new URLSearchParams("map=demo"))).toEqual(["demo"]);
+  expect(requestedMapIds(new URLSearchParams("map=old&maps=a,b"))).toEqual([
+    "a",
+    "b",
+  ]);
+  expect(requestedMapIds(new URLSearchParams())).toBeUndefined();
+});
+
+test("a partially available publisher view keeps its roots and never selects unrelated offers", async () => {
+  const fixture = await workspaceFixture();
+  try {
+    const key = generateSecretKey();
+    const recipe: ViewRecipe = {
+      version: 1,
+      id: "default",
+      name: "Pinned pair",
+      sources: [root, "d".repeat(64)].map((root) => ({
+        root,
+        url: `htree://${root}`,
+        enabled: true,
+        layers: ["water"],
+        labels: false,
+      })),
+      presentation: defaultPresentation(),
+      coverage: true,
+    };
+    const event = viewAnnouncement(recipe, key);
+    const selected = parseViewAnnouncement(
+      finalizeEvent(
+        {
+          kind: event.kind,
+          created_at: event.created_at,
+          content: event.content,
+          tags: [...event.tags, ["default", "true"]],
+        },
+        key,
+      ),
+    );
+    const chosen = initialPublishedView(
+      [selected],
+      selected.event.pubkey,
+      null,
+    )!;
+    const offer: MapOffer = {
+      id: "available",
+      url: `htree://${root}`,
+      bytes: 100,
+      manifest: fixture.reader.index.manifest,
+      hashtree: tree,
+    };
+    const unrelated = {
+      ...offer,
+      id: "unrelated",
+      url: `htree://${snapshot}`,
+      hashtree: { ...tree, root: snapshot },
+    };
+    const result = resolveViewSources(chosen.recipe, [offer, unrelated]);
+    expect(result.available.get(offer)?.enabled).toBe(true);
+    expect(result.available.get(offer)?.layers).toEqual(["water"]);
+    expect(result.available.get(unrelated)).toBeUndefined();
+    expect(result.missing.map((source) => source.root)).toEqual([
+      "d".repeat(64),
+    ]);
+    expect(() =>
+      initialPublishedView([selected], selected.event.pubkey, "e".repeat(64)),
+    ).toThrow("No maps were selected in its place");
+  } finally {
+    fixture.reader.dispose();
+  }
 });

@@ -1,4 +1,9 @@
 import {
+  initialPublishedView,
+  requestedMapIds,
+  resolveViewSources,
+} from "./composition-selection";
+import {
   mapSource,
   deliveryLabel,
   FIPS_DEFAULT,
@@ -122,6 +127,8 @@ export async function createComposer(
     catalogs = new Set<string>(),
     store = options.store;
   const pinnedWarnings: string[] = [];
+  const requestedMaps = requestedMapIds(new URLSearchParams(location.search));
+  let missingPinnedView = false;
   const delivery = options.delivery ?? FIPS_DEFAULT;
   const announcements = new Map<
     string,
@@ -745,9 +752,7 @@ export async function createComposer(
       return;
     }
     const saved = recipe?.sources.find((s) => matchesSource(s, offer));
-    const requested = new URLSearchParams(location.search)
-      .get("maps")
-      ?.split(",");
+    const requested = requestedMaps;
     const enabled =
       saved?.enabled ??
       (!recipe &&
@@ -1056,11 +1061,7 @@ export async function createComposer(
             ),
           );
         }
-        if (
-          !recipe &&
-          chosen &&
-          (requested || !new URLSearchParams(location.search).has("maps"))
-        ) {
+        if (!recipe && chosen && (requested || !requestedMaps)) {
           publisher = chosen;
           recipe = {
             ...chosen.recipe,
@@ -1150,51 +1151,49 @@ export async function createComposer(
   if (
     !recipe &&
     options.discovery &&
-    (new URLSearchParams(location.search).has("viewRecipe") ||
-      !new URLSearchParams(location.search).has("maps"))
+    (new URLSearchParams(location.search).has("viewRecipe") || !requestedMaps)
   ) {
     const requested = new URLSearchParams(location.search).get("viewRecipe");
-    const defaults = [...published.values()]
-      .filter(
-        (p) =>
-          p.event.pubkey === options.discovery!.publisher &&
-          (requested
-            ? p.event.id === requested
-            : p.event.tags.some((t) => t[0] === "default" && t[1] === "true")),
-      )
-      .sort(
-        (a, b) =>
-          b.event.created_at - a.event.created_at ||
-          a.event.id.localeCompare(b.event.id),
+    try {
+      const selected = initialPublishedView(
+        [...published.values()],
+        options.discovery.publisher,
+        requested,
       );
-    const selected = defaults[0];
-    if (requested && !selected)
-      failures.push(
-        "The pinned view revision has not been announced by this relay.",
-      );
-    if (
-      selected &&
-      selected.recipe.sources.every(
-        (p) => !p.enabled || entries.some((e) => matchesSource(p, e.offer)),
-      )
-    ) {
-      publisher = selected;
-      recipe = { ...selected.recipe, catalogs: [], publisher: selected.event };
-      options.presentation.apply(selected.recipe.presentation);
-      picker.value = selected.event.id;
-      for (const e of entries) {
-        const state = selected.recipe.sources.find((p) =>
-          matchesSource(p, e.offer),
+      if (selected) {
+        publisher = selected;
+        recipe = {
+          ...selected.recipe,
+          catalogs: [],
+          publisher: selected.event,
+        };
+        options.presentation.apply(selected.recipe.presentation);
+        picker.value = selected.event.id;
+        const selection = resolveViewSources(
+          selected.recipe,
+          entries.map((e) => e.offer),
         );
-        e.enabled = state?.enabled ?? false;
-        if (state) {
-          e.layers = [...state.layers];
-          e.labels = state.labels;
-          e.rasterLayers = structuredClone(state.rasterLayers ?? {});
+        for (const e of entries) {
+          const state = selection.available.get(e.offer);
+          e.enabled = state?.enabled ?? false;
+          if (state) {
+            e.layers = [...state.layers];
+            e.labels = state.labels;
+            e.rasterLayers = structuredClone(state.rasterLayers ?? {});
+          }
         }
+        if (selection.missing.length)
+          failures.push(
+            `Publisher view partially available: ${selection.missing.length} pinned source${selection.missing.length === 1 ? " is" : "s are"} missing. Only available selected sources are opened.`,
+          );
       }
+    } catch (error) {
+      missingPinnedView = true;
+      for (const entry of entries) entry.enabled = false;
+      failures.push(String(error));
     }
   }
+
   if (recipe)
     entries.sort((a, b) => {
       const pos = (offer: MapOffer) => {
@@ -1206,7 +1205,8 @@ export async function createComposer(
   else {
     if (
       !entries.some((e) => e.enabled) &&
-      !new URLSearchParams(location.search).has("maps") &&
+      !missingPinnedView &&
+      !requestedMaps &&
       entries[0]
     )
       entries[0].enabled = true;
@@ -1305,7 +1305,9 @@ export async function createComposer(
       save();
       return;
     }
-    const selected = published.get(id);
+    // A newer announcement must not invalidate Reset for the active pinned revision.
+    const selected =
+      published.get(id) ?? (publisher?.event.id === id ? publisher : undefined);
     if (!selected) return;
     const missing = selected.recipe.sources.filter(
       (s) =>

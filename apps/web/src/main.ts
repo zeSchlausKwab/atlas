@@ -1,3 +1,4 @@
+import { closeMapTransport } from "./transport";
 import { HashtreeSource } from "../../../packages/hashtree/src/source";
 import { setupMapWorkbench } from "./map-workbench";
 import {
@@ -755,6 +756,7 @@ el("purge-caches").onclick = async () => {
   cacheChannel?.postMessage("close");
   showCachePause("Clearing Atlas caches…");
   try {
+    await closeMapTransport();
     await blockStore?.clear();
     await shellRegistration;
     const registration =
@@ -841,6 +843,7 @@ if (cacheChannel)
     showCachePause("Cache purge requested in another Atlas tab.");
     // Drain this tab's queued writes too, even if the other tab cleared first.
     try {
+      await closeMapTransport();
       await blockStore?.clear();
     } catch {
       el("cache-purge-status").textContent =
@@ -983,21 +986,13 @@ el<HTMLInputElement>("file-input").onchange = async (event) => {
     await open(new FileSource(file));
   }
 };
-const hostedMap = new URLSearchParams(location.search).get("map");
 if (connection.source)
   void open(new HttpSource(connection.source, connection.api));
-else if (hostedMap)
-  void open(
-    new HttpSource(
-      connection.endpoint(
-        /^[a-f0-9-]{36}$/.test(hostedMap)
-          ? `maps/${hostedMap}.atlas`
-          : "maps/demo.atlas",
-      ),
-    ),
-  );
 else void openComposition();
-window.addEventListener("pagehide", closeSession);
+window.addEventListener("pagehide", () => {
+  closeSession();
+  void closeMapTransport().catch(() => {});
+});
 
 function shellCommand(worker: ServiceWorker, command: string) {
   return new Promise<void>((resolve, reject) => {

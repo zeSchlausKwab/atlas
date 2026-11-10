@@ -82,6 +82,10 @@ export async function clientConnection() {
     }
   };
   const choice = deliveryChoice(query, config.transport);
+  if (query.has("source") && choice.transport !== "http")
+    throw new Error(
+      "Direct map URLs require explicit HTTP delivery (?transport=http). For FIPS, use a publisher, relay and map ID.",
+    );
   const transport = document.getElementById(
     "composition-transport",
   ) as HTMLSelectElement;

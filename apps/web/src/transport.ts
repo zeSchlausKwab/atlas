@@ -15,6 +15,18 @@ export const FIPS_DEFAULT: DeliveryChoice = {
   transport: "fips",
   allowHttpFallback: false,
 };
+let loadedRuntime:
+  | Promise<typeof import("../../../packages/fips/src/client")>
+  | undefined;
+const runtime = () =>
+  (loadedRuntime ??= import("../../../packages/fips/src/client"));
+/** Purge releases the mesh and its queues before readers may reopen. HTTP-only
+ * sessions do not load the FIPS runtime just to shut it down. */
+export async function closeMapTransport() {
+  const pending = loadedRuntime;
+  loadedRuntime = undefined;
+  if (pending) await (await pending).closeFipsClient();
+}
 const sourcePolicies = new WeakMap<HashtreeSource, DeliveryChoice>();
 export const sourceDelivery = (source: HashtreeSource) =>
   sourcePolicies.get(source) ?? FIPS_DEFAULT;
@@ -53,10 +65,9 @@ export function mapSource(
     ...choice,
     requestTimeoutMs: choice.transport === "fips" ? 20 * 60_000 : 10_000,
     fetchFipsBlob: async (hash, providers, signal) => {
-      const { getFipsClient } = await import(
-        "../../../packages/fips/src/client"
-      );
-      return (await getFipsClient()).fetchBlob(hash, providers, signal);
+      const { getFipsClient } = await runtime();
+      signal.throwIfAborted();
+      return getFipsClient().fetchBlob(hash, providers, signal);
     },
   });
   sourcePolicies.set(source, { ...choice });
@@ -81,6 +92,10 @@ export type FipsRequest = (
 /** Each RPC stays on one provider. Replaying a call elsewhere could repeat
  * stateful workspace work, including when its response was lost in transit. */
 export function fipsOperationRequest(tree: TreeOffer, request?: FipsRequest) {
+  // Workspace/result handles belong to this host, not every mirror of the root.
+  const selected = tree.fips?.find((p) => p.rpcPort !== undefined);
+  const provider = selected ? structuredClone(selected) : undefined;
+  const root = tree.root;
   return async (path: string, init: RequestInit = {}): Promise<Response> => {
     const signal = init.signal
       ? AbortSignal.any([init.signal, AbortSignal.timeout(10 * 60_000)])
@@ -89,23 +104,29 @@ export function fipsOperationRequest(tree: TreeOffer, request?: FipsRequest) {
     const method = init.method ?? "GET";
     if (method !== "GET" && method !== "POST")
       throw new Error("Unsupported FIPS operation method");
-    const provider = tree.fips?.find((p) => p.rpcPort !== undefined);
     if (!provider)
       throw new Error(
         "This provider does not advertise server tools over FIPS. Use This device.",
       );
+    if (
+      !tree.fips?.some(
+        (p) => p.peerId === provider.peerId && p.rpcPort === provider.rpcPort,
+      )
+    )
+      throw new Error(
+        "The server tools provider was withdrawn. Reopen the map to start a new server workspace.",
+      );
     const invoke =
       request ??
       (async (...args: Parameters<FipsRequest>) => {
-        const { getFipsClient } = await import(
-          "../../../packages/fips/src/client"
-        );
-        return (await getFipsClient()).request(...args);
+        const { getFipsClient } = await runtime();
+        args[2].throwIfAborted();
+        return getFipsClient().request(...args);
       });
     const result = await invoke(
       provider,
       {
-        root: tree.root,
+        root,
         path,
         method,
         ...(init.body ? { body: JSON.parse(String(init.body)) } : {}),
@@ -136,10 +157,12 @@ export function remoteForSource(
   if (
     choice.transport === "fips" &&
     source.tree.fips?.some((p) => p.rpcPort !== undefined)
-  )
+  ) {
+    const request = fipsOperationRequest(source.tree);
     return new RemoteOperations(source.url, snapshot, (path, init) =>
-      fipsOperationRequest(source.tree)(prefix + path, init),
+      request(prefix + path, init),
     );
+  }
   if (choice.transport === "http" && source.apiUrl)
     return new RemoteOperations(source.apiUrl + prefix, snapshot);
   // HTTP fallback is a data-read permission, not consent to execute remote tools elsewhere.
