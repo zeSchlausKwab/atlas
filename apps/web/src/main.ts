@@ -1,3 +1,4 @@
+import { HashtreeSource } from "../../../packages/hashtree/src/source";
 import { setupMapWorkbench } from "./map-workbench";
 import {
   parsePresentation,
@@ -429,8 +430,11 @@ function bindTools() {
     `OSM EXTRACT · Z${m.minZoom}–${m.maxZoom}`;
   el("feature-label").textContent =
     m.featureCountKind === "tile-records" ? "Tile records" : "Features";
-  if (reader.source instanceof HttpSource)
-    el<HTMLAnchorElement>("download").href = reader.source.url;
+  const directDownload =
+    reader.source instanceof HttpSource && /^https?:/.test(reader.source.url);
+  el("download").hidden = !directDownload;
+  if (directDownload)
+    el<HTMLAnchorElement>("download").href = (reader.source as HttpSource).url;
   el<HTMLAnchorElement>("download").download =
     `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
   el("feature-count").textContent = number(m.features);
@@ -617,6 +621,8 @@ async function openComposition(local?: ByteSource) {
     next.setGrid(el<HTMLInputElement>("tile-grid").checked);
     const control = await createComposer(next, {
       catalog: connection.catalog,
+      discovery: connection.discovery,
+      delivery: connection.delivery,
       presentation: {
         get: () => ({
           style: appearance.style,
@@ -804,7 +810,8 @@ el("reopen-map").onclick = async () => {
   if (saved.composition) await openComposition(saved.compositionInput);
   else
     await open(
-      saved.source instanceof HttpSource
+      saved.source instanceof HttpSource &&
+        !(saved.source instanceof HashtreeSource)
         ? new HttpSource(saved.source.url, saved.source.apiUrl)
         : saved.source,
     );

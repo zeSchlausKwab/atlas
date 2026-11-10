@@ -49,8 +49,8 @@ export class MemberSource implements ByteSource {
 export class RemoteMemberSource extends HttpSource {
   private memberSource: MemberSource;
   constructor(
-    parent: AtlasReader,
-    member: ArchiveComposition["members"][number],
+    readonly parent: AtlasReader,
+    readonly member: ArchiveComposition["members"][number],
   ) {
     const remote = parent.source as HttpSource;
     super(

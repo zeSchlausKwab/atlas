@@ -174,7 +174,7 @@
               <p class="eyebrow">MANY SOURCES / ONE VIEW</p>
               <h2>Client composer.</h2>
               <form id="server-form" class="host-field">
-                <label for="server-address">Primary map server</label>
+                <label for="server-address">HTTP discovery bootstrap (optional)</label>
                 <input
                   id="server-address"
                   type="url"
@@ -205,6 +205,15 @@
                 >
               </div>
               <div id="composition-controls">
+                <div class="composition-rule">
+                  <label for="composition-transport">Map delivery</label>
+                  <select id="composition-transport">
+                    <option value="fips">FIPS · verified peer delivery</option>
+                    <option value="http">HTTP · explicit alternative</option>
+                  </select>
+                  <label><input id="composition-http-fallback" type="checkbox" />Allow HTTP fallback for map reads</label>
+                  <p class="quiet">FIPS is the default. Only selected layers are read; server tools use the selected transport too.</p>
+                </div>
                 <div class="composition-actions">
                   <button id="composition-fit">Fit selected</button
                   ><button id="composition-share">Copy view link</button>
@@ -247,7 +256,7 @@
                   <input
                     id="composition-relay"
                     type="url"
-                    placeholder="ws://localhost:3100/nostr"
+                    placeholder="wss://relay.example"
                     required
                   />
                   <label for="composition-publisher"

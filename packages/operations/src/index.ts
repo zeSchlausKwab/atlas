@@ -87,13 +87,19 @@ export class RemoteOperations {
   constructor(
     readonly url: string,
     readonly snapshot: string,
+    private adapter?: (path: string, init?: RequestInit) => Promise<Response>,
   ) {}
+  request(path: string, init?: RequestInit) {
+    return this.adapter
+      ? this.adapter(path, init)
+      : fetch(`${this.url}${path}`, init);
+  }
   async call<K extends Operation>(
     operation: K,
     input: OperationInputs[K],
     signal?: AbortSignal,
   ): Promise<{ result: OperationResults[K]; execution: Execution }> {
-    const response = await fetch(`${this.url}/${operation}`, {
+    const response = await this.request(`/${operation}`, {
       signal,
       method: "POST",
       headers: { "Content-Type": "application/json" },

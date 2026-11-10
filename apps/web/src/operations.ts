@@ -1,3 +1,6 @@
+import { RemoteMemberSource } from "../../../packages/format/src/composition";
+import { HashtreeSource } from "../../../packages/hashtree/src/source";
+import { remoteForSource, sourceDelivery } from "./transport";
 import { RoutingComposition } from "../../../packages/routing/src/composition";
 import type { RoutingBudget } from "../../../packages/routing/src/paged";
 import { requirementAvailable } from "../../../packages/operations/src/registry";
@@ -138,7 +141,26 @@ export class OperationSession {
     )
       ? "driving"
       : (this.transportProfiles[0] ?? "walking");
-    if (reader.source instanceof HttpSource)
+    if (reader.source instanceof HashtreeSource)
+      this.remote = remoteForSource(
+        reader.source,
+        reader.index.manifest.snapshot,
+        sourceDelivery(reader.source),
+      );
+    else if (
+      reader.source instanceof RemoteMemberSource &&
+      reader.source.parent.source instanceof HashtreeSource
+    )
+      this.remote = remoteForSource(
+        reader.source.parent.source,
+        reader.index.manifest.snapshot,
+        sourceDelivery(reader.source.parent.source),
+        `/members/${reader.source.member.id}`,
+      );
+    else if (
+      reader.source instanceof HttpSource &&
+      /^https?:/.test(reader.source.url)
+    )
       this.remote = new RemoteOperations(
         reader.source.apiUrl ??
           new URL(reader.source.url, location.href).href.replace(
@@ -382,7 +404,7 @@ export class OperationSession {
     if (this.mode === "server" && this.remote) {
       if (this.reader.offline)
         throw new Error("Server tools need a connection.");
-      const response = await fetch(`${this.remote.url}/capabilities`, {
+      const response = await this.remote.request("/capabilities", {
         signal,
       });
       if (!response.ok) throw new Error("Could not load server tools");
@@ -435,8 +457,8 @@ export class OperationSession {
     if (mode === "server") {
       if (!this.remote || this.reader.offline)
         throw new Error("Server tools need a connection.");
-      const response = await fetch(
-        `${this.remote.url}/${encodeURIComponent(d.id)}`,
+      const response = await this.remote.request(
+        `/${encodeURIComponent(d.id)}`,
         {
           signal: combined,
           method: "POST",

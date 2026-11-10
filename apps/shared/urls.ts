@@ -25,7 +25,15 @@ export function clientLink(
     url.password
   )
     throw new Error("Invalid client URL");
-  for (const key of ["map", "maps", "source", "api", "viewRecipe"])
+  for (const key of [
+    "map",
+    "maps",
+    "source",
+    "api",
+    "viewRecipe",
+    "publisher",
+    "relay",
+  ])
     url.searchParams.delete(key);
   url.searchParams.set("server", serverAddress(server));
   if (selection.map) url.searchParams.set("map", selection.map);

@@ -99,6 +99,7 @@ export async function buildBrowserApp(kind: "client" | "host") {
           serverUrl: serverAddress(
             process.env.ATLAS_SERVER_URL ?? "http://127.0.0.1:3100/",
           ),
+          transport: process.env.ATLAS_CLIENT_TRANSPORT ?? "fips",
         },
         null,
         2,

@@ -1,4 +1,11 @@
 import {
+  mapSource,
+  deliveryLabel,
+  FIPS_DEFAULT,
+  type DeliveryChoice,
+} from "./transport";
+import type { DiscoveryConnection } from "./connection";
+import {
   parsePresentation,
   type Presentation,
 } from "../../../packages/views/src/index";
@@ -96,7 +103,9 @@ interface Recipe {
 export async function createComposer(
   map: CompositionMap,
   options: {
-    catalog: string;
+    catalog?: string;
+    discovery?: DiscoveryConnection;
+    delivery?: DeliveryChoice;
     presentation: {
       get: () => Presentation;
       apply: (value: Presentation) => void;
@@ -113,6 +122,17 @@ export async function createComposer(
     catalogs = new Set<string>(),
     store = options.store;
   const pinnedWarnings: string[] = [];
+  const delivery = options.delivery ?? FIPS_DEFAULT;
+  const announcements = new Map<
+    string,
+    { offer: MapOffer; event: NostrEvent }
+  >();
+  const withdrawnAt = new Map<string, number>();
+  const matchesSource = (
+    saved: { url: string; root?: string },
+    offer: MapOffer,
+  ) =>
+    saved.root ? saved.root === offer.hashtree?.root : saved.url === offer.url;
   let recipe: Recipe | undefined,
     starting = true,
     paused = false;
@@ -333,9 +353,9 @@ export async function createComposer(
       (!entry.enabled
         ? "Not subscribed"
         : entry.opening
-          ? "Opening snapshot…"
+          ? `Opening snapshot · ${entry.offer.hashtree ? deliveryLabel(entry.offer.hashtree, delivery) : "Local file"}…`
           : entry.reader
-            ? `Ready · ${size(entry.reader.bytesRead)} logical bytes · ${entry.reader.cacheHits} cache hits${entry.reader.source instanceof HashtreeSource ? ` · ${size(entry.reader.source.networkBytes)} transferred / ${entry.reader.source.requests} blob requests` : ""}`
+            ? `Ready · ${entry.offer.hashtree ? deliveryLabel(entry.offer.hashtree, delivery) : "Local file"} · ${size(entry.reader.bytesRead)} logical bytes · ${entry.reader.cacheHits} cache hits${entry.reader.source instanceof HashtreeSource ? ` · ${size(entry.reader.source.networkBytes)} transferred / ${entry.reader.source.requests} blob requests` : ""}`
             : "Waiting…");
   }
   function sync() {
@@ -388,12 +408,7 @@ export async function createComposer(
     entry.error = undefined;
     const reader = new AtlasReader(
       entry.local ??
-        new HashtreeSource(
-          entry.offer.url,
-          entry.offer.hashtree!,
-          entry.offer.api,
-          { store, offline: options.offline },
-        ),
+        mapSource(entry.offer, delivery, { store, offline: options.offline }),
       options.telemetry,
       {
         purposes: entry.offer.manifest.composition
@@ -422,7 +437,9 @@ export async function createComposer(
         entry.members = await openMembers(reader);
         if (entry.members.length) {
           const m = displayManifest(entry);
-          const saved = recipe?.sources.find((s) => s.url === entry.offer.url);
+          const saved = recipe?.sources.find((s) =>
+            matchesSource(s, entry.offer),
+          );
           entry.layers =
             saved?.layers?.filter((l) => m.tileLayers?.includes(l)) ??
             m.tileLayers ??
@@ -521,7 +538,7 @@ export async function createComposer(
         heading,
         text(
           "p",
-          `${new URL(entry.offer.url).host} · z${m.minZoom}–${m.maxZoom} · ${size(entry.offer.bytes)} file`,
+          `${entry.offer.url.startsWith("htree:") ? "Content root " + entry.offer.hashtree!.root.slice(0, 12) + "…" : new URL(entry.offer.url).host} · z${m.minZoom}–${m.maxZoom} · ${size(entry.offer.bytes)} file`,
           "quiet",
         ),
         entry.status,
@@ -636,8 +653,12 @@ export async function createComposer(
               "Open this map only ↗",
               sourceLink(entry.offer.url, entry.offer.api, entry.offer.id),
             ],
-            ["Atlas file ↗", entry.offer.url],
-            ["Capabilities ↗", `${entry.offer.api}/capabilities`],
+            ...(/^https?:/.test(entry.offer.url)
+              ? [["Atlas file ↗", entry.offer.url]]
+              : []),
+            ...(entry.offer.api && delivery.transport === "http"
+              ? [["Capabilities ↗", `${entry.offer.api}/capabilities`]]
+              : []),
           ]) {
         const a = document.createElement("a");
         a.textContent = label!;
@@ -675,7 +696,7 @@ export async function createComposer(
   }
   function addOffer(offer: MapOffer, initial = false) {
     if (!offer.hashtree) return;
-    const pinned = recipe?.sources.find((s) => s.url === offer.url);
+    const pinned = recipe?.sources.find((s) => matchesSource(s, offer));
     if (pinned?.root && pinned.root !== offer.hashtree.root) {
       const warning = `Pinned revision of ${offer.manifest.name} is unavailable. Start a new composition to use its replacement.`;
       pinnedWarnings.push(warning);
@@ -696,8 +717,18 @@ export async function createComposer(
           ...offer.hashtree!.providers,
         ]),
       ].slice(0, 8);
-      if (mirror.reader?.source instanceof HashtreeSource)
+      mirror.offer.hashtree!.fips = [
+        ...new Map(
+          [
+            ...(mirror.offer.hashtree!.fips ?? []),
+            ...(offer.hashtree!.fips ?? []),
+          ].map((p) => [`${p.peerId}:${p.servicePort ?? 39018}`, p]),
+        ).values(),
+      ].slice(0, 8);
+      if (mirror.reader?.source instanceof HashtreeSource) {
         mirror.reader.source.addProviders(offer.hashtree!.providers);
+        mirror.reader.source.tree.fips = mirror.offer.hashtree!.fips;
+      }
       return;
     }
     const existing = entries.find((e) => e.offer.url === offer.url);
@@ -713,7 +744,7 @@ export async function createComposer(
         );
       return;
     }
-    const saved = recipe?.sources.find((s) => s.url === offer.url);
+    const saved = recipe?.sources.find((s) => matchesSource(s, offer));
     const requested = new URLSearchParams(location.search)
       .get("maps")
       ?.split(",");
@@ -721,7 +752,10 @@ export async function createComposer(
       saved?.enabled ??
       (!recipe &&
         initial &&
-        (requested ? requested.includes(offer.id) : offer.id !== "demo") &&
+        (requested
+          ? requested.includes(offer.id) ||
+            requested.includes(offer.hashtree.root)
+          : offer.id !== "demo") &&
         entries.filter((e) => e.enabled).length < 8);
     entries.push({
       offer,
@@ -764,12 +798,55 @@ export async function createComposer(
     }
     if (watches.length >= 8)
       throw new Error("At most eight discovery subscriptions");
+    let markReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
     const close = await watchMaps(
       relay,
       [author],
-      (offer) => {
+      (offer, event) => {
         if (paused) return;
+        const identity = `${event.pubkey}:${offer.id}`;
+        if ((withdrawnAt.get(identity) ?? -1) >= event.created_at) return;
+        const previous = announcements.get(identity)?.event;
+        if (
+          previous &&
+          (previous.created_at > event.created_at ||
+            (previous.created_at === event.created_at &&
+              previous.id <= event.id))
+        )
+          return;
+        announcements.set(identity, { offer, event });
         addOffer(offer, true);
+        const refreshed = entries.find(
+          (e) => e.offer.hashtree?.root === offer.hashtree?.root,
+        );
+        if (refreshed) {
+          const publications = [...announcements.values()].filter(
+            (a) => a.offer.hashtree?.root === offer.hashtree?.root,
+          );
+          refreshed.offer.hashtree!.providers = [
+            ...new Set(
+              publications.flatMap((a) => a.offer.hashtree!.providers),
+            ),
+          ].slice(0, 8);
+          refreshed.offer.hashtree!.fips = [
+            ...new Map(
+              publications
+                .flatMap((a) => a.offer.hashtree!.fips ?? [])
+                .map((p) => [
+                  `${p.peerId}:${p.servicePort ?? 39018}:${p.rpcPort ?? "none"}`,
+                  p,
+                ]),
+            ).values(),
+          ].slice(0, 8);
+          if (refreshed.reader?.source instanceof HashtreeSource)
+            Object.assign(refreshed.reader.source.tree, {
+              providers: refreshed.offer.hashtree!.providers,
+              fips: refreshed.offer.hashtree!.fips,
+            });
+        }
         buildCards();
         if (!starting)
           void Promise.all(
@@ -780,6 +857,27 @@ export async function createComposer(
       message,
       (view) => {
         if (paused || published.has(view.event.id)) return;
+        const revisions = [...published.values()].filter(
+          (p) =>
+            p.event.pubkey === view.event.pubkey &&
+            p.recipe.id === view.recipe.id,
+        );
+        if (
+          revisions.some(
+            (p) =>
+              p.event.created_at > view.event.created_at ||
+              (p.event.created_at === view.event.created_at &&
+                p.event.id < view.event.id),
+          )
+        )
+          return;
+        for (const old of revisions) {
+          published.delete(old.event.id);
+          if (picker.value !== old.event.id)
+            [...picker.options]
+              .find((option) => option.value === old.event.id)
+              ?.remove();
+        }
         published.set(view.event.id, view);
         picker.add(
           new Option(
@@ -787,10 +885,75 @@ export async function createComposer(
             view.event.id,
           ),
         );
-        // An announcement offers a choice; it never replaces the active pinned view.
+        // Live updates offer a choice; an already active pinned view is never replaced.
+      },
+      {
+        ready: markReady,
+        withdrawn: (id, publisher, deletion) => {
+          const identity = `${publisher}:${id}`;
+          const old = announcements.get(identity);
+          if ((old?.event.created_at ?? -1) > deletion.created_at) return;
+          withdrawnAt.set(
+            identity,
+            Math.max(withdrawnAt.get(identity) ?? -1, deletion.created_at),
+          );
+          announcements.delete(identity);
+          if (!old) return;
+          const remaining = [...announcements.values()].filter(
+            (a) => a.offer.hashtree?.root === old.offer.hashtree?.root,
+          );
+          const entry = entries.find(
+            (e) => e.offer.hashtree?.root === old.offer.hashtree?.root,
+          );
+          if (!entry) return;
+          if (!remaining.length) {
+            void enable(entry, false).then(() => {
+              entry.error =
+                "Publisher withdrew this map. Choose another published revision.";
+              buildCards();
+              sync();
+            });
+          } else {
+            entry.offer.hashtree!.providers = [
+              ...new Set(remaining.flatMap((a) => a.offer.hashtree!.providers)),
+            ];
+            entry.offer.hashtree!.fips = [
+              ...new Map(
+                remaining
+                  .flatMap((a) => a.offer.hashtree!.fips ?? [])
+                  .map((p) => [`${p.peerId}:${p.servicePort ?? 39018}`, p]),
+              ).values(),
+            ];
+            if (entry.reader?.source instanceof HashtreeSource)
+              Object.assign(entry.reader.source.tree, {
+                providers: entry.offer.hashtree!.providers,
+                fips: entry.offer.hashtree!.fips,
+              });
+          }
+        },
       },
     );
     watches.push({ relay, author, close });
+    // EOSE establishes an initial catalog, not global absence. The subscription stays live.
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        ready,
+        new Promise<void>((_, reject) => {
+          deadline = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "Discovery is taking longer than expected; the relay remains connected for late offers.",
+                ),
+              ),
+            15_000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+    }
   }
   async function discover(url: string, initial = false) {
     url = new URL("/discovery", httpUrl(url, location.href)).href;
@@ -812,6 +975,7 @@ export async function createComposer(
       const parsed = parseAnnouncement(event);
       if (parsed.event.pubkey !== info.pubkey)
         throw new Error("Publisher identity mismatch");
+      announcements.set(`${parsed.event.pubkey}:${parsed.offer.id}`, parsed);
       addOffer(parsed.offer, initial);
     }
     el<HTMLInputElement>("relay").value = info.relay;
@@ -846,7 +1010,7 @@ export async function createComposer(
   const failures: string[] = [];
   const picker = document.getElementById("publisher-view") as HTMLSelectElement;
   picker.replaceChildren(new Option("Your own composition", ""));
-  if (!options.local) {
+  if (!options.local && options.catalog) {
     try {
       const base = new URL(options.catalog);
       const response = await fetch(new URL("/views", base), {
@@ -950,7 +1114,12 @@ export async function createComposer(
   }
 
   for (const url of new Set(
-    options.local ? [] : [options.catalog, ...(recipe?.catalogs ?? [])],
+    options.local
+      ? []
+      : [
+          ...(options.catalog ? [options.catalog] : []),
+          ...(recipe?.catalogs ?? []),
+        ],
   )) {
     try {
       await discover(url, true);
@@ -958,7 +1127,19 @@ export async function createComposer(
       failures.push(String(e));
     }
   }
-  for (const d of (recipe?.discovery ?? []).slice(0, 8)) {
+  for (const d of [
+    ...(options.discovery?.relays.map((relay) => ({
+      relay,
+      author: options.discovery!.publisher,
+    })) ?? []),
+    ...(recipe?.discovery ?? []),
+  ]
+    .filter(
+      (d, i, all) =>
+        all.findIndex((x) => x.relay === d.relay && x.author === d.author) ===
+        i,
+    )
+    .slice(0, 8)) {
     try {
       await listen(d.relay, d.author);
     } catch (e) {
@@ -966,13 +1147,61 @@ export async function createComposer(
     }
   }
   options.signal.throwIfAborted();
+  if (
+    !recipe &&
+    options.discovery &&
+    (new URLSearchParams(location.search).has("viewRecipe") ||
+      !new URLSearchParams(location.search).has("maps"))
+  ) {
+    const requested = new URLSearchParams(location.search).get("viewRecipe");
+    const defaults = [...published.values()]
+      .filter(
+        (p) =>
+          p.event.pubkey === options.discovery!.publisher &&
+          (requested
+            ? p.event.id === requested
+            : p.event.tags.some((t) => t[0] === "default" && t[1] === "true")),
+      )
+      .sort(
+        (a, b) =>
+          b.event.created_at - a.event.created_at ||
+          a.event.id.localeCompare(b.event.id),
+      );
+    const selected = defaults[0];
+    if (requested && !selected)
+      failures.push(
+        "The pinned view revision has not been announced by this relay.",
+      );
+    if (
+      selected &&
+      selected.recipe.sources.every(
+        (p) => !p.enabled || entries.some((e) => matchesSource(p, e.offer)),
+      )
+    ) {
+      publisher = selected;
+      recipe = { ...selected.recipe, catalogs: [], publisher: selected.event };
+      options.presentation.apply(selected.recipe.presentation);
+      picker.value = selected.event.id;
+      for (const e of entries) {
+        const state = selected.recipe.sources.find((p) =>
+          matchesSource(p, e.offer),
+        );
+        e.enabled = state?.enabled ?? false;
+        if (state) {
+          e.layers = [...state.layers];
+          e.labels = state.labels;
+          e.rasterLayers = structuredClone(state.rasterLayers ?? {});
+        }
+      }
+    }
+  }
   if (recipe)
     entries.sort((a, b) => {
-      const pos = (url: string) => {
-        const n = recipe!.sources.findIndex((s) => s.url === url);
+      const pos = (offer: MapOffer) => {
+        const n = recipe!.sources.findIndex((s) => matchesSource(s, offer));
         return n < 0 ? 1e6 : n;
       };
-      return pos(a.offer.url) - pos(b.offer.url);
+      return pos(a.offer) - pos(b.offer);
     });
   else {
     if (
@@ -985,13 +1214,7 @@ export async function createComposer(
   }
   if (recipe)
     for (const source of recipe.sources.filter((s) => s.enabled)) {
-      if (
-        !entries.some(
-          (e) =>
-            e.offer.url === source.url &&
-            (!source.root || e.offer.hashtree?.root === source.root),
-        )
-      )
+      if (!entries.some((e) => matchesSource(source, e.offer)))
         failures.push(
           `Pinned source unavailable: ${source.url}. It has not been replaced.`,
         );
@@ -1035,6 +1258,10 @@ export async function createComposer(
       ? [...failures, ...pinnedWarnings].join(" · ")
       : `${entries.length} maps discovered. Choose sources, then use the normal Route and Explore tabs.`,
   );
+  if (options.discovery) {
+    el<HTMLInputElement>("relay").value = options.discovery.relays[0]!;
+    el<HTMLInputElement>("publisher").value = options.discovery.publisher;
+  }
   el<HTMLFormElement>("nostr-form").onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -1082,10 +1309,7 @@ export async function createComposer(
     if (!selected) return;
     const missing = selected.recipe.sources.filter(
       (s) =>
-        s.enabled &&
-        !entries.some(
-          (e) => e.offer.hashtree?.root === s.root && e.offer.url === s.url,
-        ),
+        s.enabled && !entries.some((e) => e.offer.hashtree?.root === s.root),
     );
     if (missing.length) {
       message(

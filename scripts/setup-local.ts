@@ -75,7 +75,7 @@ try {
     console.log("Reusing data/local-demo.atlas. No source download needed.");
   await run([process.execPath, "run", "build"]);
   console.log(
-    "\nReady. Run bun run demo, then open http://127.0.0.1:5173/.\nHost console: http://127.0.0.1:3100/host. No remote map server is needed.",
+    "\nReady. Run bun run demo, then open http://127.0.0.1:5173/?transport=http.\nHost console: http://127.0.0.1:3100/host. No remote map server is needed.",
   );
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
