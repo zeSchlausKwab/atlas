@@ -90,5 +90,8 @@ Commit coherent changes. Report implemented versus verified versus deployed/rele
 The isolated [Android viewer](ANDROID-NATIVE-FIPS.md) now demonstrates real Atlas
 reads over native TCP/UDP with a separate Rust provider. Its signed
 `atlas-native-v1` catalog is explicitly experimental; it does not replace this
-handoff’s production discovery, SDK or sandbox requirements. No shell source
-changes or production native ingress are implied by that demo.
+handoff’s production discovery, SDK or sandbox requirements. Its host-backed
+sidecar can also read the deployed server's published Atlas files and Hashtree
+indexes directly, using separate identities and physical TCP/UDP ports. That adapter does not add native ingress to the TypeScript process or
+implement the shared shell/discovery contract above. No shell source changes
+are implied by that demo.

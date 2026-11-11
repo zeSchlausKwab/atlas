@@ -22,7 +22,7 @@ flowchart TB
   N[Native FIPS endpoint: pinned peer]
   T[Physical TCP or UDP socket]
   S[Independent native atlas-peer: logical TCP/FIPS service 39018]
-  F[Exported real Atlas Hashtree blobs]
+  F[Existing published .atlas files + read-only SQLite Hashtree indexes]
   UI -->|selects carrier, endpoint, publisher and root| P
   W --> R --> H --> B --> P --> N --> T --> S --> F
   F -->|bounded bytes| S
@@ -35,10 +35,14 @@ UDP carrier. Choosing UDP really uses a UDP socket; it does not make Atlas reads
 unreliable datagrams. The native client checks the connected peer's reported
 physical transport and refuses an unexpected carrier.
 
-The provider is a separate Rust process reading an offline snapshot export from
-a real `.atlas` file. It does **not** proxy the deployed TypeScript WebSocket
-provider. There is no hidden WebSocket, HTTP map/catalog read, DNS dependency,
-STUN/TURN, system TUN/VPN or USB data forwarding in this tested path. The existing
+The provider is a separate Rust process on the Atlas server. With `--host-data`,
+it reads the host's existing publication records, SQLite Hashtree indexes and
+finished `.atlas` files directly. There is no map copy or re-indexing. It uses
+separate peer/publisher keys and ports, and does **not** proxy the deployed
+TypeScript WebSocket provider. The offline `offers.json`/blob export remains an
+alternative fixture mode. There is no hidden WebSocket, HTTP map/catalog read,
+DNS dependency, STUN/TURN, system TUN/VPN or USB data forwarding in this tested
+path. The existing
 production service, builds and files are not changed by the Android module.
 
 The WebView loads `https://atlas.invalid/viewer` solely through an exact local
@@ -56,7 +60,8 @@ map bytes arrive through JNI, not through a browser fetch.
    publisher, expiry, native peer binding, root/address binding, bounds, zooms and
    Hashtree descriptor. Duplicate IDs/roots are rejected.
 4. The Android host grants one offered root. The configured demo automatically
-   grants its first verified map. Page code cannot select peers or grant roots.
+   grants the last selected map, or the first verified map. Page code cannot
+   select peers or grant roots.
 5. The page may request only `{id, root, hash}` through the bridge. Initially only
    the granted root is readable. A verified MessagePack file node admits its
    children only after native hash, type, size, depth and fanout validation.
@@ -77,12 +82,33 @@ a drop-in replacement for the browser's provider descriptors. The TypeScript
 provider/catalog parsers currently require different transport metadata. No
 existing parser is weakened to accept arbitrary native endpoints.
 
-There is no relay subscription, live withdrawal, revision arbitration, signed
-default composition or provider failover in this native demo. The catalog expires
-in seven days; restarting its provider reuses the catalog while valid and stable
-keys keep the peer identity fixed. Expiry or a changed export requires new public
-configuration. The existing production browser path remains documented in
-[FIPS-HOSTING.md](FIPS-HOSTING.md).
+There is no relay subscription, client-side live withdrawal processing, revision
+arbitration, signed default composition or provider failover in this native demo.
+The host-backed provider rechecks publication presence, ready/served status,
+snapshot/root identity and the master FIPS switch on each blob read. A withdrawal
+therefore denies subsequent reads immediately; it does not erase bytes already
+delivered or instantly remove an item from the client's snapshot picker. The
+catalog expires in seven days; restarting its provider reuses the catalog while
+valid and stable keys keep the peer identity fixed. Expiry or a changed map
+library requires a provider restart and new public configuration. Newly finished
+maps are not silently added to the pinned catalog. The existing production
+browser path remains documented in [FIPS-HOSTING.md](FIPS-HOSTING.md).
+
+## Map and tile selection
+
+The native **Hosted maps** button remains visible after opening a map. Its signed
+catalog lists geometry and raster archives; satellite names include the region
+from the archive metadata. Selecting a map revokes the previous root grant, closes
+its renderer and opens the new verified root. Queued reads for an old root fail
+individually, without terminating the replacement session.
+
+**Layers** lists only the selected manifest's display layers. Geometry switches
+change both the renderer mask and tile scheduler; imagery switches change the
+raster plane's requested keys. The application requests visible tiles at the
+current zoom, not an entire archive. Hashtree leaf alignment can include nearby
+bytes in a fetched blob, so layer choice is not a per-byte confidentiality claim.
+Routing, search, extraction and labels remain off. One archive is selected at a
+time; simultaneous Android map composition remains future work.
 
 ## Host isolation and lifecycle
 
@@ -98,8 +124,10 @@ The native queue is bounded to 128 requests; blobs to 2 MiB; proof nodes to dept
 16/fanout 128 and one million remembered links. Connect/read deadlines are 25
 seconds. These are demo resource protections, not limits on the size of the
 Atlas file. Verified content is held in a small in-memory Hashtree cache; renderer
-meshes and directories have separate budgets. The exporter is intentionally a
-simple full offline export, not optimized for multi-hundred-GB provider stores.
+meshes and directories have separate budgets. The optional offline exporter
+duplicates bytes. The host-backed adapter instead reads bounded original-file ranges and inline index nodes, verifies every SHA-256
+and rejects changed files using the same inode/size/nanosecond fingerprint as the
+host. It never opens an index or map for writing.
 
 Cancel, backgrounding and network replacement revoke the active session and
 close its endpoint. Returning or restoring connectivity reconnects with the same
@@ -119,8 +147,6 @@ FIN/retransmissions, preventing the earlier eight-stream exhaustion failure.
 
 - Native transport metadata in the shared discovery/resource contract, live
   announcements/withdrawals and standard shell/SDK integration.
-- A provider adapter backed by the production host's indexes, or a documented
-  mesh ingress path, before claiming native access to that service.
 - Multi-provider composition/failover and hoster default views on Android.
 - Persistent offline cache, viewport retention across session reconnects,
   per-request native cancellation and sustained high-load measurements.

@@ -39,7 +39,9 @@ public final class AtlasActivity extends Activity {
   private EditText address, peer, catalog, publisher;
   private RadioGroup transport;
   private TextView status, diagnostics;
-  private Button connect, toggle;
+  private Button connect, toggle, mapPicker, layerPicker;
+  private JSONArray offers = new JSONArray(), profiles = new JSONArray();
+  private String pendingRoot = "";
   private WebView web;
   private volatile boolean active = false;
   private boolean busy = false,
@@ -125,7 +127,16 @@ public final class AtlasActivity extends Activity {
     diagnostics = text("0 verified bytes · 0 blobs", 12);
     diagnostics.setPadding(dp(16), 0, dp(16), dp(4));
     root.addView(diagnostics);
-    maps = column();
+    maps = new LinearLayout(this);
+    maps.setPadding(dp(12), 0, dp(12), 0);
+    mapPicker = button("Hosted maps");
+    mapPicker.setEnabled(false);
+    maps.addView(mapPicker, new LinearLayout.LayoutParams(0, -2, 1));
+    layerPicker = button("Layers");
+    layerPicker.setEnabled(false);
+    maps.addView(layerPicker);
+    mapPicker.setOnClickListener(v -> chooseMap());
+    layerPicker.setOnClickListener(v -> chooseLayers());
     root.addView(maps);
     createWeb();
     setContentView(root);
@@ -139,6 +150,22 @@ public final class AtlasActivity extends Activity {
         apply(readAsset("connection.json"));
       } catch (Exception ignored) {
       }
+    try {
+      profiles = new JSONArray(readAsset("connections.json"));
+    } catch (Exception ignored) {
+    }
+    transport.setOnCheckedChangeListener(
+        (group, id) -> {
+          if (busy) return;
+          String wanted = id == R.id.tcp ? "tcp" : "udp";
+          for (int n = 0; n < profiles.length(); n++) {
+            JSONObject profile = profiles.optJSONObject(n);
+            if (profile != null && wanted.equals(profile.optString("transport"))) {
+              apply(profile.toString());
+              break;
+            }
+          }
+        });
     applyIntent(getIntent());
     connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
     network = connectivity.getActiveNetwork();
@@ -275,7 +302,8 @@ public final class AtlasActivity extends Activity {
       bytes = 0;
       blobs = 0;
       selected = null;
-      maps.removeAllViews();
+      mapPicker.setEnabled(false);
+      layerPicker.setEnabled(false);
       carrier = transport.getCheckedRadioButtonId() == R.id.tcp ? "tcp" : "udp";
       getPreferences(0).edit().putString("connection", c).apply();
       connect.setText("Cancel / disconnect");
@@ -300,7 +328,8 @@ public final class AtlasActivity extends Activity {
     active = false;
     selected = null;
     nativeClose();
-    maps.removeAllViews();
+    mapPicker.setEnabled(false);
+    layerPicker.setEnabled(false);
     if (web != null) web.evaluateJavascript("window.closeAtlas && window.closeAtlas()", null);
     status.setText(reason);
     Log.i("AtlasNative", "closed " + reason);
@@ -319,6 +348,8 @@ public final class AtlasActivity extends Activity {
               active = false;
               busy = false;
               selected = null;
+              mapPicker.setEnabled(false);
+              layerPicker.setEnabled(false);
               setInputs(true);
               connect.setText("Reconnect & discover");
               connect.setEnabled(true);
@@ -350,7 +381,9 @@ public final class AtlasActivity extends Activity {
                 web.evaluateJavascript("window.atlasResponse(" + e.toString() + ")", null);
               Log.i(
                   "AtlasNative",
-                  "verified carrier=" + carrier + " bytes=" + bytes + " blobs=" + blobs);
+                  e.has("error")
+                      ? "resource denied: " + e.optString("error")
+                      : "verified carrier=" + carrier + " bytes=" + bytes + " blobs=" + blobs);
               return;
             }
             if (stage.equals("receiving")) {
@@ -360,31 +393,23 @@ public final class AtlasActivity extends Activity {
             status.setText(e.optString("message"));
             Log.i("AtlasNative", stage + " carrier=" + carrier);
             if (stage.equals("catalog")) {
-              JSONArray offers = e.getJSONArray("offers");
-              maps.removeAllViews();
-              if (offers.length() > 0) {
-                String defaultRoot =
-                    offers.getJSONObject(0).getJSONObject("hashtree").getString("root");
-                if (!nativeSubmit(defaultRoot, true))
-                  throw new Exception("Could not grant the configured demo map");
-              }
-              for (int n = 0; n < offers.length(); n++) {
-                JSONObject offer = offers.getJSONObject(n);
-                String rootHash = offer.getJSONObject("hashtree").getString("root");
-                Button b = button("Open " + offer.getJSONObject("manifest").getString("name"));
-                maps.addView(b);
-                b.setOnClickListener(
-                    v -> {
-                      if (!active) return;
-                      if (!nativeSubmit(rootHash, true))
-                        status.setText("Native queue unavailable · reconnect");
-                    });
-              }
+              offers = e.getJSONArray("offers");
+              mapPicker.setEnabled(offers.length() > 0);
+              String preferred = getPreferences(0).getString("map:" + publisher.getText(), "");
+              int choice = 0;
+              for (int n = 0; n < offers.length(); n++)
+                if (preferred.equals(rootOf(offers.getJSONObject(n)))) choice = n;
+              if (offers.length() > 0) selectMap(offers.getJSONObject(choice));
             }
             if (stage.equals("selected")) {
-              selected = e.getJSONObject("offer");
-              maps.removeAllViews();
+              JSONObject offer = e.getJSONObject("offer");
+              if (!rootOf(offer).equals(pendingRoot)) return;
+              selected = offer;
+              getPreferences(0).edit().putString("map:" + publisher.getText(), pendingRoot).apply();
+              mapPicker.setText(mapName(offer));
+              layerPicker.setEnabled(true);
               ((View) settings.getParent()).setVisibility(View.GONE);
+              Log.i("AtlasNative", "selected root=" + pendingRoot + " name=" + mapName(offer));
               openSelected();
             }
           } catch (Exception e) {
@@ -393,9 +418,144 @@ public final class AtlasActivity extends Activity {
         });
   }
 
+  private String rootOf(JSONObject offer) {
+    return offer.optJSONObject("hashtree").optString("root");
+  }
+
+  private String mapName(JSONObject offer) {
+    JSONObject m = offer.optJSONObject("manifest");
+    String name = m.optString("name", "Atlas map");
+    JSONArray rasters = m.optJSONArray("rasters");
+    if (rasters != null && rasters.length() > 0) {
+      JSONObject mb = rasters.optJSONObject(0).optJSONObject("mbtiles");
+      JSONObject meta = mb == null ? null : mb.optJSONObject("metadata");
+      String description = meta == null ? "" : meta.optString("description");
+      if (description.startsWith("Region ") && description.contains(" extract from "))
+        name = "Satellite · " + description.substring(7, description.indexOf(" extract from "));
+    }
+    return name;
+  }
+
+  private void selectMap(JSONObject offer) {
+    if (!active) return;
+    selected = null;
+    layerPicker.setEnabled(false);
+    web.evaluateJavascript("window.closeAtlas && window.closeAtlas()", null);
+    pendingRoot = rootOf(offer);
+    status.setText("Opening " + mapName(offer) + "…");
+    if (!nativeSubmit(pendingRoot, true)) disconnect("Native queue unavailable · reconnect");
+  }
+
+  private void chooseMap() {
+    if (!active || offers.length() == 0) return;
+    String[] names = new String[offers.length()];
+    int current = -1;
+    for (int n = 0; n < offers.length(); n++) {
+      JSONObject offer = offers.optJSONObject(n);
+      names[n] =
+          mapName(offer)
+              + String.format(
+                  java.util.Locale.ROOT,
+                  " · %.2f GiB archive",
+                  offer.optDouble("bytes") / (1024 * 1024 * 1024));
+      if (rootOf(offer).equals(pendingRoot)) current = n;
+    }
+    new AlertDialog.Builder(this)
+        .setTitle("Hosted maps · " + address.getText())
+        .setSingleChoiceItems(
+            names,
+            current,
+            (dialog, n) -> {
+              selectMap(offers.optJSONObject(n));
+              dialog.dismiss();
+            })
+        .setNegativeButton("Close", null)
+        .show();
+  }
+
+  private JSONObject displaySettings(JSONObject offer) {
+    try {
+      return new JSONObject(getPreferences(0).getString("display:" + rootOf(offer), "{}"));
+    } catch (JSONException e) {
+      return new JSONObject();
+    }
+  }
+
+  private void chooseLayers() {
+    if (selected == null) return;
+    JSONObject offer = selected,
+        m = offer.optJSONObject("manifest"),
+        values = displaySettings(offer);
+    java.util.ArrayList<String> keys = new java.util.ArrayList<>(),
+        labels = new java.util.ArrayList<>();
+    JSONArray geometry = m.optJSONArray("tileLayers"), rasters = m.optJSONArray("rasters");
+    if (geometry == null)
+      geometry =
+          new JSONArray(
+              java.util.Arrays.asList("land", "water", "buildings", "roads", "railways", "peaks"));
+    if (geometry != null)
+      for (int n = 0; n < geometry.length(); n++) {
+        String key = geometry.optString(n);
+        keys.add(key);
+        switch (key) {
+          case "land":
+            labels.add("Landscape");
+            break;
+          case "water":
+            labels.add("Water & sea");
+            break;
+          case "roads":
+            labels.add("Roads & paths");
+            break;
+          case "buildings":
+            labels.add("Buildings");
+            break;
+          case "railways":
+            labels.add("Railways");
+            break;
+          case "peaks":
+            labels.add("Mountain geometry");
+            break;
+          default:
+            labels.add(key);
+        }
+      }
+    if (rasters != null)
+      for (int n = 0; n < rasters.length(); n++) {
+        JSONObject raster = rasters.optJSONObject(n);
+        keys.add("raster:" + raster.optString("id"));
+        labels.add(raster.optString("name", "Imagery"));
+      }
+    boolean[] checked = new boolean[keys.size()];
+    for (int n = 0; n < checked.length; n++) checked[n] = values.optBoolean(keys.get(n), true);
+    new AlertDialog.Builder(this)
+        .setTitle("Display layers · " + mapName(offer))
+        .setMultiChoiceItems(
+            labels.toArray(new String[0]), checked, (d, n, value) -> checked[n] = value)
+        .setPositiveButton(
+            "Apply",
+            (d, w) -> {
+              try {
+                for (int n = 0; n < keys.size(); n++) values.put(keys.get(n), checked[n]);
+                getPreferences(0)
+                    .edit()
+                    .putString("display:" + rootOf(offer), values.toString())
+                    .apply();
+                if (selected != null && rootOf(selected).equals(rootOf(offer)))
+                  web.evaluateJavascript("window.setAtlasDisplay(" + values + ")", null);
+                Log.i("AtlasNative", "display root=" + rootOf(offer) + " layers=" + values);
+              } catch (JSONException e) {
+                status.setText("Could not update layers");
+              }
+            })
+        .setNegativeButton("Cancel", null)
+        .show();
+  }
+
   private void openSelected() {
     if (pageReady && active && selected != null)
-      web.evaluateJavascript("window.openAtlas(" + selected.toString() + ")", null);
+      web.evaluateJavascript(
+          "window.openAtlas(" + selected.toString() + "," + displaySettings(selected) + ")", null);
   }
 
   @android.annotation.SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
@@ -508,6 +668,8 @@ public final class AtlasActivity extends Activity {
             if (!active) return;
             try {
               JSONObject e = new JSONObject(value);
+              if (e.has("root")
+                  && (selected == null || !e.optString("root").equals(rootOf(selected)))) return;
               if (e.has("error")) status.setText(e.getString("error"));
               else
                 status.setText(

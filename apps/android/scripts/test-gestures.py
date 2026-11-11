@@ -35,7 +35,7 @@ for line in logs.splitlines():
     if 'AtlasRenderer: ' in line:
         try: rows.append(json.loads(line.split('AtlasRenderer: ', 1)[1]))
         except ValueError: pass
-ready = [r for r in rows if r.get('triangles', 0)>0 and r.get('tiles')==r.get('wanted') and r.get('loading')==0 and r.get('center')]
+ready = [r for r in rows if r.get('tiles', 0)>0 and r.get('tiles')==r.get('wanted') and r.get('loading')==0 and r.get('center')]
 assert len(ready)>1, logs
 assert ready[-1]['zoom']>ready[0]['zoom']+.3, ready
 assert ready[-1]['center']!=ready[0]['center'], ready

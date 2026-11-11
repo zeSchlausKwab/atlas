@@ -3,6 +3,23 @@ import { HashtreeSource } from "../../../packages/hashtree/src/source";
 import { AtlasMap } from "../../../packages/renderer/src/map";
 import init from "../../../packages/renderer/pkg/atlas_renderer";
 import wasm from "atlas-renderer-wasm";
+import { MAP_LAYERS } from "../../../packages/format/src/index";
+let activeOffer: any;
+function displayOptions(offer: any, settings: any = {}) {
+  // Older Atlas manifests omit tileLayers; retain their existing geometry behavior.
+  const available = offer.manifest.tileLayers ?? MAP_LAYERS;
+  return {
+    layers: MAP_LAYERS.filter(
+      (l) => available.includes(l) && settings[l] !== false,
+    ),
+    rasterLayers: Object.fromEntries(
+      (offer.manifest.rasters ?? []).map((r: any) => [
+        r.id,
+        { enabled: settings[`raster:${r.id}`] !== false, opacity: 1 },
+      ]),
+    ),
+  };
+}
 
 declare const AtlasResources: {
   blob(json: string): boolean;
@@ -73,9 +90,24 @@ function blob(
     }
   });
 }
-host.openAtlas = async (offer: any) => {
+host.setAtlasDisplay = (settings: any) => {
+  if (!map || !activeOffer) return;
+  const options = displayOptions(activeOffer, settings);
+  map.setLayers(options.layers);
+  map.setRasterLayers(options.rasterLayers);
+};
+host.openAtlas = async (offer: any, settings: any = {}) => {
   close();
   const run = generation;
+  activeOffer = offer;
+  document.querySelector("footer")!.textContent = [
+    ...new Set([
+      "© OpenStreetMap contributors · ODbL",
+      ...(offer.manifest.rasters ?? [])
+        .map((r: any) => r.source?.attribution)
+        .filter(Boolean),
+    ]),
+  ].join(" · ");
   status.textContent = "Opening verified Atlas directory…";
   try {
     await init({
@@ -115,6 +147,7 @@ host.openAtlas = async (offer: any) => {
         status.textContent = `${offer.manifest.name} · z${s.zoom.toFixed(1)} · ${s.tiles}/${s.wanted} tiles${s.loading ? " · loading…" : " · ready"}`;
         AtlasResources.report(
           JSON.stringify({
+            root: offer.hashtree.root,
             zoom: s.zoom,
             tiles: s.tiles,
             wanted: s.wanted,
@@ -128,6 +161,7 @@ host.openAtlas = async (offer: any) => {
         if (run === generation) error(message);
       },
       {
+        ...displayOptions(offer, settings),
         placeNames: false,
         streetNames: false,
         pois: false,
