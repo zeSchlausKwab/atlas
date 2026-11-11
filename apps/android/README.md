@@ -19,6 +19,13 @@ This is an experimental standalone viewer, not the production napplet shell.
 Read [architecture and security boundaries](../../docs/ANDROID-NATIVE-FIPS.md)
 and [verified behavior and limitations](VERIFICATION.md).
 
+## Public server path
+
+[Public native hosting](../../docs/NATIVE-FIPS-HOSTING.md) documents the deployed
+outbound UDP entry, reproducible configuration and probes. It needs no Atlas DNS
+or inbound forwarding. The existing APK retains its LAN profile; migrating
+clients to the public entry is a separate step.
+
 ## Use maps already published on an Atlas server
 
 The **Hosted maps** button selects an archive; **Layers** chooses its available

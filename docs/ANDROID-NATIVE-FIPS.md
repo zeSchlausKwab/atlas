@@ -45,11 +45,12 @@ provider listens on 127.0.0.1:42141 and joins the gateway outbound. The phone
 cannot directly dial that listener. The gateway only forwards FIPS packets: it
 has no Atlas store, catalog signing key, HTTP proxy or blob service.
 
-Both nodes currently run on the same server. This proves transit through a
-separate authenticated node, not independent Internet availability. A reachable
-entry address is still required underneath; bundled public profiles make that
-automatic. The current entry IP is LAN-only. No Internet bootstrap, NAT traversal,
-relay subscription or cellular reachability is implied by npub addressing.
+The original LAN entry and provider run on the same server. The provider now
+also joins a public native UDP entry outbound; see [public native hosting](NATIVE-FIPS-HOSTING.md)
+for the additional route and exact verification. The installed phone's bundled
+profiles still select the LAN entry. Client migration and separate cellular
+acceptance are deferred; changing server reachability does not update saved
+client profiles. A reachable bootstrap is always required underneath npub addressing.
 
 The provider is a separate Rust process using its own persistent native identity
 (the existing TypeScript provider has a different identity). With `--host-data`,

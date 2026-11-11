@@ -121,3 +121,14 @@ The shared contract must still support distinct publisher and provider roles
 with validated authorization between them. Do not transfer the demo's implicit
 same-key assumption into general Nostr discovery. See the native architecture
 for framing, expiry, trust boundaries and retained limitations.
+
+### Public native entry addendum — 11 November 2026
+
+The native provider now also joins a pinned public entry using physical UDP.
+Signed catalog and real Atlas reads have been verified through that public route,
+without HTTP/WebSocket fallback or a map-host DNS entry. See
+[NATIVE-FIPS-HOSTING.md](NATIVE-FIPS-HOSTING.md) for public profiles, exact hops and
+limits. The installed phone profile and shared Soyli/shell integration are not
+updated by this server rollout. A distinct off-LAN/cellular acceptance test is
+still pending. The public path currently depends on one verified external UDP
+entry; do not advertise native TCP WAN access or high availability.

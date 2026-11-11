@@ -342,3 +342,6 @@ pub mod policy;
 
 #[cfg(not(target_os = "android"))]
 pub mod host_store;
+
+#[cfg(not(target_os = "android"))]
+pub mod uplinks;

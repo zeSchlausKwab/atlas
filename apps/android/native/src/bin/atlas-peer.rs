@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
             serve(transport, bind, address, corrupt).await?;
         }
         _ => anyhow::bail!(
-            "Usage: atlas-peer serve tcp|udp bind-IP:port visible-IP:port exported-directory [--corrupt] [--host-data /path/to/atlas/data]"
+            "Usage: atlas-peer serve tcp|udp bind-IP:port visible-IP:port exported-directory [--corrupt] [--host-data /path/to/atlas/data] [--bootstrap public-seed.json] [--uplinks native-entries.json]"
         ),
     }
     Ok(())
@@ -91,6 +91,21 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
             &seed.address,
         ));
     }
+    let uplinks = std::env::args()
+        .position(|a| a == "--uplinks")
+        .map(|n| -> Result<soy_fips_demo::uplinks::Uplinks> {
+            ensure!(
+                bootstrap.is_some(),
+                "--uplinks requires mesh mode (--bootstrap)"
+            );
+            let path = std::env::args()
+                .nth(n + 1)
+                .context("--uplinks needs a public JSON file")?;
+            Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let c = uplinks.apply(c)?;
     let endpoint = Arc::new(
         FipsEndpoint::builder()
             .config(c)
@@ -182,8 +197,15 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
     .await?;
     let start = Instant::now();
     let mut active: HashMap<ConnectionId, Transfer> = HashMap::new();
+    let mut status_at = Instant::now();
     let operation = async {
         loop {
+            if status_at.elapsed() >= Duration::from_secs(5) {
+                uplinks
+                    .write_status(&endpoint, std::path::Path::new(&directory))
+                    .await?;
+                status_at = Instant::now();
+            }
             pump(&mut tcp, start).await?;
             while let Some(id) = tcp.accept() {
                 if active.len() >= 8 {
@@ -242,7 +264,7 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
                         state.response=vec![0x48,1,if found{1}else{0}];
                         state.response.extend_from_slice(&(data.len() as u32).to_be_bytes());
                         state.response.extend_from_slice(&data);
-                        eprintln!("{}",json!({"stage":"served","carrier":transport,"hash":requested,"bytes":data.len(),"found":found}));
+                        eprintln!("{}",json!({"stage":"served","listenerTransport":transport,"hash":requested,"bytes":data.len(),"found":found}));
                     }
                 }
                 if !state.response.is_empty() && !state.closing {

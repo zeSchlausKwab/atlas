@@ -206,3 +206,19 @@ map exports or APKs are committed. Use [README.md](README.md) to reproduce.
 The original demo checkout and installed app remain intact. No private source,
 keys, device artifacts or APKs are committed or published. Production Atlas was
 not restarted, and its staged update was not activated during these tests.
+
+## Server-only public entry extension — 11 November 2026
+
+The native provider now keeps its LAN bootstrap and additionally joins an
+identity-pinned public UDP entry. Public probes with independent consumer
+identities selected Lower Rhine East and West from six signed offers, validated
+root grants/descendants and `ATLAS001` headers, and each completed 36 verified
+blob reads (131,095 and 127,993 payload bytes respectively). Both probes used
+only the public entry endpoint and map host npub. Retained LAN TCP reads passed.
+Fourteen native unit tests and the extended isolated dual-entry mesh suite passed.
+
+This is public-entry route verification, not physical cellular acceptance. No
+phone build/profile was changed in this server-only rollout. The installed APK
+still selects its LAN entry. The native public profile uses UDP only and one
+external entry; TCP WAN availability and automatic client failover are not
+claimed. See [public hosting](../../docs/NATIVE-FIPS-HOSTING.md) for reproduction.

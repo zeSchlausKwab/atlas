@@ -70,6 +70,22 @@ with tempfile.TemporaryDirectory(prefix='atlas-mesh-') as temp:
                     check(c,'SHA-256 mismatch' if corrupt else None)
                     print(f'PASS {carrier} entry → TCP provider: '+('corrupt bytes rejected' if corrupt else 'npub discovery, signature, root grant, descendants, repeat reads'),flush=True)
             finally: stop(server,log)
+        # Provider keeps LAN ingress while dialing a distinct public-style entry
+        # over UDP. Client knows only that entry + provider npub, never LAN address.
+        (d/'public-entry').mkdir()
+        remote, ingress, rlog = start(['gateway',endpoint(),endpoint(True),str(d/'public-entry')])
+        try:
+            uplinks=d/'uplinks.json'
+            uplinks.write_text(json.dumps({'peers':[{'peer':ingress['peer'],'transport':'udp','address':ingress['udp']}]}))
+            server,c,log = start(['serve','tcp',bind,bind,str(d),'--bootstrap',str(seedfile),'--uplinks',str(uplinks)])
+            try:
+                c.update(transport='udp',bootstrap={'peer':ingress['peer'],'address':ingress['udp']})
+                check(c)
+                c.update(transport='tcp',bootstrap={'peer':seed['peer'],'address':seed['tcp']})
+                check(c)
+                print('PASS outbound UDP public-style entry and retained TCP LAN entry',flush=True)
+            finally: stop(server,log)
+        finally: stop(remote,rlog)
         # A distinct valid identity is unreachable after its independent node stops.
         (d/'other').mkdir()
         other, identity, otherlog=start(['gateway',endpoint(),endpoint(True),str(d/'other')])
