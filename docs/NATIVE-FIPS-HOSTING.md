@@ -153,8 +153,20 @@ must actually have a reachable public address; an egress-IP lookup alone cannot
 exclude upstream NAT. Compare the router WAN address before adding forwards.
 On 11 November the router WAN and server egress IPv4 matched. The server had
 only link-local IPv6. UPnP discovery worked and neither target port was mapped.
-The Internet test remains pending firewall access and explicit approval of the
-one-hour forwards; no direct-access performance result has been claimed.
+The user approved one-hour public forwards and applied the two native-port
+firewall rules. Both mappings were created and read back successfully on
+11 November at 15:29 Vienna time, with expiry around 16:29. The router rejected
+mapping a different LAN device from the Mac (UPnP 718); requesting the same
+approved forwards from the destination Atlas server worked. Neither mapping
+existed beforehand, and no unrelated mapping was replaced.
+
+A Mac probe through the router's public address passed on both carriers: seven
+signed offers, real Lower Rhine East header, grant/descendant/hash verification,
+36 hashed reads and 136,145 verified payload bytes. TCP took 6.57 seconds and UDP
+5.87 seconds. This is a **LAN hairpin/forwarding test**, not cellular acceptance,
+a full viewport benchmark or evidence of WAN performance. The phone disconnected
+before the off-LAN test and must be reconnected to complete that check. Evidence
+and temporary endpoint profiles remain ignored under `apps/android/output/`.
 
 Forward **TCP 42131 → server TCP 42131** and **UDP 42132 → server UDP 42132**.
 The destination for this installation is 192.168.0.179. Keep admin port 3100
