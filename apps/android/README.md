@@ -191,16 +191,18 @@ python3 scripts/test-phone.py --serial emulator-5554 --allow-emulator \
   --ready-timeout 240 --check-layers --lifecycle
 python3 scripts/test-phone.py --serial emulator-5554 --allow-emulator \
   --config output/direct-public-udp.json --label direct-public-udp \
-  --ready-timeout 900
+  --ready-timeout 240 --check-layers --lifecycle
 ```
 
 On the tested Apple Silicon host, Emulator 36.1.9's automatic graphics backend
 produced a black display despite successful native reads. Cold booting this AVD
-with software OpenGL restored the display without changing the APK:
+with software OpenGL restored the display without changing the APK. The 2 GB
+AVD later showed low-memory kills during long runs; the clean follow-up uses
+4 GB RAM and waits for native completion before inspecting the UI:
 
 ```sh
 "$ANDROID_HOME/emulator/emulator" -avd Medium_Phone_API_36.1 \
-  -no-snapshot -no-boot-anim -gpu swiftshader_indirect -feature -Vulkan
+  -no-snapshot -no-boot-anim -memory 4096 -gpu swiftshader_indirect -feature -Vulkan
 ```
 
 Use a reachable profile prepared for your provider. These examples require the

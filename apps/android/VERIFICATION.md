@@ -25,23 +25,41 @@ still pending. Earlier cellular acceptance below used a different public entry.
 | TCP | **Pass**: Lower Rhine East, 18/18 tiles, 67,466 triangles, 3,548,046 verified payload bytes, 76 hashed blobs. First complete viewport in **40.88 seconds**. |
 | TCP layers | Disabling all display layers stopped tile reads even when zooming; re-enabling loaded tiles. |
 | TCP lifecycle | Background closed the native session; foreground reconnected. Explicit cancellation and reconnect passed. Final screenshot visually inspected. |
-| UDP | **Fail**: exceeded the 240-second acceptance deadline. Continued observation reached only **15/18 tiles**, 62,556 triangles, 3,476,485 verified payload bytes and 74 blobs after **9 minutes 11 seconds**, with no requests left loading. Screenshot inspected; missing geometry is visible. |
+| Initial UDP, 2 GB emulator | **Fail**: exceeded the 240-second acceptance deadline. Continued observation reached only **15/18 tiles**, 62,556 triangles, 3,476,485 verified payload bytes and 74 blobs after **9 minutes 11 seconds**, with no requests left loading. Screenshot inspected; missing geometry is visible. |
+| Clean UDP, 4 GB emulator | **Pass**: 18/18 tiles, 67,466 triangles, 3,548,046 verified payload bytes and 76 blobs in **43.788 seconds**. Native-log readiness polling replaced frequent UiAutomator processes; screenshot visually inspected. |
+| Clean UDP layers/lifecycle | **Pass**: disabling layers stops tile reads, re-enabling loads them; background/resume and explicit cancellation/reconnect complete automatically. Latest renderer state is checked for each reconnect. |
 | Independent Mac UDP probe | Completed signed discovery and 36 verified reads / 136,145 payload bytes in **5.69 seconds** while the emulator was slow. This smaller workload does not isolate the cause or substitute for a viewport test. |
 
-UDP logs show long gaps and timeout retries. No verification was disabled and no
-alternate transport was used. UDP layer/lifecycle acceptance did not run because
-the initial map failed. The UI also incorrectly reports `15/18 tiles · ready`
-when its queue drains after failures; the acceptance assertion requires every
-wanted tile and correctly refuses to count this as success. Follow-up work should
-trace UDP retransmission/flow control and report partial map loads accurately,
-rather than treating a longer timeout as a performance fix.
+The initial UDP logs show long gaps and timeout retries. A subsequent LAN TCP
+reload also slowed, and Android killed its UI snapshot helper (exit 137). The
+emulator had 2 GB RAM and its low-memory killer was active. A fresh 4 GB boot,
+together with native-log readiness polling instead of frequent UiAutomator
+processes, completed the full UDP viewport in 44 seconds. These two changes were
+made together: their individual effects and any remaining network contribution
+are not isolated. The earlier failure is retained as resource-stress evidence,
+not a general claim that UDP cannot load the map. These single-run timings are
+not a controlled TCP-versus-UDP benchmark.
+
+No verification was disabled and no alternate transport was used. The UI still
+incorrectly reports `15/18 tiles · ready` when its queue drains after failures;
+the acceptance assertion requires every wanted tile and correctly refuses to
+count this as success. Follow-up work should report partial map loads accurately
+and measure resource pressure alongside network retransmission/flow control.
 
 The real-map acceptance harness now allows an explicit `--allow-emulator` opt-in,
 keeps emulator evidence separate from phone evidence, records the network caveat,
-and retries transient UI snapshot failures during progress updates. Reproduction
+retries transient UI snapshot failures, waits for native completion before UI
+inspection, and rejects stale successful frames from an earlier connection. Reproduction
 commands are in [README.md](README.md). Evidence is ignored in `output/emulator/`:
 `direct-public-tcp*`, `direct-public-udp-live.log`,
-`direct-public-udp-observed.log`, `direct-public-udp-partial.*` and environment JSON.
+`direct-public-udp-observed.log`, `direct-public-udp-partial.*`,
+`direct-public-udp-4gb*` (including the layer/lifecycle follow-up),
+`memory-pressure.log` and environment JSON.
+The emulator was finally left on the stable LAN TCP profile; the clean 4 GB
+reload passed with 18/18 tiles (`lan-tcp-4gb-final*`). This keeps the demo usable
+after the temporary public router leases expire. No production service restart
+was needed for these tests.
+
 The initial UDP log preserves startup; the observed log retains later progress
 because Android's logcat ring can evict early events during long runs.
 
@@ -281,8 +299,8 @@ map exports or APKs are committed. Use [README.md](README.md) to reproduce.
 - Native root grants authorize verified descendants. Layer selection governs the
   trusted renderer's reads, not a per-family security ACL.
 - Other Android versions/models have not been physically retested. The new
-  emulator run above covers direct TCP rendering/lifecycle and records the UDP
-  completion failure; original synthetic transport evidence remains historical.
+  emulator run above covers direct TCP rendering/lifecycle, a resource-constrained
+  UDP failure and successful clean UDP rendering/lifecycle; original synthetic transport evidence remains historical.
 - The debug app accepts public config through an Android intent for acceptance;
   it is not a general production shell permission model. Lint warnings concern
   localization, ABI/data-extraction configuration, layouts and tool updates;

@@ -34,17 +34,32 @@ def tap(fragment):
    x,y,x2,y2=map(int,re.findall(r'\d+',n.get('bounds')));adb('shell','input','tap',str((x+x2)//2),str((y+y2)//2));return
  raise AssertionError('Control absent: '+fragment)
 def logs():return live_path.read_text(errors='replace')
-def ready():
- tree=wait_ui(lambda t:'Map · z' in t and 'tiles · ready' in t,timeout=a.ready_timeout)
- events=[]
- for line in logs().splitlines():
-  marker='AtlasRenderer: '
-  if marker in line:
-   try:events.append(json.loads(line.split(marker,1)[1]))
+def renderer_state():
+ data=logs();selected_at=data.rfind('selected root=')
+ # A new connection must emit its own selected root and renderer events.
+ if data.rfind('connecting carrier=')>selected_at:return {}
+ current={}
+ for line in data[selected_at if selected_at>=0 else 0:].splitlines():
+  if 'AtlasRenderer: ' in line:
+   try:current=json.loads(line.split('AtlasRenderer: ',1)[1])
    except ValueError:pass
- selected=re.findall(r'selected root=([a-f0-9]{64})',logs())
- good=[e for e in events if e.get('tiles',0)>0 and e.get('tiles')==e.get('wanted') and e.get('loading')==0 and (not selected or e.get('root')==selected[-1])]
- assert good,logs();return tree,good[-1]
+ selected=re.findall(r'selected root=([a-f0-9]{64})',data)
+ if selected and current.get('root')!=selected[-1]:return {}
+ return current
+def ready():
+ # Starting a fresh UiAutomator process for every progress update perturbs a
+ # memory-constrained emulator. Observe native progress, then verify the UI.
+ end=time.monotonic()+a.ready_timeout
+ while time.monotonic()<end:
+  current=renderer_state()
+  if current.get('tiles',0)>0 and current.get('tiles')==current.get('wanted') and current.get('loading')==0:
+   tree=screen();shown=texts(tree)
+   if 'Map · z' in shown and f"{current['tiles']}/{current['wanted']} tiles · ready" in shown:
+    latest=renderer_state()
+    if latest.get('tiles')==current['tiles'] and latest.get('wanted')==current['wanted'] and latest.get('loading')==0:return tree,latest
+  time.sleep(.2)
+ (OUT/(a.label+'-failure.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))
+ raise AssertionError('Viewport did not complete: '+json.dumps(renderer_state()))
 config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Real-map acceptance must use a non-loopback endpoint'
 evidence={'deviceKind':'emulator' if is_emulator else 'physical','serial':a.serial,'transport':config['transport'],'entry':config.get('bootstrap',config)['address'],'offLanVerified':False,'networkNote':'Emulator uses the host network; simulated cellular is not off-LAN proof' if is_emulator else 'This harness does not verify the network route; use test-cellular.py for off-LAN acceptance'}
 (OUT/(a.label+'-environment.json')).write_text(json.dumps(evidence,indent=2)+'\n')

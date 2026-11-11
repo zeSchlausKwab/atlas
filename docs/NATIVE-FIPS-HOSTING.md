@@ -174,8 +174,13 @@ The subsequent Android emulator run loaded the real TCP viewport completely in
 40.88 seconds (18/18 tiles, 3,548,046 verified bytes); layer controls,
 background/resume and explicit disconnect/reconnect passed. UDP exceeded the
 four-minute acceptance deadline and settled at 15/18 tiles after roughly nine
-minutes despite timeout retries. It is **not a successful full-map UDP test**.
-A concurrent Mac UDP probe passed in 5.69 seconds, but read far less data.
+minutes despite timeout retries in the initial 2 GB emulator run. A later LAN TCP
+reload also slowed and Android's low-memory killer was active. With a fresh 4 GB
+emulator and lighter native-log test polling, **UDP loaded all 18 tiles in 43.788
+seconds** with the same verified byte count as TCP. A clean UDP follow-up also
+passed layer controls, background/resume and cancellation/reconnect. These changes were combined,
+so the earlier slowdown cannot be assigned to UDP alone. A concurrent Mac UDP
+probe passed in 5.69 seconds, but read far less data.
 See [emulator evidence and remaining issues](../apps/android/VERIFICATION.md).
 Neither result establishes off-LAN reachability for these new direct forwards.
 
