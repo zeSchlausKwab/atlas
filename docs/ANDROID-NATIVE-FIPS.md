@@ -13,37 +13,50 @@ and resource authorization. The migration comes from napplet-space
 
 ```mermaid
 flowchart TB
-  UI[Android host: public connection settings and lifecycle]
-  W[Bundled WebView: AtlasMap + touch input + WASM]
-  R[AtlasReader: map directory and geometry ranges]
-  H[HashtreeSource: ranges to tree nodes and leaf hashes]
-  B[Narrow Java resource bridge: id, granted root, blob hash]
-  P[JNI / Rust: signature, grant, membership and SHA-256 checks]
-  N[Native FIPS endpoint: pinned peer]
-  T[Physical TCP or UDP socket]
-  S[Independent native atlas-peer: logical TCP/FIPS service 39018]
-  F[Existing published .atlas files + read-only SQLite Hashtree indexes]
-  UI -->|selects carrier, endpoint, publisher and root| P
-  W --> R --> H --> B --> P --> N --> T --> S --> F
+  UI[Android: host npub, map choice, lifecycle]
+  W[Bundled WebView: AtlasMap + touch + WASM]
+  H[AtlasReader → Hashtree ranges and hashes]
+  B[Narrow resource bridge: id, granted root, blob hash]
+  P[JNI / Rust: signatures, grants, membership, SHA-256]
+  E[Native client FIPS endpoint]
+  G[Entry peer: separate identity, TCP 42131 / UDP 42132]
+  S[Native map provider: identified by npub, loopback TCP]
+  F[Published .atlas files + read-only Hashtree indexes]
+  UI --> P
+  W --> H --> B --> P --> E
+  E -->|selected physical TCP or UDP| G
+  G -->|physical TCP, loopback on this server| S
+  S --> F
   F -->|bounded bytes| S
+  S -->|end-to-end FIPS stream addressed to client| E
   P -->|verified bytes only| B
-  B --> H
 ```
 
-The reliable logical **TCP/FIPS** stream runs over the selected physical TCP or
-UDP carrier. Choosing UDP really uses a UDP socket; it does not make Atlas reads
-unreliable datagrams. The native client checks the connected peer's reported
-physical transport and refuses an unexpected carrier.
+The client knows the **map provider's npub**, not its physical address. It first
+joins a pinned entry peer, asks FIPS for a route to the provider identity, then
+opens reliable TCP/FIPS service 39018 to that identity through the mesh. The
+entry peer and map provider are different FIPS nodes and keys. The client
+checks the entry link's actual carrier; it never substitutes another transport.
 
-The provider is a separate Rust process on the Atlas server. With `--host-data`,
-it reads the host's existing publication records, SQLite Hashtree indexes and
-finished `.atlas` files directly. There is no map copy or re-indexing. It uses
-separate peer/publisher keys and ports, and does **not** proxy the deployed
-TypeScript WebSocket provider. The offline `offers.json`/blob export remains an
-alternative fixture mode. There is no hidden WebSocket, HTTP map/catalog read,
-DNS dependency, STUN/TURN, system TUN/VPN or USB data forwarding in this tested
-path. The existing
-production service, builds and files are not changed by the Android module.
+In the deployed demo, the phone-to-entry hop is selectable physical TCP or UDP;
+the entry-to-provider hop is **TCP over server loopback**. Thus UDP here describes
+the first physical hop, not every link or an unreliable application stream. The
+provider listens on 127.0.0.1:42141 and joins the gateway outbound. The phone
+cannot directly dial that listener. The gateway only forwards FIPS packets: it
+has no Atlas store, catalog signing key, HTTP proxy or blob service.
+
+Both nodes currently run on the same server. This proves transit through a
+separate authenticated node, not independent Internet availability. A reachable
+entry address is still required underneath; bundled public profiles make that
+automatic. The current entry IP is LAN-only. No Internet bootstrap, NAT traversal,
+relay subscription or cellular reachability is implied by npub addressing.
+
+The provider is a separate Rust process using its own persistent native identity
+(the existing TypeScript provider has a different identity). With `--host-data`,
+it reads existing publication records, SQLite indexes and `.atlas` ranges
+read-only, without copying or re-indexing maps. No TypeScript/WebSocket provider,
+HTTP map/catalog read, DNS dependency, STUN/TURN, TUN/VPN or USB forwarding is in
+this path. The original direct TCP/UDP fixture mode is retained for regression.
 
 The WebView loads `https://atlas.invalid/viewer` solely through an exact local
 request interception returning an APK asset. This synthetic URL is not resolved
@@ -52,10 +65,13 @@ map bytes arrive through JNI, not through a browser fetch.
 
 ## Trust and resource contract
 
-1. Native configuration pins the numeric endpoint, carrier, FIPS peer npub,
-   publisher key and discovery catalog SHA-256. Only public values are bundled.
-2. Native FIPS authenticates the pinned peer. The catalog is downloaded through
-   the same native blob protocol and its SHA-256 is verified.
+1. Native configuration pins the map host npub, carrier and a separate entry
+   peer npub/address. Only public values are bundled. Legacy direct profiles
+   retain their explicit publisher and catalog-hash pins; mixed profiles fail.
+2. Native FIPS authenticates the entry link and routes an end-to-end stream to
+   the map host. A well-known signed-catalog request discovers the current library;
+   the trusted catalog publisher is derived from that host npub, never supplied
+   by the entry peer. No grant is created before signature validation.
 3. Native code validates each kind-30064 event's canonical ID and BIP340 signature,
    publisher, expiry, native peer binding, root/address binding, bounds, zooms and
    Hashtree descriptor. Duplicate IDs/roots are rejected.
@@ -76,7 +92,12 @@ trusted renderer's purpose policy, not a native per-family byte-access ACL. This
 standalone app is not a general napplet host and makes no new SDK permission.
 
 **Discovery is an explicit experimental native profile**, `atlas-native-v1`, with
-`native-peer` binding and a hash-pinned signed catalog. It reuses Atlas manifests,
+`native-peer` binding and a host-identity-signed catalog. The experimental
+catalog request is 36 bytes: `48 01 02 00` followed by 32 zero bytes. Ordinary
+Hashtree GET remains `48 01 01 00` plus the blob SHA-256. Both use the existing
+bounded response framing; catalog signatures authenticate discovery, and
+ordinary blob SHA-256 verification is mandatory. The page cannot issue a
+catalog request or receive unverified catalog bytes. It reuses Atlas manifests,
 Hashtree trees and the blob wire protocol; it is not a finalized NAP extension or
 a drop-in replacement for the browser's provider descriptors. The TypeScript
 provider/catalog parsers currently require different transport metadata. No
@@ -88,11 +109,13 @@ The host-backed provider rechecks publication presence, ready/served status,
 snapshot/root identity and the master FIPS switch on each blob read. A withdrawal
 therefore denies subsequent reads immediately; it does not erase bytes already
 delivered or instantly remove an item from the client's snapshot picker. The
-catalog expires in seven days; restarting its provider reuses the catalog while
-valid and stable keys keep the peer identity fixed. Expiry or a changed map
-library requires a provider restart and new public configuration. Newly finished
-maps are not silently added to the pinned catalog. The existing production
-browser path remains documented in [FIPS-HOSTING.md](FIPS-HOSTING.md).
+catalog expires in seven days. In npub mode, each new connection requests a
+fresh signed catalog of the currently published library, without updating the
+APK or changing a catalog hash. Existing sessions keep their snapshot until
+reconnect. There is no persisted anti-rollback history across app sessions;
+expiry bounds replay, and per-read server checks enforce current publication
+policy. Legacy direct fixtures continue using hash-pinned catalog snapshots.
+The production browser path remains documented in [FIPS-HOSTING.md](FIPS-HOSTING.md).
 
 ## Map and tile selection
 
@@ -137,7 +160,7 @@ map. Page-level abandoned reads are removed from its waiting set; cancellation
 of individual already-queued native blob reads is not yet implemented. Session
 cancellation closes all outstanding work.
 
-Diagnostics show actual carrier, pinned identity/settings, signature validation
+Diagnostics show actual entry carrier, pinned host and entry identities/settings, signature validation
 status, verified payload bytes, blob counts, visible tile counts and errors.
 Payload counts exclude FIPS encryption and transport overhead. The provider
 releases completed application transfer slots while its transport stack handles

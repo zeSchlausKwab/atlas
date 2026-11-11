@@ -34,7 +34,7 @@ def ready():
  selected=re.findall(r'selected root=([a-f0-9]{64})',logs())
  good=[e for e in events if e.get('tiles',0)>0 and e.get('tiles')==e.get('wanted') and e.get('loading')==0 and (not selected or e.get('root')==selected[-1])]
  assert good,logs();return tree,good[-1]
-config=json.loads(pathlib.Path(a.config).read_text());assert config['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Physical test must use LAN endpoint'
+config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Physical test must use LAN endpoint'
 adb('shell','am','force-stop',PACKAGE)
 adb('shell','input','keyevent','KEYCODE_WAKEUP');adb('shell','wm','dismiss-keyguard')
 if a.bundled_default:
@@ -53,7 +53,7 @@ def stop_logs():
  live_file.close()
 atexit.register(stop_logs)
 if a.cancel_pending:
- wait_ui(lambda t:'Authenticating pinned native peer' in t)
+ wait_ui(lambda t:'Joining native FIPS' in t or 'Finding the map host' in t)
  tap('Cancel / disconnect')
  tree=wait_ui(lambda t:'Disconnected by you' in t and 'Reconnect & discover' in t)
  assert 'closed Cancelled' in logs(),logs()

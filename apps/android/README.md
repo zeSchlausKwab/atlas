@@ -37,45 +37,59 @@ The supplied `native/shell.nix` keeps those C-library versions consistent:
 apps/android/native/Cargo.toml --release --locked --bin atlas-peer -j 1'`.
 Keep a GC root for the resulting build environment if deploying its binary.
 
-Start two independent sidecars, using the host's **existing data directory**:
+Start an entry peer and a separate map provider, using the host's **existing data
+directory**. Run long-lived commands in separate supervised processes:
 
 ```sh
 mkdir -p /srv/atlas-native/state
-# Replace addresses and paths with the actual server values.
-atlas-peer serve tcp 0.0.0.0:42131 192.168.1.20:42131 /srv/atlas-native/state --host-data /srv/atlas/data
-atlas-peer serve udp 0.0.0.0:42132 192.168.1.20:42132 /srv/atlas-native/state --host-data /srv/atlas/data
+chmod 700 /srv/atlas-native/state
+atlas-peer gateway 0.0.0.0:42131 0.0.0.0:42132 /srv/atlas-native/state
 ```
 
-Use separate processes or supervised services, allow those physical TCP/UDP
-ports, and keep the state directory private. For NixOS, `native/lan-firewall.nix`
-is a LAN-only example to import during the next approved system update. Temporary
-`iptables -I nixos-fw ... -j nixos-fw-accept` rules can open those same ports
-without restarting Atlas, but disappear when the firewall is rebuilt/restarted.
-Do not disable the firewall or enable remote host administration.
+Once `gateway.json` exists, create the provider's public bootstrap profile:
 
-The provider writes public
-`connection-tcp.json` and `connection-udp.json` there. It only reads published,
-served, ready files and their indexes; disabling serving/publication/FIPS denies
-further reads. It never copies map bytes, opens the host database for writing,
-or reads the host's private identity. Its own keys and catalog are separate.
+```sh
+bun -e 'const p="/srv/atlas-native/state";const g=await Bun.file(p+"/gateway.json").json();await Bun.write(p+"/bootstrap.json",JSON.stringify({peer:g.peer,address:"127.0.0.1:42131"}));'
+atlas-peer serve tcp 127.0.0.1:42141 127.0.0.1:42141 /srv/atlas-native/state --host-data /srv/atlas/data --bootstrap /srv/atlas-native/state/bootstrap.json
+```
 
-Copy **only the public connection JSON files** to your ignored Android output
-directory, then build with both presets:
+The provider connects outbound to the entry peer. No phone can dial its loopback
+listener directly. Generate public client profiles, replacing the example LAN IP
+with the entry peer's reachable address:
+
+```sh
+bun -e 'const p="/srv/atlas-native/state";const g=await Bun.file(p+"/gateway.json").json();const c=await Bun.file(p+"/connection-tcp.json").json();for(const [transport,port] of [["tcp",42131],["udp",42132]])await Bun.write(p+"/mesh-"+transport+".json",JSON.stringify({transport,peer:c.peer,bootstrap:{peer:g.peer,address:"192.168.1.20:"+port}}));'
+```
+
+Allow only the required physical TCP/UDP entry ports. `native/lan-firewall.nix`
+is a LAN-only NixOS example; temporary firewall rules do not survive a rebuild.
+Do not disable the firewall or expose host administration. The gateway and
+provider can use `Restart=on-failure` and `KillSignal=SIGINT` in separate user
+services. Keep their state directory and keys private and durable.
+
+Copy **only `mesh-tcp.json` and `mesh-udp.json`** into ignored `output/`, then:
 
 ```sh
 cd apps/android
-ATLAS_NATIVE_CONNECTION_FILE="$PWD/output/server-tcp.json" \
-ATLAS_NATIVE_ALTERNATE_CONNECTION_FILE="$PWD/output/server-udp.json" \
+ATLAS_NATIVE_CONNECTION_FILE="$PWD/output/mesh-tcp.json" \
+ATLAS_NATIVE_ALTERNATE_CONNECTION_FILE="$PWD/output/mesh-udp.json" \
 bash scripts/build-android.sh
 adb install -r output/atlas-native-viewer.apk
 ```
 
-The default connects automatically. To change carrier, disconnect, open
-**Connection**, select TCP or UDP (both pinned endpoint profiles are bundled),
-and reconnect. A previously saved custom connection takes precedence over the
-APK default. The catalog is a pinned snapshot: newly published maps or catalog
-expiry require refreshing public configuration; this is not yet live relay
-discovery. The existing Atlas process needs no restart.
+Launch connects automatically. The **Map host · npub** field chooses whose maps
+to discover; entry peer and IP are under **Advanced · network entry**. Disconnect,
+choose TCP or UDP, then reconnect to change the first physical hop. Both profiles
+use the same host npub. The provider's onward hop remains TCP. There is no fallback.
+Version 0.4 uses a new saved-profile key so the bundled mesh profile replaces the
+old demo's direct configuration on upgrade; subsequent custom choices persist.
+
+Reconnect refreshes the signed map list, including newly published maps, without
+an APK rebuild or new catalog hash. The provider reads only published, served,
+ready files and denies future reads after withdrawal or FIPS disablement. It
+never writes the host store or uses its private key. This native identity is
+separate from the TypeScript provider's identity. A LAN entry is still required;
+npub-only host selection is not proof of Internet/cellular reachability.
 
 ## Build a standalone real-map fixture
 
@@ -145,6 +159,7 @@ cargo test --manifest-path native/Cargo.toml --locked --lib
 cargo build --manifest-path native/Cargo.toml --locked --bins
 python3 scripts/test-transports.py
 python3 scripts/test-atlas.py --export output/provider
+python3 scripts/test-mesh.py --export output/provider
 python3 scripts/test-phone.py --serial YOUR_PHONE --config output/tcp.json --label tcp --lifecycle --network-change
 python3 scripts/test-phone.py --serial YOUR_PHONE --config output/udp.json --label udp --lifecycle --network-change
 # Against a host library: select maps through native UI and verify layers stop reads.

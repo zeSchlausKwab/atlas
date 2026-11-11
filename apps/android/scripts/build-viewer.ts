@@ -33,40 +33,50 @@ await mkdir(dir, { recursive: true });
 await Bun.write(resolve(dir, "viewer.html"), html);
 console.log(`Embedded renderer: ${html.length} bytes; no remote assets`);
 
+// Public connection profiles only. Native Rust repeats full identity/address validation.
+function validatePublicProfile(c: any) {
+  const npub = (value: unknown) =>
+    typeof value === "string" &&
+    /^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(value);
+  if (!c || !["tcp", "udp"].includes(c.transport) || !npub(c.peer))
+    throw new Error("Invalid public native connection profile");
+  const keys = Object.keys(c).sort().join(",");
+  if (keys === "bootstrap,peer,transport") {
+    if (
+      !c.bootstrap ||
+      Object.keys(c.bootstrap).sort().join(",") !== "address,peer" ||
+      !npub(c.bootstrap.peer) ||
+      typeof c.bootstrap.address !== "string" ||
+      c.bootstrap.address.length > 128
+    )
+      throw new Error("Expected a public entry peer and numeric endpoint");
+  } else if (
+    keys !== "address,catalog,peer,publisher,transport" ||
+    typeof c.address !== "string" ||
+    !["catalog", "publisher"].every((k) => /^[a-f0-9]{64}$/.test(c[k]))
+  ) {
+    throw new Error("Expected only public native connection settings");
+  }
+  return c;
+}
 const preset = process.env.ATLAS_NATIVE_CONNECTION_FILE;
 if (preset) {
-  const c = await Bun.file(resolve(preset)).json();
-  if (
-    Object.keys(c).sort().join(",") !==
-      "address,catalog,peer,publisher,transport" ||
-    !["tcp", "udp"].includes(c.transport) ||
-    !/^npub1[023456789acdefghjklmnpqrstuvwxyz]+$/.test(c.peer) ||
-    !["catalog", "publisher"].every((k) => /^[a-f0-9]{64}$/.test(c[k]))
-  )
-    throw new Error("Expected only public native connection settings");
+  const c = validatePublicProfile(await Bun.file(resolve(preset)).json());
   const profiles = [c];
   if (process.env.ATLAS_NATIVE_ALTERNATE_CONNECTION_FILE) {
-    const other = await Bun.file(
-      resolve(process.env.ATLAS_NATIVE_ALTERNATE_CONNECTION_FILE),
-    ).json();
-    if (
-      Object.keys(other).sort().join(",") !==
-        "address,catalog,peer,publisher,transport" ||
-      !["tcp", "udp"].includes(other.transport) ||
-      other.transport === c.transport ||
-      !["catalog", "publisher"].every((k) => /^[a-f0-9]{64}$/.test(other[k])) ||
-      !/^npub1[023456789acdefghjklmnpqrstuvwxyz]+$/.test(other.peer)
-    )
-      throw new Error("Expected public alternate native connection settings");
+    const other = validatePublicProfile(
+      await Bun.file(
+        resolve(process.env.ATLAS_NATIVE_ALTERNATE_CONNECTION_FILE),
+      ).json(),
+    );
+    if (other.transport === c.transport)
+      throw new Error("Alternate profile must use the other carrier");
     profiles.push(other);
   }
   await Bun.write(resolve(dir, "connections.json"), JSON.stringify(profiles));
   await Bun.write(resolve(dir, "connection.json"), JSON.stringify(c));
 } else {
-  await (
-    await import("node:fs/promises")
-  ).rm(resolve(dir, "connections.json"), { force: true });
-  await (
-    await import("node:fs/promises")
-  ).rm(resolve(dir, "connection.json"), { force: true });
+  const { rm } = await import("node:fs/promises");
+  await rm(resolve(dir, "connections.json"), { force: true });
+  await rm(resolve(dir, "connection.json"), { force: true });
 }

@@ -16,6 +16,12 @@ use std::{
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("gateway") => {
+            let tcp = args.get(2).context("gateway TCP bind")?;
+            let udp = args.get(3).context("gateway UDP bind")?;
+            let directory = args.get(4).context("gateway state directory")?;
+            gateway(tcp, udp, directory).await?;
+        }
         Some("serve") => {
             let transport = args.get(2).map(String::as_str).unwrap_or("udp");
             let bind = args.get(3).map(String::as_str).unwrap_or("127.0.0.1:42121");
@@ -46,10 +52,48 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
     let directory = std::env::args()
         .nth(5)
         .context("provide exported map directory after visible endpoint")?;
-    let peer_secret = persistent_secret(&directory, &format!("peer-{transport}.key"))?;
+    let seed_path = std::env::args()
+        .position(|a| a == "--bootstrap")
+        .map(|n| {
+            std::env::args()
+                .nth(n + 1)
+                .context("--bootstrap needs a public JSON file")
+        })
+        .transpose()?;
+    let bootstrap: Option<soy_fips_demo::atlas::Bootstrap> = seed_path
+        .map(|p| -> Result<_> { Ok(serde_json::from_slice(&std::fs::read(p)?)?) })
+        .transpose()?;
+    let peer_secret = persistent_secret(
+        &directory,
+        if bootstrap.is_some() {
+            "peer-mesh.key"
+        } else {
+            if transport == "tcp" {
+                "peer-tcp.key"
+            } else {
+                "peer-udp.key"
+            }
+        },
+    )?;
+    let mut c = config(transport, Some(bind))?;
+    // The provider joins the entry peer outbound; it need not have a public address.
+    if let Some(seed) = &bootstrap {
+        Request {
+            transport: transport.into(),
+            address: seed.address.clone(),
+            peer: seed.peer.clone(),
+            hash: "00".repeat(32),
+        }
+        .validate()?;
+        c.peers.push(fips_core::config::PeerConfig::new(
+            &seed.peer,
+            transport,
+            &seed.address,
+        ));
+    }
     let endpoint = Arc::new(
         FipsEndpoint::builder()
-            .config(config(transport, Some(bind))?)
+            .config(c)
             .identity_nsec(hex::encode(peer_secret))
             .without_system_tun()
             .bind()
@@ -64,6 +108,7 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
         })
         .transpose()?;
     let mut host_store = host_arg
+        .as_ref()
         .map(|p| soy_fips_demo::host_store::HostStore::open(std::path::Path::new(&p)))
         .transpose()?;
     let offers: Vec<serde_json::Value> = if let Some(store) = &host_store {
@@ -77,67 +122,44 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
         !offers.is_empty() && offers.len() <= 16,
         "Expected 1–16 exported maps"
     );
-    use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
-    let secret = persistent_secret(&directory, &format!("publisher-{transport}.key"))?;
-    let secp = Secp256k1::new();
-    let key = Keypair::from_secret_key(&secp, &SecretKey::from_slice(&secret)?);
-    let publisher = key.x_only_public_key().0.to_string();
+    let secret = if bootstrap.is_some() {
+        peer_secret
+    } else {
+        persistent_secret(&directory, &format!("publisher-{transport}.key"))?
+    };
+    let (publisher, new_payload) = signed_catalog(&offers, &endpoint.npub(), secret)?;
     let time = soy_fips_demo::policy::now();
-    let events: Vec<_> = offers
-        .iter()
-        .map(|offer| -> Result<_> {
-            let mut event = soy_fips_demo::policy::Event {
-                id: String::new(),
-                pubkey: publisher.clone(),
-                created_at: time,
-                kind: 30064,
-                tags: vec![
-                    vec![
-                        "d".into(),
-                        format!("atlas/{}", offer["id"].as_str().context("Missing map id")?),
-                    ],
-                    vec!["l".into(), "hashtree".into()],
-                    vec!["t".into(), "atlas-map".into()],
-                    vec![
-                        "hash".into(),
-                        offer["hashtree"]["root"]
-                            .as_str()
-                            .context("Missing root")?
-                            .into(),
-                    ],
-                    vec!["expiration".into(), (time + 7 * 86400).to_string()],
-                    vec!["native-peer".into(), endpoint.npub().into()],
-                ],
-                content: json!({"version":1,"nativeProfile":"atlas-native-v1","map":offer})
-                    .to_string(),
-                sig: String::new(),
-            };
-            let digest = event.digest()?;
-            event.id = hex::encode(digest);
-            event.sig = secp
-                .sign_schnorr_no_aux_rand(&Message::from_digest(digest), &key)
-                .to_string();
-            Ok(event)
-        })
-        .collect::<Result<_>>()?;
     let catalog_path = std::path::Path::new(&directory).join(format!("catalog-{transport}.json"));
     let previous = std::fs::read(&catalog_path).ok().filter(|b| {
         soy_fips_demo::policy::Policy::discover(b, &publisher, &endpoint.npub(), time)
             .is_ok_and(|p| p.offers == offers)
     });
-    let payload = previous.unwrap_or(serde_json::to_vec(&events)?);
+    let payload = previous.unwrap_or(new_payload);
     std::fs::write(&catalog_path, &payload)?;
     let hash = hex::encode(Sha256::digest(&payload));
     let settings = soy_fips_demo::atlas::Settings {
         transport: transport.into(),
-        address: address.into(),
+        address: if bootstrap.is_some() {
+            String::new()
+        } else {
+            address.into()
+        },
         peer: endpoint.npub().into(),
-        catalog: hash.clone(),
-        publisher,
+        catalog: if bootstrap.is_some() {
+            String::new()
+        } else {
+            hash.clone()
+        },
+        publisher: if bootstrap.is_some() {
+            String::new()
+        } else {
+            publisher.clone()
+        },
+        bootstrap: bootstrap.clone(),
     };
     settings.validate()?;
     // Validate signed offers with the same policy before advertising the provider.
-    soy_fips_demo::policy::Policy::discover(&payload, &settings.publisher, &settings.peer, time)?;
+    soy_fips_demo::policy::Policy::discover(&payload, &publisher, &settings.peer, time)?;
     let request = Request {
         transport: transport.into(),
         address: address.into(),
@@ -197,9 +219,17 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
                             .await?,
                     );
                     if state.request.len() == 36 {
-                        ensure!(state.request[..4]==[0x48,1,1,0],"Only local Hashtree GET is supported");
+                        let discovery = state.request[..4]==[0x48,1,2,0] && state.request[4..]==[0;32];
+                        ensure!(state.request[..4]==[0x48,1,1,0] || (discovery && bootstrap.is_some()),"Unsupported native resource request");
                         let requested=hex::encode(&state.request[4..]);
-                        let data=if requested==request.hash {Some(payload.clone())} else if let Some(store)=&mut host_store {store.get(&requested)?} else {
+                        let data=if discovery {
+                            // Refresh discovery at connection time, including newly published maps.
+                            let fresh = if let Some(path) = &host_arg {
+                                let store = soy_fips_demo::host_store::HostStore::open(std::path::Path::new(path))?;
+                                let offers = store.offers(); host_store = Some(store); offers
+                            } else {offers.clone()};
+                            Some(signed_catalog(&fresh,&endpoint.npub(),secret)?.1)
+                        } else if requested==request.hash {Some(payload.clone())} else if let Some(store)=&mut host_store {store.get(&requested)?} else {
                             let path=std::path::Path::new(&directory).join("blobs").join(&requested);
                             match std::fs::metadata(&path) {
                                 Ok(meta) if meta.is_file() && meta.len()<=soy_fips_demo::MAX_BLOB as u64 => Some(std::fs::read(path)?),
@@ -208,7 +238,7 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
                         };
                         let mut data=data.unwrap_or_default();
                         let found=!data.is_empty();
-                        if corrupt && requested!=request.hash && found {data[0]^=1;}
+                        if corrupt && !discovery && requested!=request.hash && found {data[0]^=1;}
                         state.response=vec![0x48,1,if found{1}else{0}];
                         state.response.extend_from_slice(&(data.len() as u32).to_be_bytes());
                         state.response.extend_from_slice(&data);
@@ -269,4 +299,80 @@ fn persistent_secret(directory: &str, name: &str) -> Result<[u8; 32]> {
     f.write_all(&secret)?;
     f.sync_all()?;
     Ok(secret)
+}
+
+fn signed_catalog(
+    offers: &[serde_json::Value],
+    peer: &str,
+    secret: [u8; 32],
+) -> Result<(String, Vec<u8>)> {
+    use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
+    let secp = Secp256k1::new();
+    let key = Keypair::from_secret_key(&secp, &SecretKey::from_slice(&secret)?);
+    let publisher = key.x_only_public_key().0.to_string();
+    let time = soy_fips_demo::policy::now();
+    let events: Vec<_> = offers
+        .iter()
+        .map(|offer| -> Result<_> {
+            let mut event = soy_fips_demo::policy::Event {
+                id: String::new(),
+                pubkey: publisher.clone(),
+                created_at: time,
+                kind: 30064,
+                tags: vec![
+                    vec![
+                        "d".into(),
+                        format!("atlas/{}", offer["id"].as_str().context("Missing map id")?),
+                    ],
+                    vec!["l".into(), "hashtree".into()],
+                    vec!["t".into(), "atlas-map".into()],
+                    vec![
+                        "hash".into(),
+                        offer["hashtree"]["root"]
+                            .as_str()
+                            .context("Missing root")?
+                            .into(),
+                    ],
+                    vec!["expiration".into(), (time + 7 * 86400).to_string()],
+                    vec!["native-peer".into(), peer.into()],
+                ],
+                content: json!({"version":1,"nativeProfile":"atlas-native-v1","map":offer})
+                    .to_string(),
+                sig: String::new(),
+            };
+            let digest = event.digest()?;
+            event.id = hex::encode(digest);
+            event.sig = secp
+                .sign_schnorr_no_aux_rand(&Message::from_digest(digest), &key)
+                .to_string();
+            Ok(event)
+        })
+        .collect::<Result<_>>()?;
+    Ok((publisher, serde_json::to_vec(&events)?))
+}
+
+/// FIPS transit only. No Atlas files, HTTP proxy, catalog signer or blob service.
+async fn gateway(tcp: &str, udp: &str, directory: &str) -> Result<()> {
+    let _: std::net::SocketAddr = tcp.parse()?;
+    let _: std::net::SocketAddr = udp.parse()?;
+    let secret = persistent_secret(directory, "gateway.key")?;
+    let mut value = serde_json::to_value(config("tcp", Some(tcp))?)?;
+    value["node"]["leaf_only"] = json!(false);
+    value["transports"]["udp"] =
+        json!({"bind_addr":udp,"outbound_only":false,"advertise_on_nostr":false});
+    let endpoint = FipsEndpoint::builder()
+        .config(serde_json::from_value(value)?)
+        .identity_nsec(hex::encode(secret))
+        .without_system_tun()
+        .bind()
+        .await?;
+    let public = json!({"peer":endpoint.npub(),"tcp":tcp,"udp":udp});
+    std::fs::write(
+        std::path::Path::new(directory).join("gateway.json"),
+        serde_json::to_vec(&public)?,
+    )?;
+    println!("{public}");
+    tokio::signal::ctrl_c().await?;
+    endpoint.shutdown().await?;
+    Ok(())
 }

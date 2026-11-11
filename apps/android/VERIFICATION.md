@@ -4,7 +4,56 @@ Branch: `codex/android-atlas-native-fips`. Migrated without shell history from
 napplet-space `d00ec1ea657c279c120de2c25f071298d17ecfdc`.
 [Original transport-demo evidence](TRANSPORT-VERIFICATION.md) is retained.
 
-## Current deliverable
+## Current deliverable: npub mesh viewer
+
+- APK: `output/atlas-native-viewer.apk`, ARM64 debug, **0.4.0-npub-mesh**, code 3,
+  **15,970,447 bytes**, SHA-256
+  `f08f3cf7eb05a49ed745656c5b6f7ce944f83087f4c7112994f32aa5a1d82297`.
+- Installed on the connected Pixel 10 Pro XL (Android 17). The original transport
+  demo remains installed and its source is retained.
+- The APK contains public profiles only. A clean launch requires no pasted IP,
+  catalog hash, publisher key or manual Connect/Open sequence.
+- One map-host npub serves both carriers through a distinct entry peer. The host
+  listens on server loopback; its address is absent from the client profile.
+
+### Verified in this update
+
+| Check | Observed result |
+| --- | --- |
+| Native unit tests | 12 pass; mesh settings derive catalog trust from the host npub and reject mixed trust, DNS endpoints, unknown fields and unexpected carriers |
+| Three-node fixture | Both TCP and UDP entry links reach a separate provider over its TCP link; the observed next hop is the entry identity, not the target identity |
+| Resource checks | Signed catalog, root grant, descendants, real Atlas header, repeated reads and corrupt-content rejection pass on both mesh carriers |
+| Wrong identity / unavailable host | Fail with a bounded error; no target substitution or transport fallback |
+| Original direct fixtures | TCP/UDP regression, restart pins and corrupted-content rejection still pass |
+| Server native probes | Six real published maps discovered, `ATLAS001` header and repeated reads verified over TCP and UDP; 131,095 payload bytes / 36 hashed blobs including the separately signature-verified catalog bytes |
+| Phone automatic startup | Clean app launch loaded Lower Rhine East via bundled TCP entry settings, 12/12 tiles, 57,608 triangles |
+| Phone map selection | TCP: Lower Rhine West, 18/18 tiles, 40,925 triangles; UDP: West and Netherlands satellite, 4/4 raster tiles |
+| Layer controls | Both carriers: disable layers, zoom, observe 0/0 tiles and no additional package reads; re-enable and load tiles |
+| Lifecycle | Both carriers: background/foreground, explicit cancel/reconnect, Wi-Fi loss/restoration all reload the map |
+| Real touch gestures | UDP imagery: zoom 6.87→8.47, changed center, 6/6 tiles. TCP vectors: 7.25→8.84, changed center, 10/10 tiles, 74,441 triangles |
+| Build validation | Root TypeScript check passes; Android app/instrumentation build; lint 0 errors / 39 warnings; APK signature v2 and 16 KiB alignment verified |
+
+The first phone attempt failed because Wi-Fi was disconnected and the device
+routed the private LAN address over cellular. It is not counted as a pass. After
+the user reconnected Wi-Fi, the tests above passed. This remains a LAN entry;
+Internet/cellular reachability is **not** verified. USB carried test input/logs,
+not map data. Phone screenshots were visually inspected.
+
+Server processes are `atlas-native-gateway.service` and
+`atlas-native-provider.service`, with separate identities. First physical hop:
+phone→entry via selected TCP/UDP. Second: entry→provider via TCP over loopback.
+There is no HTTP/WebSocket map proxy. The main Atlas template release was also
+activated with the user's authorization, after preserving North Sea checkpoints;
+world preparations run independently of these native services.
+
+Evidence remains ignored under `output/phone/mesh-tcp`, `mesh-udp`,
+`mesh-final`, `mesh-gestures-tcp`, `mesh-gestures-udp`; public profiles are
+`output/mesh-tcp.json` and `mesh-udp.json`. The firewall's persistent Nix module
+is still prepared but unapplied; current administrator-installed LAN rules are
+runtime rules. Setup and exact limitations are in [README.md](README.md) and
+[architecture](../../docs/ANDROID-NATIVE-FIPS.md).
+
+## Previous direct-host deliverable (historical)
 
 - APK: `output/atlas-native-viewer.apk`, ARM64 debug, version `0.3.0-hosted-maps`
   (version code 2), **15,940,387 bytes**.

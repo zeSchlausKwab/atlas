@@ -1,6 +1,6 @@
 //! Foreground native session. One authenticated physical connection, many blob streams.
 use crate::{
-    Request, SERVICE_PORT, config, download, milliseconds,
+    Request, SERVICE_PORT, config, download, download_frame, milliseconds,
     policy::{Policy, hash, now},
     pump,
 };
@@ -22,23 +22,55 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     pub transport: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub address: String,
     pub peer: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub catalog: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub publisher: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap: Option<Bootstrap>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bootstrap {
+    pub peer: String,
+    pub address: String,
 }
 impl Settings {
     pub fn validate(&self) -> Result<PeerIdentity> {
-        hash(&self.catalog)?;
-        hash(&self.publisher)?;
-        Ok(Request {
-            transport: self.transport.clone(),
-            address: self.address.clone(),
-            peer: self.peer.clone(),
-            hash: self.catalog.clone(),
+        let target = PeerIdentity::from_npub(&self.peer).context("Invalid map host npub")?;
+        if let Some(seed) = &self.bootstrap {
+            ensure!(
+                self.address.is_empty() && self.catalog.is_empty() && self.publisher.is_empty(),
+                "Choose npub discovery or legacy direct settings, not both"
+            );
+            Request {
+                transport: self.transport.clone(),
+                address: seed.address.clone(),
+                peer: seed.peer.clone(),
+                hash: "00".repeat(32),
+            }
+            .validate()?;
+        } else {
+            hash(&self.publisher)?;
+            Request {
+                transport: self.transport.clone(),
+                address: self.address.clone(),
+                peer: self.peer.clone(),
+                hash: self.catalog.clone(),
+            }
+            .validate()?;
         }
-        .validate()?
-        .1)
+        Ok(target)
+    }
+    pub fn trusted_publisher(&self) -> Result<String> {
+        Ok(if self.bootstrap.is_some() {
+            self.validate()?.pubkey().to_string()
+        } else {
+            self.publisher.clone()
+        })
     }
 }
 #[derive(Deserialize)]
@@ -69,11 +101,16 @@ impl Link {
         let peer = settings.validate()?;
         ensure!(!cancel.load(Ordering::Relaxed), "Cancelled");
         let mut c = config(&settings.transport, None)?;
-        let mut remote = fips_core::config::PeerConfig::new(
-            &settings.peer,
-            &settings.transport,
-            &settings.address,
-        );
+        let seed_peer = settings
+            .bootstrap
+            .as_ref()
+            .map_or(&settings.peer, |b| &b.peer);
+        let seed_address = settings
+            .bootstrap
+            .as_ref()
+            .map_or(&settings.address, |b| &b.address);
+        let mut remote =
+            fips_core::config::PeerConfig::new(seed_peer, &settings.transport, seed_address);
         remote.auto_reconnect = false;
         c.peers.push(remote);
         let endpoint = Arc::new(
@@ -84,7 +121,7 @@ impl Link {
                 .await?,
         );
         report(
-            json!({"stage":"connecting","message":"Authenticating pinned native peer","carrier":settings.transport,"endpoint":settings.address}),
+            json!({"stage":"connecting","message":"Joining native FIPS through the pinned entry peer","carrier":settings.transport,"endpoint":seed_address,"bootstrap":seed_peer,"peer":settings.peer}),
         );
         let connected = bounded(cancel, async {
             loop {
@@ -92,7 +129,7 @@ impl Link {
                     .peers()
                     .await?
                     .into_iter()
-                    .find(|p| p.connected && p.npub == peer.npub())
+                    .find(|p| p.connected && p.npub == *seed_peer)
                 {
                     ensure!(
                         p.transport_type.as_deref() == Some(&settings.transport),
@@ -101,6 +138,17 @@ impl Link {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            if settings.bootstrap.is_some() {
+                report(json!({"stage":"resolving", "message":"Finding the map host by npub through FIPS", "peer":settings.peer}));
+                endpoint.register_peer_identity(peer).await?;
+                loop {
+                    if let Some(next) = endpoint.resolve_next_hop(peer, None).await? {
+                        report(json!({"stage":"route", "message":"Mesh route found; verifying the host's signed catalog", "peer":settings.peer,"nextHop":next.npub(),"carrier":settings.transport}));
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
             }
             FipsTcpEndpoint::bind(
                 endpoint.clone(),
@@ -115,7 +163,7 @@ impl Link {
         match connected {
             Ok(tcp) => {
                 report(
-                    json!({"stage":"connected","carrier":settings.transport,"peer":settings.peer,"message":"Pinned peer authenticated"}),
+                    json!({"stage":"connected","carrier":settings.transport,"peer":settings.peer,"message":"Native FIPS transport ready"}),
                 );
                 Ok(Self {
                     endpoint,
@@ -161,6 +209,42 @@ impl Link {
             }
         }
     }
+    /// A well-known service request, validated against the host npub before it
+    /// can create any resource grant. Ordinary blob reads always require SHA-256.
+    pub async fn discover(
+        &mut self,
+        settings: &Settings,
+        cancel: &AtomicBool,
+        report: &mut impl FnMut(Value),
+    ) -> Result<Policy> {
+        if settings.bootstrap.is_none() {
+            let bytes = self.get(&settings.catalog, cancel, report).await?;
+            return Policy::discover(&bytes, &settings.publisher, &settings.peer, now());
+        }
+        let id = self
+            .tcp
+            .connect(self.peer, milliseconds(self.start))
+            .await?;
+        let result = bounded(cancel, async {
+            let bytes = download_frame(&mut self.tcp, id, &[0; 32], 2, self.start, report).await?;
+            let policy = Policy::discover(
+                &bytes,
+                &settings.trusted_publisher()?,
+                &settings.peer,
+                now(),
+            )?;
+            self.bytes += bytes.len() as u64;
+            // Catalog signatures are verified, but this is not a content-addressed blob.
+            Ok(policy)
+        })
+        .await;
+        if result.is_ok() {
+            self.tcp.close(id, milliseconds(self.start)).await?;
+        } else {
+            let _ = self.tcp.abort(id).await;
+        }
+        result
+    }
     pub async fn close(&self) {
         let _ = tokio::time::timeout(Duration::from_secs(2), self.endpoint.shutdown()).await;
     }
@@ -183,9 +267,8 @@ pub async fn run(
 ) -> Result<()> {
     let mut link = Link::open(&settings, cancel, &mut report).await?;
     let operation=async {
-        let bytes=link.get(&settings.catalog,cancel,&mut report).await?;
-        let mut policy=Policy::discover(&bytes,&settings.publisher,&settings.peer,now())?;
-        report(json!({"stage":"catalog","offers":policy.offers,"carrier":settings.transport,"peer":settings.peer,"bytes":link.bytes,"blobs":link.blobs,"message":"Signed discovery verified. Choose a map to grant access."}));
+        let mut policy=link.discover(&settings,cancel,&mut report).await?;
+        report(json!({"stage":"catalog","offers":policy.offers,"carrier":settings.transport,"peer":settings.peer,"bytes":link.bytes,"blobs":link.blobs,"message":"Host identity and signed catalog verified. Choose a map to grant access."}));
         loop {
             ensure!(!cancel.load(Ordering::Relaxed),"Cancelled; native connection closed");
             match receiver.try_recv() {
@@ -213,4 +296,49 @@ pub async fn run(
     }.await;
     link.close().await;
     operation
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn npub_discovery_pins_catalog_signer_and_rejects_mixed_trust() {
+        let endpoint = FipsEndpoint::builder()
+            .config(config("tcp", None).unwrap())
+            .without_system_tun()
+            .bind()
+            .await
+            .unwrap();
+        let peer = endpoint.npub().to_string();
+        endpoint.shutdown().await.unwrap();
+        let mut s = Settings {
+            transport: "tcp".into(),
+            peer: peer.clone(),
+            address: String::new(),
+            catalog: String::new(),
+            publisher: String::new(),
+            bootstrap: Some(Bootstrap {
+                peer: peer.clone(),
+                address: "127.0.0.1:42131".into(),
+            }),
+        };
+        assert_eq!(
+            s.trusted_publisher().unwrap(),
+            PeerIdentity::from_npub(&peer).unwrap().pubkey().to_string()
+        );
+        s.publisher = "00".repeat(32);
+        assert!(s.validate().is_err());
+        s.publisher.clear();
+        s.address = "127.0.0.1:42141".into();
+        assert!(s.validate().is_err());
+        s.address.clear();
+        s.bootstrap.as_mut().unwrap().address = "host.example:1234".into();
+        assert!(s.validate().is_err());
+        s.bootstrap.as_mut().unwrap().address = "127.0.0.1:42131".into();
+        s.transport = "websocket".into();
+        assert!(s.validate().is_err());
+        let mut value = serde_json::to_value(&s).unwrap();
+        value["nsec"] = json!("not permitted");
+        assert!(serde_json::from_value::<Settings>(value).is_err());
+    }
 }

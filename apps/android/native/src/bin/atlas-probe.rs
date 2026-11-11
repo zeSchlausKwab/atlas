@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use soy_fips_demo::{
     atlas::{Link, Settings},
-    policy::{Policy, now},
+    policy::now,
 };
 use std::sync::atomic::AtomicBool;
 #[tokio::main]
@@ -16,8 +16,7 @@ async fn main() -> Result<()> {
     let cancel = AtomicBool::new(false);
     let mut link = Link::open(&s, &cancel, &mut |e| println!("{e}")).await?;
     let result=async {
-        let catalog=link.get(&s.catalog,&cancel,&mut |_|{}).await?;
-        let mut policy=Policy::discover(&catalog,&s.publisher,&s.peer,now())?;
+        let mut policy=link.discover(&s,&cancel,&mut |_|{}).await?;
         let index=std::env::args().nth(2).map(|v|v.parse::<usize>()).transpose()?.unwrap_or(0);
         anyhow::ensure!(index<policy.offers.len(),"Map index out of range");
         println!("{}",json!({"stage":"catalog","maps":policy.offers.len(),"selected":policy.offers[index]["manifest"]["name"]}));

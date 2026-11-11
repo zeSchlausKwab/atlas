@@ -6,9 +6,9 @@ android {
         applicationId 'org.atlas.nativeviewer'
         minSdk 30
         targetSdk 36
-        versionCode 2
+        versionCode 3
         testInstrumentationRunner 'soy.napplet.fipsdemo.GestureInstrumentation'
-        versionName '0.3.0-hosted-maps'
+        versionName '0.4.0-npub-mesh'
         ndk { abiFilters 'arm64-v8a' }
     }
     sourceSets { main { jniLibs.srcDirs = ['build/native-libs']; assets.srcDirs = ['build/viewer-assets'] } }

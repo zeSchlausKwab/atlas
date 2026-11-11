@@ -36,7 +36,8 @@ public final class AtlasActivity extends Activity {
       };
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private LinearLayout root, settings, maps;
-  private EditText address, peer, catalog, publisher;
+  private EditText address, peer, catalog, publisher, bootstrapPeer;
+  private LinearLayout advanced, legacy;
   private RadioGroup transport;
   private TextView status, diagnostics;
   private Button connect, toggle, mapPicker, layerPicker;
@@ -96,17 +97,29 @@ public final class AtlasActivity extends Activity {
     }
     transport.check(R.id.tcp);
     settings.addView(transport);
-    address = field("Numeric peer endpoint", "192.168.0.250:42131");
-    peer = field("Pinned FIPS identity · npub", "");
-    catalog = field("Discovery catalog · SHA-256", "");
-    publisher = field("Trusted map publisher · hex", "");
+    peer = field("Map host · npub", "");
+    Button networkSettings = button("Advanced · network entry");
+    settings.addView(networkSettings);
+    advanced = column();
+    settings.addView(advanced);
+    advanced.setVisibility(View.GONE);
+    networkSettings.setOnClickListener(
+        v ->
+            advanced.setVisibility(
+                advanced.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+    bootstrapPeer = field("Entry peer · npub", "", advanced);
+    address = field("Entry endpoint · numeric IP:port", "", advanced);
+    legacy = column();
+    advanced.addView(legacy);
+    catalog = field("Legacy pinned catalog · SHA-256", "", legacy);
+    publisher = field("Legacy catalog publisher · hex", "", legacy);
     Button paste = button("Paste connection JSON");
     settings.addView(paste);
     paste.setOnClickListener(v -> paste());
     TextView note =
         text(
-            "Direct native TCP or UDP. No DNS, WebSocket, HTTP fallback or VPN. Discovery is a"
-                + " signed snapshot from this peer; reconnect with new details to update it.",
+            "Choose a map host by npub. Native FIPS finds it through the configured entry peer. "
+                + "Reconnect to refresh its signed map catalog. No DNS, HTTP, WebSocket or VPN.",
             12);
     settings.addView(note);
     connect = button("Connect & discover");
@@ -142,7 +155,7 @@ public final class AtlasActivity extends Activity {
     setContentView(root);
     String saved =
         state == null
-            ? getPreferences(0).getString("connection", null)
+            ? getPreferences(0).getString("connection-v2", null)
             : state.getString("connection");
     if (saved != null) apply(saved);
     else
@@ -223,8 +236,12 @@ public final class AtlasActivity extends Activity {
   }
 
   private EditText field(String label, String hint) {
+    return field(label, hint, settings);
+  }
+
+  private EditText field(String label, String hint, LinearLayout container) {
     TextView caption = text(label, 12);
-    settings.addView(caption);
+    container.addView(caption);
     EditText e = new EditText(this);
     e.setId(View.generateViewId());
     caption.setLabelFor(e.getId());
@@ -232,7 +249,7 @@ public final class AtlasActivity extends Activity {
     e.setTextSize(13);
     e.setHint(hint);
     e.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
-    settings.addView(e);
+    container.addView(e);
     return e;
   }
 
@@ -255,10 +272,13 @@ public final class AtlasActivity extends Activity {
       String t = c.getString("transport");
       if (!t.equals("tcp") && !t.equals("udp")) throw new Exception("Choose TCP or UDP");
       transport.check(t.equals("tcp") ? R.id.tcp : R.id.udp);
-      address.setText(c.getString("address"));
+      JSONObject seed = c.optJSONObject("bootstrap");
+      address.setText(seed == null ? c.optString("address") : seed.getString("address"));
+      bootstrapPeer.setText(seed == null ? "" : seed.getString("peer"));
       peer.setText(c.getString("peer"));
-      catalog.setText(c.getString("catalog"));
-      publisher.setText(c.getString("publisher"));
+      catalog.setText(c.optString("catalog"));
+      publisher.setText(c.optString("publisher"));
+      legacy.setVisibility(seed == null ? View.VISIBLE : View.GONE);
       hasSettings = true;
       status.setText("Details loaded · automatic native connection");
     } catch (Exception e) {
@@ -280,10 +300,18 @@ public final class AtlasActivity extends Activity {
   private String config() throws JSONException {
     JSONObject c = new JSONObject();
     c.put("transport", transport.getCheckedRadioButtonId() == R.id.tcp ? "tcp" : "udp");
-    c.put("address", address.getText().toString().trim());
     c.put("peer", peer.getText().toString().trim());
-    c.put("catalog", catalog.getText().toString().trim());
-    c.put("publisher", publisher.getText().toString().trim());
+    String entry = bootstrapPeer.getText().toString().trim();
+    if (!entry.isEmpty()) {
+      JSONObject seed = new JSONObject();
+      seed.put("peer", entry);
+      seed.put("address", address.getText().toString().trim());
+      c.put("bootstrap", seed);
+    } else {
+      c.put("address", address.getText().toString().trim());
+      c.put("catalog", catalog.getText().toString().trim());
+      c.put("publisher", publisher.getText().toString().trim());
+    }
     return c.toString();
   }
 
@@ -305,7 +333,7 @@ public final class AtlasActivity extends Activity {
       mapPicker.setEnabled(false);
       layerPicker.setEnabled(false);
       carrier = transport.getCheckedRadioButtonId() == R.id.tcp ? "tcp" : "udp";
-      getPreferences(0).edit().putString("connection", c).apply();
+      getPreferences(0).edit().putString("connection-v2", c).apply();
       connect.setText("Cancel / disconnect");
       status.setText("Starting native FIPS…");
       setInputs(false);
@@ -317,6 +345,7 @@ public final class AtlasActivity extends Activity {
 
   private void setInputs(boolean enabled) {
     address.setEnabled(enabled);
+    bootstrapPeer.setEnabled(enabled);
     peer.setEnabled(enabled);
     catalog.setEnabled(enabled);
     publisher.setEnabled(enabled);
@@ -374,7 +403,7 @@ public final class AtlasActivity extends Activity {
                       + String.format(java.util.Locale.ROOT, "%,d", bytes)
                       + " verified bytes · "
                       + blobs
-                      + " blobs · pinned peer");
+                      + " blobs · verified host");
             }
             if (stage.equals("blob")) {
               if (pageReady)
@@ -395,7 +424,7 @@ public final class AtlasActivity extends Activity {
             if (stage.equals("catalog")) {
               offers = e.getJSONArray("offers");
               mapPicker.setEnabled(offers.length() > 0);
-              String preferred = getPreferences(0).getString("map:" + publisher.getText(), "");
+              String preferred = getPreferences(0).getString("map:" + peer.getText(), "");
               int choice = 0;
               for (int n = 0; n < offers.length(); n++)
                 if (preferred.equals(rootOf(offers.getJSONObject(n)))) choice = n;
@@ -405,7 +434,7 @@ public final class AtlasActivity extends Activity {
               JSONObject offer = e.getJSONObject("offer");
               if (!rootOf(offer).equals(pendingRoot)) return;
               selected = offer;
-              getPreferences(0).edit().putString("map:" + publisher.getText(), pendingRoot).apply();
+              getPreferences(0).edit().putString("map:" + peer.getText(), pendingRoot).apply();
               mapPicker.setText(mapName(offer));
               layerPicker.setEnabled(true);
               ((View) settings.getParent()).setVisibility(View.GONE);
@@ -461,7 +490,7 @@ public final class AtlasActivity extends Activity {
       if (rootOf(offer).equals(pendingRoot)) current = n;
     }
     new AlertDialog.Builder(this)
-        .setTitle("Hosted maps · " + address.getText())
+        .setTitle("Hosted maps · " + peer.getText())
         .setSingleChoiceItems(
             names,
             current,

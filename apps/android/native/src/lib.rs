@@ -212,10 +212,25 @@ async fn download(
     start: Instant,
     report: &mut impl FnMut(Value),
 ) -> Result<Vec<u8>> {
+    let data = download_frame(tcp, id, hash, 1, start, report).await?;
+    verify(&data, hash)?;
+    Ok(data)
+}
+
+// The catalog opcode is authenticated separately by the pinned host's signature.
+// This primitive is private to the native crate, never exposed to page code.
+async fn download_frame(
+    tcp: &mut FipsTcpEndpoint,
+    id: ConnectionId,
+    hash: &[u8; 32],
+    opcode: u8,
+    start: Instant,
+    report: &mut impl FnMut(Value),
+) -> Result<Vec<u8>> {
     while tcp.state(id) != Some(State::Established) {
         pump(tcp, start).await?;
     }
-    let mut request = vec![0x48, 1, 1, 0]; // GET, HTL 0: this provider only.
+    let mut request = vec![0x48, 1, opcode, 0]; // GET or signed catalog; HTL 0.
     request.extend_from_slice(hash);
     let mut sent = 0;
     while sent < request.len() {
@@ -255,7 +270,6 @@ async fn download(
             pump(tcp, start).await?;
         }
     }
-    verify(&data, hash)?;
     Ok(data)
 }
 
