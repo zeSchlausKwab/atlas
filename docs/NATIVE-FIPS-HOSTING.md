@@ -182,7 +182,15 @@ passed layer controls, background/resume and cancellation/reconnect. These chang
 so the earlier slowdown cannot be assigned to UDP alone. A concurrent Mac UDP
 probe passed in 5.69 seconds, but read far less data.
 See [emulator evidence and remaining issues](../apps/android/VERIFICATION.md).
-Neither result establishes off-LAN reachability for these new direct forwards.
+Those emulator results alone do not establish off-LAN reachability. The later
+physical Pixel follow-up **passed over validated cellular on both direct
+carriers**: TCP 48.335 seconds, UDP 46.457 seconds, each with 18/18 tiles and
+3,548,046 verified payload bytes / 76 hashed blobs. Wi-Fi was disabled and the
+cellular default route validated before and after each run, then Wi-Fi was
+restored. Both screenshots were inspected. The phone→server path used the router
+forwards, with no external transit node or DNS. These are single-run observations,
+not sustained-performance guarantees. The one-hour leases were not extended;
+persistent public reachability still requires an explicit operational decision.
 
 Forward **TCP 42131 → server TCP 42131** and **UDP 42132 → server UDP 42132**.
 The destination for this installation is 192.168.0.179. Keep admin port 3100

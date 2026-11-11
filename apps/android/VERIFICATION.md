@@ -4,6 +4,49 @@ Branch: `codex/android-atlas-native-fips`. Migrated without shell history from
 napplet-space `d00ec1ea657c279c120de2c25f071298d17ecfdc`.
 [Original transport-demo evidence](TRANSPORT-VERIFICATION.md) is retained.
 
+## Direct server endpoint: physical cellular acceptance — 11 November 2026
+
+The reconnected Pixel 10 Pro XL completed both direct native transports while
+Wi-Fi was disabled. Android reported a **validated cellular default network
+before and after each run**; the original Wi-Fi setting was restored afterward.
+The same installed 0.5.0 APK was used, with explicit public connection profiles.
+USB carried test control/evidence only; no adb reverse or USB network proxy was
+used. Screenshots for both carriers were visually inspected.
+
+| Physical carrier to the server entry | Complete viewport | Verified payload | Result |
+| --- | --- | --- | --- |
+| TCP | **48.335 s**, 18/18 tiles, 67,466 triangles | 3,548,046 bytes, 76 hashed blobs | Pass |
+| UDP | **46.457 s**, 18/18 tiles, 67,466 triangles | 3,548,046 bytes, 76 hashed blobs | Pass |
+
+These are single observed loads of Lower Rhine East, measured from native
+connection start to the first complete viewport. They are not a throughput SLA
+or a controlled transport comparison. The map data traveled:
+
+```text
+Pixel cellular → router public IPv4 / approved port forward
+               → identity-pinned native FIPS entry on the Atlas server
+               → loopback TCP → native Atlas map provider → existing map files
+```
+
+There is no external transit node, map HTTP/WebSocket fallback, DNS lookup,
+VPN/TUN or additional hosting in this direct path. Both npub identities and all
+catalog, grant, descendant and content-hash checks remain enabled. This closes
+the direct off-LAN reachability gap for this phone/carrier and these endpoints.
+It does not establish other carriers, sustained performance, router restart
+survival, failover or permanent reachability. The approved router leases still
+expire around **16:29 Vienna time**; they were not extended. Persistent public
+exposure is a separate operational decision. The phone retains the tested direct
+UDP profile, so reconnecting through it after expiry requires renewed forwards.
+
+Run `scripts/test-cellular.py` sequentially with `--configured-profile` and each
+direct profile (see the hosting guide). Ignored evidence in `output/phone/` is
+prefixed `direct-public-tcp-cellular-20261111` and
+`direct-public-udp-cellular-20261111`. The `*-network.json` companions record
+`validatedAtCompletion: true`; the generic UI harness's environment file alone
+does not attest to the network route. No production service restart or new APK
+was needed. Layer/lifecycle checks were not repeated over cellular in this short
+window; their emulator and earlier phone evidence remains below.
+
 ## Direct endpoint emulator experiment — 11 November 2026
 
 The user substituted an emulator when the Pixel disconnected. The existing
@@ -17,8 +60,9 @@ forward → same-server native FIPS entry → loopback TCP → native Atlas prov
 The entry uses the selected physical TCP or UDP carrier; both identities remain
 pinned. The user-approved public router mappings have one-hour leases, expiring
 around **16:29 Vienna time on 11 November**. This test does **not** establish
-reachability or performance from outside the LAN; direct cellular acceptance is
-still pending. Earlier cellular acceptance below used a different public entry.
+reachability or performance from outside the LAN. At that point direct cellular
+acceptance was pending; the later physical-phone follow-up above completed it.
+Earlier cellular acceptance below used a different public entry.
 
 | Direct carrier | Observed result |
 | --- | --- |
@@ -97,8 +141,9 @@ because Android's logcat ring can evict early events during long runs.
 Reproduce with `scripts/test-cellular.py`; evidence is ignored under
 `output/phone/public-cellular*`. Earlier LAN lifecycle, gesture, layer-control and
 corruption evidence below is retained; it was **not** rerun on cellular. Public
-TCP, carrier/network diversity, loss injection, sustained performance and failover
-remain unverified. A later Mac public-entry probe timed out during its 25-second
+TCP through this external entry, carrier/network diversity, loss injection,
+sustained performance and failover remain unverified. Direct-server TCP and UDP
+cellular acceptance subsequently passed as recorded above. A later Mac public-entry probe timed out during its 25-second
 join, before requesting a map; this is an additional availability limitation, not
 a failed hash check or a retraction of the completed cellular run. There is one
 external public UDP entry. Soyli/napplet.soy
@@ -289,9 +334,9 @@ map exports or APKs are committed. Use [README.md](README.md) to reproduce.
   expiry. Server reads honor publication/serving withdrawal; the picker is a
   session snapshot.
 - This is a separate native provider reading production files, not native ingress
-  into the TypeScript process. Public UDP cellular reachability through one
-  entry is verified above; public TCP, other carriers/NATs, controlled packet
-  loss and prolonged sessions remain unverified.
+  into the TypeScript process. Public UDP cellular reachability through an external entry and direct-server
+  TCP/UDP cellular reachability are verified above; other carriers/NATs,
+  controlled packet loss and prolonged sessions remain unverified.
 - The viewer selects one map at a time. Multi-provider composition, signed
   hoster default views and failover are not implemented here. Reconnect resets
   the viewport and memory cache. Session cancellation closes all work; individual
