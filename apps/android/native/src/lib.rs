@@ -1,4 +1,4 @@
-//! Native TCP/UDP carrier experiment. No WebView, DNS, relay discovery or TUN.
+//! Native TCP/UDP core. No browser networking, DNS, relay discovery or TUN.
 use anyhow::{Context, Result, bail, ensure};
 use fips_core::{Config, FipsEndpoint, PeerIdentity};
 use fips_tcp::{ConnectionId, State};
@@ -322,3 +322,6 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(3));
     }
 }
+
+pub mod atlas;
+pub mod policy;
