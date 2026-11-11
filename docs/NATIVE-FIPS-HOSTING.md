@@ -76,7 +76,8 @@ The positional number selects a signed catalog offer. Each invocation creates an
 independent consumer identity. A successful probe validates catalog signatures,
 root authorization, descendant membership, SHA-256, an `ATLAS001` header and
 repeated immutable reads. Inspect `route.nextHop`: it must be the public entry,
-not the map host. Phone/browser profile migration is separate from server rollout.
+not the map host. Android 0.5.0 now bundles this profile; shared browser/shell
+integration remains separate from server rollout.
 
 ## Entry provenance and availability
 
@@ -126,7 +127,12 @@ served-state, snapshot and master FIPS-switch checks still apply to reads.
 - The server's public-entry link authenticated as native UDP. The provider uses
   the existing native identity and published files; it does not copy maps.
 
-This verifies a route through a public Internet entry from the development
-network. A separate cellular/off-LAN client acceptance test is deferred with
-client work. The previously installed phone APK still has LAN entry profiles;
-server deployment alone does not replace those bundled/saved profiles.
+The Android 0.5.0 follow-up also passed physical **cellular/off-LAN** acceptance:
+Wi-Fi disabled, validated cellular default route, clean automatic startup,
+Lower Rhine East fully rendered (18/18 tiles; 3,542,996 verified payload bytes,
+76 hashed blobs). Both phone→entry and entry→provider physical links were UDP.
+The cold viewport took about eight minutes; one external entry, variable read
+latency and no public TCP fallback remain material limitations. Android now
+allows a 90-second blob read and one timeout-only retry, without relaxing any
+verification. Its alternate TCP profile is LAN-only. See the
+[phone evidence and reproducible test](../apps/android/VERIFICATION.md).

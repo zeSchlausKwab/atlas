@@ -23,8 +23,10 @@ and [verified behavior and limitations](VERIFICATION.md).
 
 [Public native hosting](../../docs/NATIVE-FIPS-HOSTING.md) documents the deployed
 outbound UDP entry, reproducible configuration and probes. It needs no Atlas DNS
-or inbound forwarding. The existing APK retains its LAN profile; migrating
-clients to the public entry is a separate step.
+or inbound forwarding. APK 0.5.0 defaults to that public UDP entry; the alternate
+TCP preset remains LAN-only. A clean Pixel launch loaded a complete real map
+over cellular, with Wi-Fi disabled. That cold load took about eight minutes;
+see the measured limits in [verification](VERIFICATION.md).
 
 ## Use maps already published on an Atlas server
 
@@ -95,8 +97,9 @@ Reconnect refreshes the signed map list, including newly published maps, without
 an APK rebuild or new catalog hash. The provider reads only published, served,
 ready files and denies future reads after withdrawal or FIPS disablement. It
 never writes the host store or uses its private key. This native identity is
-separate from the TypeScript provider's identity. A LAN entry is still required;
-npub-only host selection is not proof of Internet/cellular reachability.
+separate from the TypeScript provider's identity. These setup commands describe
+the retained LAN entry; use the public UDP profile above for off-LAN access.
+An npub identifies a host but still needs a reachable, authenticated entry.
 
 ## Build a standalone real-map fixture
 
@@ -155,9 +158,10 @@ returning reconnects automatically. Building without
 Only public connection settings go into the APK. Provider peer/publisher keys
 are generated under `output/provider`, stored with mode 0600, and must stay
 private. Keep that directory to preserve identities across provider restarts.
-The signed catalog is reused while valid, but expires after seven days; a new
-catalog requires refreshed public configuration. Live client discovery is future work. Host-backed reads do honor subsequent
-withdrawals, as described above; cached content cannot be recalled.
+Npub profiles fetch a fresh host-signed catalog on reconnect, including newly
+published maps. Legacy direct/hash-pinned profiles require refreshed configuration
+when their catalog expires. Live relay discovery remains future work. Host-backed
+reads honor subsequent withdrawals; cached content cannot be recalled.
 
 ## Reproduce acceptance
 
@@ -177,6 +181,23 @@ Physical tests operate only the selected device and this isolated app. Network
 acceptance temporarily disables Wi-Fi and restores it in a `finally` block.
 `--bundled-default` clears **this demo app's** settings and launches without any
 configuration intent, proving automatic startup from the APK's public preset.
+
+For the public-entry APK, build with public settings and test cellular explicitly:
+
+```sh
+ATLAS_NATIVE_CONNECTION_FILE="$PWD/output/public-client-udp.json" \
+ATLAS_NATIVE_ALTERNATE_CONNECTION_FILE="$PWD/output/mesh-tcp.json" \
+bash scripts/build-android.sh
+adb install -r output/atlas-native-viewer.apk
+python3 scripts/test-cellular.py --serial YOUR_PHONE --config output/public-client-udp.json
+```
+
+The public profile format is in the hosting guide. The cellular test requires a
+validated mobile-data connection, clears only this isolated viewer's data, proves
+automatic startup and restores the original Wi-Fi setting. Do not run another
+phone UI test concurrently. It allows ten minutes for a cold viewport. Blob reads
+allow 90 seconds and one timeout-only retry; cancellation remains immediate and
+validation failures do not retry. There is no public TCP fallback.
 
 For touch gestures:
 

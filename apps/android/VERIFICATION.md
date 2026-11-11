@@ -4,7 +4,48 @@ Branch: `codex/android-atlas-native-fips`. Migrated without shell history from
 napplet-space `d00ec1ea657c279c120de2c25f071298d17ecfdc`.
 [Original transport-demo evidence](TRANSPORT-VERIFICATION.md) is retained.
 
-## Current deliverable: npub mesh viewer
+## Current deliverable: public FIPS viewer
+
+- ARM64 debug APK **0.5.0-public-fips**, version code 4, 31,765,371 bytes.
+  SHA-256: `1c8ddb13080a80b581dc34b31951bfde26f373f5a165ba7c0b9158448c12b63f`.
+- Installed on the Pixel 10 Pro XL. The bundled default is the pinned public UDP
+  entry and stable map-host npub; the alternate TCP profile remains LAN-only.
+  Saved connection preferences migrate from `connection-v2` to `connection-v3`,
+  selecting this new bundled default once on upgrade. Custom old profiles may
+  be entered again through Connection. No keys are bundled.
+- **Physical off-LAN acceptance passed** with Wi-Fi disabled and Android reporting
+  a validated cellular default network. A clean launch, without a configuration
+  intent or manual connection, loaded Lower Rhine East: **18/18 tiles, 67,466
+  triangles, 3,542,996 verified payload bytes and 76 hashed blobs**. Payload bytes
+  include the separately signature-verified catalog; transport overhead is excluded.
+- Connection began at 14:36:22 CET and the viewport completed at 14:44:24 on
+  11 November 2026: about **8 minutes cold**. This proves reachability, not good
+  interactive performance. Some individual reads took over a minute.
+- Path: phone cellular → public entry over native UDP → the provider's outbound
+  native UDP link → existing Atlas files/indexes. No LAN address, DNS lookup,
+  HTTP/WebSocket map hop, VPN/TUN, or adb forwarding carried the map data.
+  USB was used only for installation, test input and evidence. Wi-Fi was restored
+  in test cleanup; the final screenshot was inspected.
+- Reads have a 90-second deadline and one fresh-stream retry only on timeout.
+  Partial bytes are discarded; integrity, membership and cancellation failures
+  never retry. Joining/discovery retains its 25-second bound. Native unit tests:
+  **16 passed**, including deadline classification and prompt cancellation.
+- The isolated three-node regression passed for TCP and UDP, corrupted content,
+  wrong entry identity, absent provider and concurrent public-style UDP/LAN TCP
+  entries. APK assembly and Android lint passed. The 504-test Atlas core suite
+  also passed for the server/format changes deployed with this update.
+
+Reproduce with `scripts/test-cellular.py`; evidence is ignored under
+`output/phone/public-cellular*`. Earlier LAN lifecycle, gesture, layer-control and
+corruption evidence below is retained; it was **not** rerun on cellular. Public
+TCP, carrier/network diversity, loss injection, sustained performance and failover
+remain unverified. A later Mac public-entry probe timed out during its 25-second
+join, before requesting a map; this is an additional availability limitation, not
+a failed hash check or a retraction of the completed cellular run. There is one
+external public UDP entry. Soyli/napplet.soy
+standard integration and full native discovery/RPC parity remain separate work.
+
+## Earlier LAN mesh viewer (historical)
 
 - APK: `output/atlas-native-viewer.apk`, ARM64 debug, **0.4.0-npub-mesh**, code 3,
   **15,970,447 bytes**, SHA-256
@@ -183,13 +224,15 @@ map exports or APKs are committed. Use [README.md](README.md) to reproduce.
 
 ## Remaining limits
 
-- Discovery is the signed, hash-pinned `atlas-native-v1` snapshot profile, not
-  live relay discovery or the finalized shell contract. A changed library or
-  seven-day catalog expiry requires refreshing public connection configuration.
-  Server reads honor publication/serving withdrawal; the picker is a snapshot.
+- Discovery is the experimental `atlas-native-v1` contract, not live relay
+  discovery or the finalized shell contract. Npub profiles fetch a fresh signed
+  catalog when reconnecting; legacy hash-pinned profiles need refreshing on
+  expiry. Server reads honor publication/serving withdrawal; the picker is a
+  session snapshot.
 - This is a separate native provider reading production files, not native ingress
-  into the TypeScript process. Internet/cellular reachability, NAT traversal,
-  controlled packet loss and prolonged sessions remain unverified.
+  into the TypeScript process. Public UDP cellular reachability through one
+  entry is verified above; public TCP, other carriers/NATs, controlled packet
+  loss and prolonged sessions remain unverified.
 - The viewer selects one map at a time. Multi-provider composition, signed
   hoster default views and failover are not implemented here. Reconnect resets
   the viewport and memory cache. Session cancellation closes all work; individual
@@ -205,9 +248,10 @@ map exports or APKs are committed. Use [README.md](README.md) to reproduce.
 
 The original demo checkout and installed app remain intact. No private source,
 keys, device artifacts or APKs are committed or published. Production Atlas was
-not restarted, and its staged update was not activated during these tests.
+not restarted during the historical direct-host tests. The later server update
+was activated separately, with the requested builds paused and checkpoints kept.
 
-## Server-only public entry extension — 11 November 2026
+## Earlier server-only public entry extension — 11 November 2026
 
 The native provider now keeps its LAN bootstrap and additionally joins an
 identity-pinned public UDP entry. Public probes with independent consumer

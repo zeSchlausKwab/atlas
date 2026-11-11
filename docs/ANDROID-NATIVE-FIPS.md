@@ -47,10 +47,11 @@ has no Atlas store, catalog signing key, HTTP proxy or blob service.
 
 The original LAN entry and provider run on the same server. The provider now
 also joins a public native UDP entry outbound; see [public native hosting](NATIVE-FIPS-HOSTING.md)
-for the additional route and exact verification. The installed phone's bundled
-profiles still select the LAN entry. Client migration and separate cellular
-acceptance are deferred; changing server reachability does not update saved
-client profiles. A reachable bootstrap is always required underneath npub addressing.
+for the additional route and exact verification. APK 0.5.0 now defaults to that
+public UDP entry, with a LAN-only TCP alternate. A clean Pixel launch over
+validated cellular loaded 18/18 real tiles with Wi-Fi disabled. Both public hops
+are UDP. The cold load took about eight minutes; performance, public TCP and
+failover remain open. A reachable bootstrap is always required underneath npub addressing.
 
 The provider is a separate Rust process using its own persistent native identity
 (the existing TypeScript provider has a different identity). With `--host-data`,
@@ -167,6 +168,10 @@ Payload counts exclude FIPS encryption and transport overhead. The provider
 releases completed application transfer slots while its transport stack handles
 FIN/retransmissions, preventing the earlier eight-stream exhaustion failure.
 
+Blob reads use a 90-second bound and one fresh-stream retry on timeout only.
+Cancellation and failed verification never retry. Joining and signed discovery
+retain a 25-second bound; there is no alternate transport fallback.
+
 ## Scope still to implement
 
 - Native transport metadata in the shared discovery/resource contract, live
@@ -174,7 +179,7 @@ FIN/retransmissions, preventing the earlier eight-stream exhaustion failure.
 - Multi-provider composition/failover and hoster default views on Android.
 - Persistent offline cache, viewport retention across session reconnects,
   per-request native cancellation and sustained high-load measurements.
-- Internet/cellular and NAT/firewall acceptance, controlled packet-loss tests,
+- Public TCP, additional cellular carriers/NATs, controlled packet-loss tests,
   long-lived sessions and Android versions other than the tested Pixel.
 
 The viewer proves a real native TCP/UDP map path and reuses Atlas rendering. It

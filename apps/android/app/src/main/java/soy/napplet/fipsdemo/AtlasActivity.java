@@ -155,7 +155,7 @@ public final class AtlasActivity extends Activity {
     setContentView(root);
     String saved =
         state == null
-            ? getPreferences(0).getString("connection-v2", null)
+            ? getPreferences(0).getString("connection-v3", null)
             : state.getString("connection");
     if (saved != null) apply(saved);
     else
@@ -333,7 +333,7 @@ public final class AtlasActivity extends Activity {
       mapPicker.setEnabled(false);
       layerPicker.setEnabled(false);
       carrier = transport.getCheckedRadioButtonId() == R.id.tcp ? "tcp" : "udp";
-      getPreferences(0).edit().putString("connection-v2", c).apply();
+      getPreferences(0).edit().putString("connection-v3", c).apply();
       connect.setText("Cancel / disconnect");
       status.setText("Starting native FIPS…");
       setInputs(false);

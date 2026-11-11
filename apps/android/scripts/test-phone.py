@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Physical-device acceptance, using real LAN peers. No adb reverse or port forwarding."""
+"""Physical-device acceptance, using real non-loopback native peers. No adb reverse or port forwarding."""
 import argparse,atexit,json,os,pathlib,re,shlex,subprocess,time,xml.etree.ElementTree as ET
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-P=argparse.ArgumentParser();P.add_argument('--serial',required=True);P.add_argument('--config',required=True);P.add_argument('--expect-error');P.add_argument('--label',default='map');P.add_argument('--lifecycle',action='store_true');P.add_argument('--network-change',action='store_true');P.add_argument('--bundled-default',action='store_true');P.add_argument('--cancel-pending',action='store_true');P.add_argument('--switch-map',action='append',default=[]);P.add_argument('--check-layers',action='store_true');a=P.parse_args()
+P=argparse.ArgumentParser();P.add_argument('--serial',required=True);P.add_argument('--ready-timeout',type=int,default=120);P.add_argument('--config',required=True);P.add_argument('--expect-error');P.add_argument('--label',default='map');P.add_argument('--lifecycle',action='store_true');P.add_argument('--network-change',action='store_true');P.add_argument('--bundled-default',action='store_true');P.add_argument('--cancel-pending',action='store_true');P.add_argument('--switch-map',action='append',default=[]);P.add_argument('--check-layers',action='store_true');a=P.parse_args()
 if a.serial.startswith('emulator-'):P.error('Use a connected physical device for this test')
 SDK=pathlib.Path(os.environ.get('ANDROID_HOME',str(pathlib.Path.home()/'Library/Android/sdk')))
 ADB=[str(SDK/'platform-tools/adb'),'-s',a.serial];OUT=ROOT/'output/phone';OUT.mkdir(parents=True,exist_ok=True)
@@ -24,7 +24,7 @@ def tap(fragment):
  raise AssertionError('Control absent: '+fragment)
 def logs():return live_path.read_text(errors='replace')
 def ready():
- tree=wait_ui(lambda t:'Map · z' in t and 'tiles · ready' in t,timeout=120)
+ tree=wait_ui(lambda t:'Map · z' in t and 'tiles · ready' in t,timeout=a.ready_timeout)
  events=[]
  for line in logs().splitlines():
   marker='AtlasRenderer: '
@@ -34,7 +34,7 @@ def ready():
  selected=re.findall(r'selected root=([a-f0-9]{64})',logs())
  good=[e for e in events if e.get('tiles',0)>0 and e.get('tiles')==e.get('wanted') and e.get('loading')==0 and (not selected or e.get('root')==selected[-1])]
  assert good,logs();return tree,good[-1]
-config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Physical test must use LAN endpoint'
+config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Physical test must use a non-loopback endpoint'
 adb('shell','am','force-stop',PACKAGE)
 adb('shell','input','keyevent','KEYCODE_WAKEUP');adb('shell','wm','dismiss-keyguard')
 if a.bundled_default:

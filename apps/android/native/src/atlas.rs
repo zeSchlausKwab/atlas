@@ -187,27 +187,42 @@ impl Link {
         report: &mut impl FnMut(Value),
     ) -> Result<Vec<u8>> {
         let digest = hash(h)?;
-        let id = self
-            .tcp
-            .connect(self.peer.clone(), milliseconds(self.start))
-            .await?;
-        let data = bounded(
-            cancel,
-            download(&mut self.tcp, id, &digest, self.start, report),
-        )
-        .await;
-        match data {
-            Ok(data) => {
-                self.tcp.close(id, milliseconds(self.start)).await?;
-                self.bytes += data.len() as u64;
-                self.blobs += 1;
-                Ok(data)
-            }
-            Err(e) => {
-                let _ = self.tcp.abort(id).await;
-                Err(e)
+        // Immutable, hash-pinned GETs may be replayed after a deadline. A fresh
+        // stream discards partial bytes; integrity/policy failures never retry.
+        for attempt in 0..2 {
+            let id = self
+                .tcp
+                .connect(self.peer, milliseconds(self.start))
+                .await?;
+            let data = bounded_for(
+                cancel,
+                Duration::from_secs(90),
+                download(&mut self.tcp, id, &digest, self.start, report),
+            )
+            .await;
+            match data {
+                Ok(data) => {
+                    self.tcp.close(id, milliseconds(self.start)).await?;
+                    self.bytes += data.len() as u64;
+                    self.blobs += 1;
+                    return Ok(data);
+                }
+                Err(e) => {
+                    let _ = self.tcp.abort(id).await;
+                    if attempt == 0
+                        && e.downcast_ref::<tokio::time::error::Elapsed>().is_some()
+                        && !cancel.load(Ordering::Relaxed)
+                    {
+                        report(
+                            json!({"stage":"retrying", "message":"Public path read timed out; retrying this verified blob once", "attempt":2}),
+                        );
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
+        unreachable!()
     }
     /// A well-known service request, validated against the host npub before it
     /// can create any resource grant. Ordinary blob reads always require SHA-256.
@@ -253,9 +268,16 @@ async fn bounded<T>(
     cancel: &AtomicBool,
     f: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
+    bounded_for(cancel, Duration::from_secs(25), f).await
+}
+async fn bounded_for<T>(
+    cancel: &AtomicBool,
+    deadline: Duration,
+    f: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
     ensure!(!cancel.load(Ordering::Relaxed), "Cancelled");
     tokio::select! {
-        r=tokio::time::timeout(Duration::from_secs(25),f)=>r.context("Native FIPS timed out after 25 seconds. Check peer identity, numeric endpoint, selected transport and firewall; reconnect after changing networks.")?,
+        r=tokio::time::timeout(deadline,f)=>r.with_context(||format!("Native FIPS timed out after {} seconds. Check the entry peer, network and transport; no fallback was used.",deadline.as_secs()))?,
         _=async {while !cancel.load(Ordering::Relaxed){tokio::time::sleep(Duration::from_millis(20)).await;}}=>anyhow::bail!("Cancelled; native connection closed")
     }
 }
@@ -301,6 +323,62 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn read_deadline_preserves_retry_classification_and_validation_errors() {
+        let cancel = AtomicBool::new(false);
+        let timeout = bounded_for(
+            &cancel,
+            Duration::from_millis(1),
+            std::future::pending::<Result<()>>(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            timeout
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_some()
+        );
+        let integrity = bounded_for(&cancel, Duration::from_secs(90), async {
+            anyhow::bail!("SHA-256 mismatch")
+        })
+        .await as Result<()>;
+        let integrity = integrity.unwrap_err();
+        assert!(
+            integrity
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_none()
+        );
+        assert_eq!(integrity.to_string(), "SHA-256 mismatch");
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_the_longer_read_window() {
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let trigger = cancel.clone();
+        let task = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            trigger.store(true, Ordering::Relaxed);
+        });
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            bounded_for(
+                &cancel,
+                Duration::from_secs(90),
+                std::future::pending::<Result<()>>(),
+            ),
+        )
+        .await
+        .expect("Cancellation must not wait for the read deadline")
+        .unwrap_err();
+        task.await.unwrap();
+        assert!(error.to_string().contains("Cancelled"));
+        assert!(
+            error
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_none()
+        );
+    }
+
     #[tokio::test]
     async fn npub_discovery_pins_catalog_signer_and_rejects_mixed_trust() {
         let endpoint = FipsEndpoint::builder()
