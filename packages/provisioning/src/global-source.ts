@@ -51,7 +51,7 @@ export interface PbfRegion {
 export interface PbfPlan {
   id: string;
   provider: "geofabrik";
-  region: { id: string; name: string; url: string };
+  region: { id: string; name: string; url: string; bounds?: Bounds };
   bytes: number;
   etag?: string;
   lastModified: string;

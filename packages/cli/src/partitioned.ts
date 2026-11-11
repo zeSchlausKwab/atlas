@@ -1,3 +1,4 @@
+import { boundarySelectionNote } from "../../boundaries/src/selection";
 import { routingAuthority } from "./routing-authority";
 import type { PreparedOcean } from "../../provisioning/src/ocean-source";
 import { oceanObjects } from "../../objects/src/ocean";
@@ -147,6 +148,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
     places: [],
     capabilities: [],
     limitations: [
+      ...boundarySelectionNote(s.boundaryMaxAdminLevel),
       "Prototype compiler: bounded source batches and spatial graph/search pages.",
       "Estimated transport costs; common via-node restrictions. Unsupported conditional/complex restrictions exclude incoming ways.",
       "Search includes explicit OSM house-number addresses; no interpolation or authoritative administrative hierarchy. Very broad text queries have a bounded candidate budget.",
@@ -455,7 +457,10 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 spoolPath,
               ])
                 await rm(file, { force: true });
-              const boundaries = new BoundaryWriter(writer);
+              const boundaries = new BoundaryWriter(
+                writer,
+                s.boundaryMaxAdminLevel,
+              );
               const search = new PagedSearchBuilder(searchPath),
                 spool = new BlockSpool(spoolPath, identity);
               const region: GeoPolygon = {

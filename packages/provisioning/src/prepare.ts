@@ -1,3 +1,7 @@
+import {
+  includesAdminLevel,
+  boundarySelectionNote,
+} from "../../boundaries/src/selection";
 import { ObjectWriter } from "../../objects/src/build";
 import {
   objectRecords,
@@ -197,13 +201,14 @@ export async function preparePackage(
       }
     }
     if (s.featureKinds.includes("boundaries")) {
-      const boundaries = new BoundaryWriter(writer);
+      const boundaries = new BoundaryWriter(writer, s.boundaryMaxAdminLevel);
       for await (const row of boundaryRecords(
         reader,
         bounds(s.polygon),
         signal,
         emit,
       )) {
+        if (!includesAdminLevel(row.tags, s.boundaryMaxAdminLevel)) continue;
         const f = await boundaryFeature(reader, row);
         if (booleanIntersects(f, region))
           await boundaries.add({
@@ -464,6 +469,7 @@ export async function preparePackage(
           : {}),
       },
       limitations: [
+        ...boundarySelectionNote(s.boundaryMaxAdminLevel),
         ...m.limitations,
         "Host excerpt: display tiles and whole source objects may extend outside the polygon. Routing uses whole cells with padding; a search leaving included coverage reports missing data. Transport counts sum cell records, including duplicates.",
       ],

@@ -1,3 +1,4 @@
+import { isWorldSelection } from "../../packages/provisioning/src/world-selection";
 import {
   WorkStorage,
   removeWorkspace,
@@ -933,6 +934,18 @@ export class Preparations {
       value = routingAmendmentSelection(a.manifest, b.manifest, amendment);
     }
     const inputPath = atlas ? this.path(atlas.id) : this.sourcePath;
+    if (
+      Array.isArray((value as PackageSelection)?.polygon) &&
+      isWorldSelection((value as PackageSelection).polygon) &&
+      !archiveImport &&
+      !imageImport &&
+      !compositionExport &&
+      (cached || plan) &&
+      cached?.kind !== "planet"
+    )
+      throw new Error(
+        "A world preparation requires a verified planet PBF; regional sources cannot supply worldwide coverage.",
+      );
     const selectedOcean = (value as PackageSelection)?.ocean;
     if (selectedOcean) {
       const ocean = await configuredOcean();
@@ -1039,6 +1052,25 @@ export class Preparations {
                     partitioned,
                     resume: !!previous?.resumeCheckpoint,
                     extractedBytes,
+                    selection,
+                    estimateSource: cached
+                      ? {
+                          kind:
+                            cached.kind === "planet" ? "planet" : "regional",
+                          bytes: cached.bytes,
+                        }
+                      : plan
+                        ? {
+                            kind: "regional",
+                            bytes: plan.bytes,
+                            bounds: plan.region.bounds,
+                            download: true,
+                          }
+                        : {
+                            kind: "atlas",
+                            bytes: Bun.file(inputPath).size,
+                            bounds: (atlas?.manifest ?? this.source).bounds,
+                          },
                     sourceBytes: plan?.bytes,
                     atlasBytes: Bun.file(inputPath).size,
                   });

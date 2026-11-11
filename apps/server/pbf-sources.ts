@@ -79,7 +79,12 @@ export class PbfSources {
     const plan: PbfPlan = {
       id: crypto.randomUUID(),
       provider: "geofabrik",
-      region: { id: region.id, name: region.name, url: sourceUrl },
+      region: {
+        id: region.id,
+        name: region.name,
+        url: sourceUrl,
+        bounds: region.bounds,
+      },
       bytes,
       ...(etag && !etag.startsWith("W/") ? { etag } : {}),
       lastModified,

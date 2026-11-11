@@ -1,3 +1,13 @@
+import {
+  PREPARATION_PRESETS,
+  preparationPreset,
+} from "../../../packages/provisioning/src/presets";
+import {
+  estimatePreparation,
+  type EstimateSource,
+  type ByteRange,
+} from "../../../packages/provisioning/src/estimate";
+import { isWorldSelection } from "../../../packages/provisioning/src/world-selection";
 import { hostActivity, showHostSection } from "./host-workbench";
 import type { CoverageRequest } from "../../../packages/coverage/src/index";
 import { openRasterAmendment } from "./host-raster-amend";
@@ -130,15 +140,123 @@ function largeSelection() {
     16
   );
 }
+function estimateSource(): EstimateSource | undefined {
+  const file = cachedSource();
+  if (cached())
+    return file
+      ? {
+          kind: file.kind === "planet" ? "planet" : "regional",
+          bytes: file.bytes,
+        }
+      : undefined;
+  if (remotePbf())
+    return sourcePlan
+      ? {
+          kind: "regional",
+          bytes: sourcePlan.bytes,
+          bounds: sourcePlan.region.bounds,
+          download: true,
+        }
+      : undefined;
+  return {
+    kind: "atlas",
+    bytes: atlasSource()?.bytes ?? baseSourceBytes,
+    bounds: selectedManifest().bounds,
+  };
+}
 function spaceNeeded() {
   return hostPreparationSpace(NO_SIZE_LIMIT, {
+    selection: selection(),
+    estimateSource: estimateSource(),
     cached: cached(),
     partitioned: largeSelection(),
     sourceBytes: remotePbf() ? sourcePlan?.bytes : undefined,
     atlasBytes: atlasSource()?.bytes ?? baseSourceBytes,
   });
 }
+function worldSourceMissing() {
+  return (
+    isWorldSelection(points) && !(cached() && cachedSource()?.kind === "planet")
+  );
+}
+function estimateRange(value: ByteRange) {
+  const units = ["MiB", "GiB", "TiB", "PiB"];
+  const unit = Math.min(
+    units.length - 1,
+    Math.max(
+      0,
+      Math.floor(
+        Math.log(Math.max(value.high, 1024 ** 2) / 1024 ** 2) / Math.log(1024),
+      ),
+    ),
+  );
+  const scale = 1024 ** (unit + 2);
+  const rounded = (n: number) =>
+    (n / scale).toLocaleString(undefined, { maximumSignificantDigits: 2 });
+  return `${rounded(value.low)}–${rounded(value.high)} ${units[unit]}`;
+}
+function renderEstimate() {
+  if (!initialized) {
+    el("estimate-breakdown").hidden = true;
+    return;
+  }
+  const source = estimateSource(),
+    s = selection();
+  const valid =
+    closed &&
+    source &&
+    [s.minZoom, s.maxZoom].every(
+      (z) => Number.isInteger(z) && z >= 0 && z <= 16,
+    ) &&
+    s.minZoom <= s.maxZoom;
+  el("estimate-breakdown").hidden = !valid;
+  if (!valid) return;
+  const estimate = estimatePreparation(s, source);
+  const totals = el("estimate-totals"),
+    components = el("estimate-components"),
+    notes = el("estimate-notes");
+  totals.replaceChildren();
+  components.replaceChildren();
+  notes.replaceChildren();
+  const row = (target: HTMLElement, label: string, value: string) =>
+    target.append(text("dt", label), text("dd", value));
+  row(
+    totals,
+    source.kind === "atlas"
+      ? "Finished archive · coarse allowance"
+      : "Finished archive · modeled range",
+    estimateRange(estimate.output),
+  );
+  row(
+    totals,
+    "Temporary files & checkpoints",
+    estimateRange(estimate.temporary),
+  );
+  row(
+    totals,
+    "New source download",
+    estimate.downloadBytes
+      ? storageSize(estimate.downloadBytes)
+      : "None · source already on server",
+  );
+  row(
+    totals,
+    "Source that must be read",
+    storageSize(estimate.sourceReadBytes),
+  );
+  row(totals, "Disk reserve & stopping buffer", "12 GiB");
+  for (const c of estimate.components)
+    row(components, c.name, estimateRange(c.bytes));
+  if (estimate.candidateTiles)
+    row(
+      components,
+      "Candidate tile cells per layer · includes empty cells",
+      estimate.candidateTiles.toLocaleString(),
+    );
+  for (const note of estimate.notes) notes.append(text("li", note));
+}
 function renderStorage() {
+  renderEstimate();
   const available = storage?.availableBytes;
   el("storage-meter").hidden = available === undefined;
   if (available !== undefined) {
@@ -150,7 +268,7 @@ function renderStorage() {
   }
   const estimate = el("storage-estimate");
   estimate.dataset.insufficient = "false";
-  if (!closed || (remotePbf() && !sourcePlan)) {
+  if (!closed || !estimateSource() || el("estimate-breakdown").hidden) {
     estimate.textContent = remotePbf()
       ? "Choose an area and find its covering download to check the source size."
       : "Choose an area and capabilities. The finished file size depends on the selected data.";
@@ -159,7 +277,7 @@ function renderStorage() {
   const needed = spaceNeeded(),
     risk = available !== undefined && needed > available;
   estimate.dataset.insufficient = String(risk);
-  estimate.textContent = `${remotePbf() ? `${storageSize(sourcePlan!.bytes)} source PBF · ` : ""}${storageSize(needed)} rough planning allowance for temporary files, output and free-space reserve. Actual use may be higher or lower.${risk ? " This might exceed free space. You can review the warning and start anyway." : ""}`;
+  estimate.textContent = `${remotePbf() ? `${storageSize(sourcePlan!.bytes)} source PBF · ` : ""}${storageSize(needed)} upper planning scenario for output, temporary files and reserve combined across the map and working disks. It is not a reservation or a guarantee.${risk ? " This might exceed free space. You can review the warning and start anyway." : ""}`;
 }
 let checking = false,
   submitting = false,
@@ -224,7 +342,11 @@ function update() {
   }
   el<HTMLButtonElement>("check-source").disabled = !closed || checking;
   el<HTMLButtonElement>("submit").disabled =
-    !closed || submitting || !sourceReady() || (remotePbf() && !sourcePlan);
+    !closed ||
+    submitting ||
+    !sourceReady() ||
+    worldSourceMissing() ||
+    (remotePbf() && !sourcePlan);
   el("submit").textContent = submitting
     ? "Starting…"
     : activeBuild
@@ -247,17 +369,21 @@ function update() {
       `Search & queries · ${queries.length ? queries.join(", ") : "off"}`;
     el("extract-summary").textContent =
       `Selectable source features · ${s.featureKinds.length ? s.featureKinds.join(", ") : "off"}`;
+    const preset = preparationPreset(el<HTMLSelectElement>("preset").value);
     el("preset-note").textContent =
-      {
-        view: "Geometry and labels for display. Routing, search and feature extraction stay off.",
-        geometry: "Display geometry only, without labels or query indexes.",
-        analysis:
-          "Tagged source objects, relationships, administrative areas and search. Independent of display categories; rendered map layers are optional.",
-        "water-buildings":
-          "Just water and building geometry, including available building heights.",
-        all: "Every capability available in this source, including all travel modes, search and selectable features.",
-        custom: "Your individual choices below define the package.",
-      }[el<HTMLSelectElement>("preset").value] ?? "";
+      preset?.description ??
+      "Your individual choices below define the package.";
+    el("boundary-depth-row").hidden = !s.featureKinds.includes("boundaries");
+    const unavailable =
+      preset && preset.fields !== "all"
+        ? preset.fields.filter((key) => fields.get(key)?.disabled)
+        : [];
+    el("preset-status").textContent = worldSourceMissing()
+      ? "A world map requires a verified planet PBF. Add one in Storage → Source files, then choose this preset again. A regional file cannot supply worldwide coverage."
+      : `${isWorldSelection(points) ? "Whole world · 85°S–85°N. " : "Uses your drawn area. "}Display z${s.minZoom}–${s.maxZoom}. ${unavailable.length ? `Unavailable in this source: ${unavailable.map((key) => fields.get(key)?.parentElement?.textContent?.trim() ?? key).join(", ")}.` : "Adjust any choice below; nothing starts until you submit."}`;
+    if (isWorldSelection(points) && s.ocean)
+      el("preset-status").textContent +=
+        " For worldwide sea fill, use a generalized coastline source: the current importer accepts at most 512 MiB / 25 million points after clipping. Otherwise uncheck Sea polygons and compose an ocean base separately.";
     el("summary").textContent = !sourceReady()
       ? "Choose an available source to continue."
       : !closed
@@ -373,6 +499,14 @@ async function switchPreview() {
 }
 function selection(): PackageSelection {
   return {
+    ...(checked("feature-boundaries") &&
+    el<HTMLSelectElement>("boundary-depth").value
+      ? {
+          boundaryMaxAdminLevel: Number(
+            el<HTMLSelectElement>("boundary-depth").value,
+          ),
+        }
+      : {}),
     ...(sourceValue().startsWith("cached:") && oceanSource && checked("ocean")
       ? { ocean: { sha256: oceanSource.sha256 } }
       : {}),
@@ -888,6 +1022,7 @@ function configureSource() {
   for (const k of ["layers", "labels", "profiles", "queries", "features"])
     for (const row of el(k).querySelectorAll("label")) row.remove();
   fields.clear();
+  el<HTMLSelectElement>("boundary-depth").value = "";
   el("source").textContent = cached()
     ? (cachedSource()?.name ?? "No verified PBF yet")
     : remotePbf()
@@ -1096,6 +1231,15 @@ export async function startBuilder() {
   if (sourceKind() === "atlas")
     el<HTMLSelectElement>("provider").value = "local";
   populateSources();
+  const presetSelect = el<HTMLSelectElement>("preset");
+  for (const group of ["World", "Your area"] as const) {
+    const options = document.createElement("optgroup");
+    options.label = group;
+    for (const preset of PREPARATION_PRESETS.filter((p) => p.group === group))
+      options.append(new Option(preset.label, preset.id));
+    presetSelect.append(options);
+  }
+  presetSelect.append(new Option("Custom selection", "custom"));
   initialized = true;
   configureSource();
   setupDeletion();
@@ -1166,30 +1310,53 @@ export async function startBuilder() {
     finish();
   };
   el("provider").onchange = () => void switchPreview();
-  el("preset").onchange = () => {
-    const preset = el<HTMLSelectElement>("preset").value;
-    if (preset === "custom") return;
-    for (const [k, input] of fields)
+  el("preset").onchange = async () => {
+    const preset = preparationPreset(el<HTMLSelectElement>("preset").value);
+    if (!preset) {
+      update();
+      return;
+    }
+    if (preset.world) {
+      const planet = cachedSources.find((s) => s.kind === "planet");
+      if (planet) {
+        document.querySelector<HTMLInputElement>(
+          'input[name="build-source-kind"][value="cached"]',
+        )!.checked = true;
+        populateSources();
+        el<HTMLSelectElement>("data-source").value = `cached:${planet.id}`;
+        configureSource();
+      }
+      points = [
+        [-180, -85],
+        [180, -85],
+        [180, 85],
+        [-180, 85],
+      ];
+      closed = true;
+      mode = null;
+      el<HTMLInputElement>("name").value = preset.label;
+    }
+    for (const [key, input] of fields)
       input.checked =
         !input.disabled &&
-        (preset === "all" ||
-          (preset === "analysis" &&
-            [
-              "feature-objects",
-              "feature-boundaries",
-              "search",
-              "reverse",
-              "query-peaks",
-            ].includes(k)) ||
-          (preset === "geometry" &&
-            (k.startsWith("layer-") || k === "ocean")) ||
-          (preset === "view" &&
-            (k.startsWith("layer-") ||
-              ["places", "streets", "pois", "ocean"].includes(k))) ||
-          (preset === "water-buildings" &&
-            ["layer-water", "layer-buildings", "ocean"].includes(k)));
+        (preset.fields === "all" || preset.fields.includes(key));
+    const current = scope();
+    el<HTMLInputElement>("min").value = String(current.minZoom);
+    el<HTMLInputElement>("max").value = String(
+      Math.max(current.minZoom, Math.min(current.maxZoom, preset.maxZoom)),
+    );
+    el<HTMLSelectElement>("boundary-depth").value = String(
+      preset.boundaryMaxAdminLevel ?? "",
+    );
+    el<HTMLSelectElement>("preset").value = preset.id;
     update();
+    if (preset.world) await switchPreview();
   };
+  for (const id of ["min", "max", "boundary-depth"])
+    el(id).addEventListener("input", () => {
+      el<HTMLSelectElement>("preset").value = "custom";
+      update();
+    });
   el<HTMLFormElement>("form").onsubmit = async (event) => {
     event.preventDefault();
     if (el<HTMLButtonElement>("submit").disabled) return;
