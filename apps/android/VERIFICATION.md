@@ -4,6 +4,47 @@ Branch: `codex/android-atlas-native-fips`. Migrated without shell history from
 napplet-space `d00ec1ea657c279c120de2c25f071298d17ecfdc`.
 [Original transport-demo evidence](TRANSPORT-VERIFICATION.md) is retained.
 
+## Direct endpoint emulator experiment — 11 November 2026
+
+The user substituted an emulator when the Pixel disconnected. The existing
+0.5.0 APK was installed on `Medium_Phone_API_36.1` (ARM64, Emulator 36.1.9).
+Automatic host graphics produced a black display despite successful reads;
+a cold boot with SwiftShader and Vulkan disabled restored rendering. The APK,
+native dependencies and provider were unchanged.
+
+Path tested: Android emulator → Mac host network → router WAN IPv4/hairpin
+forward → same-server native FIPS entry → loopback TCP → native Atlas provider.
+The entry uses the selected physical TCP or UDP carrier; both identities remain
+pinned. The user-approved public router mappings have one-hour leases, expiring
+around **16:29 Vienna time on 11 November**. This test does **not** establish
+reachability or performance from outside the LAN; direct cellular acceptance is
+still pending. Earlier cellular acceptance below used a different public entry.
+
+| Direct carrier | Observed result |
+| --- | --- |
+| TCP | **Pass**: Lower Rhine East, 18/18 tiles, 67,466 triangles, 3,548,046 verified payload bytes, 76 hashed blobs. First complete viewport in **40.88 seconds**. |
+| TCP layers | Disabling all display layers stopped tile reads even when zooming; re-enabling loaded tiles. |
+| TCP lifecycle | Background closed the native session; foreground reconnected. Explicit cancellation and reconnect passed. Final screenshot visually inspected. |
+| UDP | **Fail**: exceeded the 240-second acceptance deadline. Continued observation reached only **15/18 tiles**, 62,556 triangles, 3,476,485 verified payload bytes and 74 blobs after **9 minutes 11 seconds**, with no requests left loading. Screenshot inspected; missing geometry is visible. |
+| Independent Mac UDP probe | Completed signed discovery and 36 verified reads / 136,145 payload bytes in **5.69 seconds** while the emulator was slow. This smaller workload does not isolate the cause or substitute for a viewport test. |
+
+UDP logs show long gaps and timeout retries. No verification was disabled and no
+alternate transport was used. UDP layer/lifecycle acceptance did not run because
+the initial map failed. The UI also incorrectly reports `15/18 tiles · ready`
+when its queue drains after failures; the acceptance assertion requires every
+wanted tile and correctly refuses to count this as success. Follow-up work should
+trace UDP retransmission/flow control and report partial map loads accurately,
+rather than treating a longer timeout as a performance fix.
+
+The real-map acceptance harness now allows an explicit `--allow-emulator` opt-in,
+keeps emulator evidence separate from phone evidence, records the network caveat,
+and retries transient UI snapshot failures during progress updates. Reproduction
+commands are in [README.md](README.md). Evidence is ignored in `output/emulator/`:
+`direct-public-tcp*`, `direct-public-udp-live.log`,
+`direct-public-udp-observed.log`, `direct-public-udp-partial.*` and environment JSON.
+The initial UDP log preserves startup; the observed log retains later progress
+because Android's logcat ring can evict early events during long runs.
+
 ## Current deliverable: public FIPS viewer
 
 - ARM64 debug APK **0.5.0-public-fips**, version code 4, 31,765,371 bytes.
@@ -239,8 +280,9 @@ map exports or APKs are committed. Use [README.md](README.md) to reproduce.
   already-queued native reads are not cancelled separately.
 - Native root grants authorize verified descendants. Layer selection governs the
   trusted renderer's reads, not a per-family security ACL.
-- Other Android versions/models have not been physically retested. Original
-  emulator evidence is historical, not a new emulator run.
+- Other Android versions/models have not been physically retested. The new
+  emulator run above covers direct TCP rendering/lifecycle and records the UDP
+  completion failure; original synthetic transport evidence remains historical.
 - The debug app accepts public config through an Android intent for acceptance;
   it is not a general production shell permission model. Lint warnings concern
   localization, ABI/data-extraction configuration, layouts and tool updates;

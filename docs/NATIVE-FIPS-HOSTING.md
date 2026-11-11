@@ -165,13 +165,24 @@ signed offers, real Lower Rhine East header, grant/descendant/hash verification,
 36 hashed reads and 136,145 verified payload bytes. TCP took 6.57 seconds and UDP
 5.87 seconds. This is a **LAN hairpin/forwarding test**, not cellular acceptance,
 a full viewport benchmark or evidence of WAN performance. The phone disconnected
-before the off-LAN test and must be reconnected to complete that check. Evidence
-and temporary endpoint profiles remain ignored under `apps/android/output/`.
+before the off-LAN test; the user requested emulator acceptance instead. An
+emulator uses its host network, so that substitution cannot establish off-LAN
+reachability or cellular performance. Evidence and temporary endpoint profiles
+remain ignored under `apps/android/output/`.
+
+The subsequent Android emulator run loaded the real TCP viewport completely in
+40.88 seconds (18/18 tiles, 3,548,046 verified bytes); layer controls,
+background/resume and explicit disconnect/reconnect passed. UDP exceeded the
+four-minute acceptance deadline and settled at 15/18 tiles after roughly nine
+minutes despite timeout retries. It is **not a successful full-map UDP test**.
+A concurrent Mac UDP probe passed in 5.69 seconds, but read far less data.
+See [emulator evidence and remaining issues](../apps/android/VERIFICATION.md).
+Neither result establishes off-LAN reachability for these new direct forwards.
 
 Forward **TCP 42131 → server TCP 42131** and **UDP 42132 → server UDP 42132**.
 The destination for this installation is 192.168.0.179. Keep admin port 3100
-private. The current server firewall admits only LAN sources to the native
-ports. With administrator access, temporary test rules are:
+private. The baseline server firewall admits only LAN sources to the native ports.
+The user applied these additional temporary test rules with administrator access:
 
 ```sh
 sudo iptables -I nixos-fw 1 -i eno1 -p tcp --dport 42131 -m comment --comment atlas-native-direct-test -j nixos-fw-accept

@@ -182,6 +182,34 @@ acceptance temporarily disables Wi-Fi and restores it in a `finally` block.
 `--bundled-default` clears **this demo app's** settings and launches without any
 configuration intent, proving automatic startup from the APK's public preset.
 
+To run the real map viewer in an emulator, opt in explicitly (the original
+`test-emulator.py` still tests the synthetic transport lab):
+
+```sh
+python3 scripts/test-phone.py --serial emulator-5554 --allow-emulator \
+  --config output/direct-public-tcp.json --label direct-public-tcp \
+  --ready-timeout 240 --check-layers --lifecycle
+python3 scripts/test-phone.py --serial emulator-5554 --allow-emulator \
+  --config output/direct-public-udp.json --label direct-public-udp \
+  --ready-timeout 900
+```
+
+On the tested Apple Silicon host, Emulator 36.1.9's automatic graphics backend
+produced a black display despite successful native reads. Cold booting this AVD
+with software OpenGL restored the display without changing the APK:
+
+```sh
+"$ANDROID_HOME/emulator/emulator" -avd Medium_Phone_API_36.1 \
+  -no-snapshot -no-boot-anim -gpu swiftshader_indirect -feature -Vulkan
+```
+
+Use a reachable profile prepared for your provider. These examples require the
+[temporary direct endpoint](../../docs/NATIVE-FIPS-HOSTING.md) to be active.
+Emulator evidence goes to `output/emulator/`, separate from phone evidence, with
+an environment JSON identifying the carrier and endpoint. The emulator uses the
+host computer's network: accessing a WAN address from its LAN verifies hairpin
+forwarding, **not** off-LAN cellular access. Run UI tests sequentially.
+
 For the public-entry APK, build with public settings and test cellular explicitly:
 
 ```sh

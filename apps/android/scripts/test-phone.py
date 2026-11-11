@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
-"""Physical-device acceptance, using real non-loopback native peers. No adb reverse or port forwarding."""
+"""Real-map acceptance on a phone or explicitly opted-in emulator. No adb reverse."""
 import argparse,atexit,json,os,pathlib,re,shlex,subprocess,time,xml.etree.ElementTree as ET
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-P=argparse.ArgumentParser();P.add_argument('--serial',required=True);P.add_argument('--ready-timeout',type=int,default=120);P.add_argument('--config',required=True);P.add_argument('--expect-error');P.add_argument('--label',default='map');P.add_argument('--lifecycle',action='store_true');P.add_argument('--network-change',action='store_true');P.add_argument('--bundled-default',action='store_true');P.add_argument('--cancel-pending',action='store_true');P.add_argument('--switch-map',action='append',default=[]);P.add_argument('--check-layers',action='store_true');a=P.parse_args()
-if a.serial.startswith('emulator-'):P.error('Use a connected physical device for this test')
+P=argparse.ArgumentParser();P.add_argument('--serial',required=True);P.add_argument('--allow-emulator',action='store_true',help='Test the real viewer in an emulator; this does not prove off-LAN connectivity');P.add_argument('--ready-timeout',type=int,default=120);P.add_argument('--config',required=True);P.add_argument('--expect-error');P.add_argument('--label',default='map');P.add_argument('--lifecycle',action='store_true');P.add_argument('--network-change',action='store_true');P.add_argument('--bundled-default',action='store_true');P.add_argument('--cancel-pending',action='store_true');P.add_argument('--switch-map',action='append',default=[]);P.add_argument('--check-layers',action='store_true');a=P.parse_args()
+is_emulator=a.serial.startswith('emulator-')
+if is_emulator and not a.allow_emulator:P.error('Use a connected physical device, or explicitly opt in with --allow-emulator')
+if not re.fullmatch(r'[A-Za-z0-9_-]+',a.label):P.error('--label must contain only letters, digits, underscores and hyphens')
+if a.ready_timeout<=0:P.error('--ready-timeout must be positive')
 SDK=pathlib.Path(os.environ.get('ANDROID_HOME',str(pathlib.Path.home()/'Library/Android/sdk')))
-ADB=[str(SDK/'platform-tools/adb'),'-s',a.serial];OUT=ROOT/'output/phone';OUT.mkdir(parents=True,exist_ok=True)
+ADB=[str(SDK/'platform-tools/adb'),'-s',a.serial];OUT=ROOT/'output'/('emulator' if is_emulator else 'phone');OUT.mkdir(parents=True,exist_ok=True)
 PACKAGE='org.atlas.nativeviewer';ACTIVITY=PACKAGE+'/soy.napplet.fipsdemo.AtlasActivity'
 def adb(*args,binary=False):return subprocess.check_output(ADB+list(args),text=not binary,timeout=40)
 def screen():
- adb('shell','uiautomator dump /sdcard/atlas-native-ui.xml >/dev/null');return ET.fromstring(adb('exec-out','cat','/sdcard/atlas-native-ui.xml'))
+ # Progress updates can keep accessibility busy. Retry failed snapshots rather
+ # than parsing a missing/stale dump or mistaking a test-driver error for a map failure.
+ end=time.monotonic()+45;last='No UI snapshot'
+ while time.monotonic()<end:
+  result=adb('shell','uiautomator dump /sdcard/atlas-native-ui.xml')
+  if 'dumped to: /sdcard/atlas-native-ui.xml' not in result:last=result.strip();continue
+  try:return ET.fromstring(adb('exec-out','cat','/sdcard/atlas-native-ui.xml'))
+  except ET.ParseError as error:last=str(error)
+ raise AssertionError('Could not capture current Android UI: '+last)
 def texts(tree):return '\n'.join(n.get('text','') for n in tree.iter('node'))
 def wait_ui(check,timeout=40):
  end=time.monotonic()+timeout
@@ -34,7 +45,10 @@ def ready():
  selected=re.findall(r'selected root=([a-f0-9]{64})',logs())
  good=[e for e in events if e.get('tiles',0)>0 and e.get('tiles')==e.get('wanted') and e.get('loading')==0 and (not selected or e.get('root')==selected[-1])]
  assert good,logs();return tree,good[-1]
-config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Physical test must use a non-loopback endpoint'
+config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Real-map acceptance must use a non-loopback endpoint'
+evidence={'deviceKind':'emulator' if is_emulator else 'physical','serial':a.serial,'transport':config['transport'],'entry':config.get('bootstrap',config)['address'],'offLanVerified':False,'networkNote':'Emulator uses the host network; simulated cellular is not off-LAN proof' if is_emulator else 'This harness does not verify the network route; use test-cellular.py for off-LAN acceptance'}
+(OUT/(a.label+'-environment.json')).write_text(json.dumps(evidence,indent=2)+'\n')
+print('Testing',evidence['deviceKind'],evidence['transport'],evidence['networkNote'],flush=True)
 adb('shell','am','force-stop',PACKAGE)
 adb('shell','input','keyevent','KEYCODE_WAKEUP');adb('shell','wm','dismiss-keyguard')
 if a.bundled_default:
