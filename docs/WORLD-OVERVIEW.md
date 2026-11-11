@@ -35,6 +35,11 @@ bun scripts/world-overview.ts data/world-overview.atlas data/natural-earth
 
 On 11 November 2026, the four inputs totalled **8,693,819 bytes**. A local cached
 build plus verification took **0.82 seconds** and produced **3,464,050 bytes**.
+The deployed server also completed the recipe: **3,488,970 bytes (3.33 MiB)**
+in the library, then published its Hashtree revision. Its packing pass reported
+0.89 seconds; source acquisition/publication are separate. Host metadata explains
+the small size difference from the command-line fixture.
+
 These measurements describe this fixed recipe on the development machine, not
 an arbitrary OSM build. The server admission allowance is 1 GiB of working space
 plus its existing reserve. The new job persists and dispatches through the normal
