@@ -1,3 +1,4 @@
+import { copyArchiveBlocks } from "./archive-copy";
 import { boundarySelectionNote } from "../../boundaries/src/selection";
 import { routingAuthority } from "./routing-authority";
 import type { PreparedOcean } from "../../provisioning/src/ocean-source";
@@ -849,33 +850,14 @@ export async function compilePartitioned(o: PartitionedOptions) {
         "bytes",
       );
       for (const path of artifacts) {
-        let payloadCopied = 0;
-        const reader = await new AtlasReader(
-          new FileSource(Bun.file(path)),
-        ).open();
-        try {
-          const { snapshot, ...m } = reader.index.manifest;
-          manifest = { ...manifest, ...m, capabilities: [] };
-          for (const c of m.capabilities) caps.add(c);
-          for (const kind of m.featureKinds ?? []) featureKinds.add(kind);
-          // Optional fields from earlier artifacts survive Object.assign (absent fields are omitted in JSON).
-          for await (const block of reader.iterateBlocks()) {
-            signal.throwIfAborted();
-            await writer.add({
-              ...block,
-              codec: undefined,
-              rawLength: undefined,
-              bytes: await reader.block(block.key),
-            });
-            copied += block.length;
-            payloadCopied += block.length;
-            packing(copied);
-            reader.cache.delete(block.key);
-          }
-        } finally {
-          reader.dispose();
-        }
-        copied += Bun.file(path).size - payloadCopied;
+        const result = await copyArchiveBlocks(path, writer, signal, (done) =>
+          packing(copied + done),
+        );
+        const { snapshot, ...m } = result.manifest;
+        manifest = { ...manifest, ...m, capabilities: [] };
+        for (const c of m.capabilities) caps.add(c);
+        for (const kind of m.featureKinds ?? []) featureKinds.add(kind);
+        copied += Bun.file(path).size;
         packing(copied);
       }
       // Base counters in later stage manifests must not overwrite semantic counts.

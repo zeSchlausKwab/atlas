@@ -33,6 +33,28 @@ export class StreamWriter implements BlockWriter {
   private file!: FileHandle;
   private length = 0;
   private count = 0;
+  private pending = new Uint8Array(4 * 1024 ** 2);
+  private pendingLength = 0;
+  private async flush() {
+    if (!this.pendingLength) return;
+    await writeAll(
+      this.file,
+      this.pending.subarray(0, this.pendingLength),
+      RESERVE + this.length - this.pendingLength,
+    );
+    this.pendingLength = 0;
+  }
+  private async append(bytes: Uint8Array) {
+    if (this.pendingLength + bytes.length > this.pending.length)
+      await this.flush();
+    if (bytes.length >= this.pending.length)
+      await writeAll(this.file, bytes, RESERVE + this.length);
+    else {
+      this.pending.set(bytes, this.pendingLength);
+      this.pendingLength += bytes.length;
+    }
+    this.length += bytes.length;
+  }
   constructor(
     readonly output: string,
     readonly maxBytes: number,
@@ -72,7 +94,10 @@ export class StreamWriter implements BlockWriter {
   }
   async add(
     input: InputBlock,
-    { compress = true }: { compress?: boolean } = {},
+    {
+      compress = true,
+      expectedHash,
+    }: { compress?: boolean; expectedHash?: string } = {},
   ) {
     const zipped =
       input.codec || !compress
@@ -96,6 +121,8 @@ export class StreamWriter implements BlockWriter {
         : stored,
       this.length,
     );
+    if (expectedHash !== undefined && b.hash !== expectedHash)
+      throw new Error(`Integrity check failed while copying: ${input.key}`);
     const page = a
       ? pageKey(
           a.prefix,
@@ -107,8 +134,7 @@ export class StreamWriter implements BlockWriter {
     this.db
       .query("INSERT INTO blocks VALUES(?,?,?)")
       .run(b.key, page, JSON.stringify(b));
-    await writeAll(this.file, stored.bytes, RESERVE + this.length);
-    this.length += stored.bytes.length;
+    await this.append(stored.bytes);
     if (++this.count % 10000 === 0) this.db.run("COMMIT; BEGIN;");
   }
   async finish(
@@ -172,8 +198,7 @@ export class StreamWriter implements BlockWriter {
         count: blocks.length,
         prefix: a.prefix,
       });
-      await writeAll(this.file, bytes, RESERVE + this.length);
-      this.length += bytes.length;
+      await this.append(bytes);
       progress?.("directory", pages.length, pageTotal);
       // Current format root has a 64 MiB encoded cap. Fail before unbounded descriptor growth.
       if (pages.length > 180000 || this.length > this.maxBytes)
@@ -183,6 +208,7 @@ export class StreamWriter implements BlockWriter {
     const prefix = await encodePrefix(manifest, root, this.length, pages);
     const size = prefix.length + this.length;
     if (size > this.maxBytes) throw new Error("Package exceeds output budget");
+    await this.flush();
     await beforeCopy?.(size);
     if (prefix.length > RESERVE)
       throw new Error("Archive metadata exceeds reserved prefix");
