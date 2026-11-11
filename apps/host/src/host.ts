@@ -1,3 +1,4 @@
+import { startWorldOverview } from "./host-world-overview";
 import { startWorkStorage } from "./host-work-storage";
 import { startViews } from "./host-views";
 import { startWorkbench } from "./host-workbench";
@@ -103,6 +104,7 @@ async function start() {
     await Promise.all([
       load(),
       startBuilder(),
+      startWorldOverview(),
       startWorkStorage(),
       startViews(),
       startImagery(),

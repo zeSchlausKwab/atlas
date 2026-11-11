@@ -1,3 +1,7 @@
+import {
+  worldOverviewSelection,
+  WORLD_WORKSPACE_ALLOWANCE,
+} from "../../packages/provisioning/src/world-overview";
 import { isWorldSelection } from "../../packages/provisioning/src/world-selection";
 import {
   WorkStorage,
@@ -97,6 +101,7 @@ export interface PreparationJob {
   imageImport?: ImageImport;
   archiveImport?: ArchiveImport;
   compositionExport?: CompositionExport;
+  naturalEarth?: boolean;
   rasterAmendment?: RasterAmendment;
   sourceAtlasId?: string;
   amendment?: HostedAmendment;
@@ -825,6 +830,7 @@ export class Preparations {
       capabilityChange?: CapabilityChange;
       rasterAmendment?: RasterAmendment;
       compositionExport?: CompositionExport;
+      naturalEarth?: boolean;
       allowStorageRisk?: boolean;
     } | null;
     if (
@@ -834,6 +840,26 @@ export class Preparations {
       throw new Error("Invalid storage override");
     const allowStorageRisk =
       previous?.allowStorageRisk ?? extra?.allowStorageRisk ?? false;
+    const naturalEarth = previous?.naturalEarth ?? extra?.naturalEarth ?? false;
+    if (typeof naturalEarth !== "boolean")
+      throw Error("Invalid world overview recipe");
+    if (naturalEarth) {
+      if (
+        extra?.sourcePlanId ||
+        extra?.cachedSourceId ||
+        extra?.sourceAtlasId ||
+        extra?.amendment ||
+        extra?.capabilityChange ||
+        extra?.rasterAmendment ||
+        extra?.compositionExport ||
+        previous?.imageImport ||
+        previous?.archiveImport
+      )
+        throw Error("Choose one preparation type");
+      value = worldOverviewSelection(
+        previous?.name ?? (value as { name?: unknown })?.name,
+      );
+    }
     const imageImport = previous?.imageImport;
     const archiveImport = previous?.archiveImport;
     const compositionExport =
@@ -959,7 +985,9 @@ export class Preparations {
           "Choose the configured ocean source with a cached PBF; GDAL must be installed",
         );
     }
-    if (compositionExport) {
+    if (naturalEarth) {
+      // Fixed pinned world recipe; no parent archive or PBF needed.
+    } else if (compositionExport) {
       // Each independent member is pinned above; the parent is only a container.
     } else if (rasterPlan) {
       // Raster inputs are pinned and validated independently of PBF capability selections.
@@ -1034,46 +1062,52 @@ export class Preparations {
             ),
           ).size
         : 0;
-    const needed = compositionInputs
-      ? DISK_RESERVE + compositionInputs.reduce((n, i) => n + i.bytes, 0) * 2.1
-      : rasterPlan
-        ? rasterPlan.estimatedWorkspaceBytes
-        : archiveImport
-          ? DISK_RESERVE +
-            (archiveImport.format === "mbtiles" ? archiveImport.size * 2.2 : 0)
-          : imageImport
-            ? DISK_RESERVE + imageImport.estimatedBytes
-            : capabilityPlan
-              ? capabilityPlan.estimatedWorkspaceBytes
-              : amendment
-                ? (await this.planAmendment(amendment)).estimatedWorkspaceBytes
-                : hostPreparationSpace(selection.maxBytes, {
-                    cached: !!cached,
-                    partitioned,
-                    resume: !!previous?.resumeCheckpoint,
-                    extractedBytes,
-                    selection,
-                    estimateSource: cached
-                      ? {
-                          kind:
-                            cached.kind === "planet" ? "planet" : "regional",
-                          bytes: cached.bytes,
-                        }
-                      : plan
+    const needed = naturalEarth
+      ? DISK_RESERVE + WORLD_WORKSPACE_ALLOWANCE
+      : compositionInputs
+        ? DISK_RESERVE +
+          compositionInputs.reduce((n, i) => n + i.bytes, 0) * 2.1
+        : rasterPlan
+          ? rasterPlan.estimatedWorkspaceBytes
+          : archiveImport
+            ? DISK_RESERVE +
+              (archiveImport.format === "mbtiles"
+                ? archiveImport.size * 2.2
+                : 0)
+            : imageImport
+              ? DISK_RESERVE + imageImport.estimatedBytes
+              : capabilityPlan
+                ? capabilityPlan.estimatedWorkspaceBytes
+                : amendment
+                  ? (await this.planAmendment(amendment))
+                      .estimatedWorkspaceBytes
+                  : hostPreparationSpace(selection.maxBytes, {
+                      cached: !!cached,
+                      partitioned,
+                      resume: !!previous?.resumeCheckpoint,
+                      extractedBytes,
+                      selection,
+                      estimateSource: cached
                         ? {
-                            kind: "regional",
-                            bytes: plan.bytes,
-                            bounds: plan.region.bounds,
-                            download: true,
+                            kind:
+                              cached.kind === "planet" ? "planet" : "regional",
+                            bytes: cached.bytes,
                           }
-                        : {
-                            kind: "atlas",
-                            bytes: Bun.file(inputPath).size,
-                            bounds: (atlas?.manifest ?? this.source).bounds,
-                          },
-                    sourceBytes: plan?.bytes,
-                    atlasBytes: Bun.file(inputPath).size,
-                  });
+                        : plan
+                          ? {
+                              kind: "regional",
+                              bytes: plan.bytes,
+                              bounds: plan.region.bounds,
+                              download: true,
+                            }
+                          : {
+                              kind: "atlas",
+                              bytes: Bun.file(inputPath).size,
+                              bounds: (atlas?.manifest ?? this.source).bounds,
+                            },
+                      sourceBytes: plan?.bytes,
+                      atlasBytes: Bun.file(inputPath).size,
+                    });
     const disk = await readStorage(this.directory);
     const jobId = previous?.id ?? crypto.randomUUID();
     // Existing jobs keep their exact paths. New cached-PBF builds can use the configured disk.
@@ -1103,6 +1137,7 @@ export class Preparations {
         imageImport,
         archiveImport,
         compositionExport,
+        naturalEarth,
         rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
@@ -1153,6 +1188,7 @@ export class Preparations {
         imageImport,
         archiveImport,
         compositionExport,
+        naturalEarth,
         rasterAmendment,
         sourceAtlasId: atlas?.id,
         amendment,
@@ -1293,6 +1329,7 @@ export class Preparations {
         source: inputPath,
         output: this.path(id),
         selection: job.selection,
+        naturalEarth,
         sourcePlan: plan,
         cachedSource: cached,
         imageImport,

@@ -157,6 +157,45 @@
         </form>
       </section>
       <section id="prepare" class="host-builder">
+        <form
+          id="world-overview-form"
+          class="host-source-step"
+          method="post"
+          action="/admin/preparations"
+          aria-labelledby="world-overview-title"
+        >
+          <h2 id="world-overview-title">A whole world, ready in moments.</h2>
+          <p>
+            Generalized countries, major places, oceans and lakes. A small
+            starting map for world-scale visualization, with country polygons
+            available for analysis and drawing.
+          </p>
+          <p class="quiet" id="world-overview-details">
+            Natural Earth v5.1.2 · 1:50m · zoom 0–6 · 8.3 MiB source download ·
+            about 3.3 MiB finished. Allow 1 GiB working space plus the server
+            reserve. Municipalities and routing use the detailed OSM builder
+            below.
+          </p>
+          <label class="host-field" for="world-overview-name"
+            ><span>Map name (required)</span></label
+          >
+          <input
+            id="world-overview-name"
+            name="name"
+            required
+            maxlength="80"
+            value="World overview · Natural Earth"
+            aria-describedby="world-overview-details"
+          />
+          <button type="submit" id="world-overview-start">
+            Prepare world overview
+          </button>
+          <p id="world-overview-status" role="status"></p>
+          <noscript
+            >This server console requires JavaScript to queue
+            preparations.</noscript
+          >
+        </form>
         <section class="host-source-step" aria-labelledby="source-step-title">
           <div class="host-step-heading">
             <span class="host-step-number">01</span>

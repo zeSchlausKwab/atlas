@@ -505,3 +505,5 @@ service restart; activate it later with the printed `--resume` command.
 
 
 The host workbench uses **Library / Prepare / Import / Network / Tools** tabs, with downloads and preparations in a persistent Activity rail (a bottom drawer on mobile). In the client, **Offline → Save an area here** reviews and pins selected capabilities in browser storage for later map and AI-tool reuse. It supports pause/resume and overlapping saved areas. The AI tools `acquisition_catalog`, `acquisition_plan`, `acquisition_save` and `acquisition_status` share that workflow. Browser saves are persistent caches; the host flow exports a portable `.atlas`. See [area acquisition](docs/AREA-ACQUISITION.md) for scope and offline limits.
+
+The [fast world overview](docs/WORLD-OVERVIEW.md) builds a small global visualization map without processing the OSM planet.

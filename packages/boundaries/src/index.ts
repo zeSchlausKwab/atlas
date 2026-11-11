@@ -58,7 +58,8 @@ const bboxValid = (b: unknown): b is Bounds =>
   b[0] <= b[2] &&
   b[1] <= b[3];
 const idValid = (id: unknown) =>
-  typeof id === "string" && /^(node|way|relation)\/\d+$/.test(id);
+  typeof id === "string" &&
+  /^(?:(?:node|way|relation)\/\d+|natural-earth\/admin-0\/\d+)$/.test(id);
 const contains = (outer: Bounds, inner: Bounds) =>
   outer[0] <= inner[0] &&
   outer[1] <= inner[1] &&

@@ -165,7 +165,9 @@ export function validateFeatures(data: any): MapFeature[] {
       (f: any) =>
         f?.type === "Feature" &&
         typeof f.id === "string" &&
-        /^(way|relation)\/\d+$/.test(f.id) &&
+        (/^(way|relation)\/\d+$/.test(f.id) ||
+          (f.properties?.kind === "boundaries" &&
+            /^natural-earth\/admin-0\/\d+$/.test(f.id))) &&
         f.properties?.id === f.id &&
         FEATURE_KINDS.includes(f.properties.kind) &&
         typeof f.properties.name === "string" &&
