@@ -95,3 +95,29 @@ sidecar can also read the deployed server's published Atlas files and Hashtree
 indexes directly, using separate identities and physical TCP/UDP ports. That adapter does not add native ingress to the TypeScript process or
 implement the shared shell/discovery contract above. No shell source changes
 are implied by that demo.
+
+### Npub routing addendum — 11 November 2026
+
+Atlas commit `79ea2d2` adds a tested native three-node path: Android selects a
+**map host npub**, joins a separately pinned entry peer over physical TCP or UDP,
+then uses FIPS identity routing to reach the provider through that peer. The
+provider has no publicly reachable listener in this deployment; its outbound
+link to the entry is TCP on server loopback. The client never receives its IP.
+Both carriers share one host identity. Public entry-peer profiles are bundled,
+so launching the phone viewer needs no manual connection. Physical Pixel tests
+cover maps, satellite imagery, layers, pan/pinch and lifecycle/network recovery.
+
+Keep **identity selection** separate from **network bootstrap** in the shared
+shell. An npub identifies the destination; a reachable entry point remains
+necessary. Do not promise public Internet reachability from this LAN-only test,
+or label a mixed UDP-entry/TCP-onward path as UDP on every hop. Show the selected
+carrier, entry identity and authenticated target identity in diagnostics.
+
+The native experiment requests a fresh, host-signed catalog from a well-known
+service at that npub, then grants roots and verifies descendants. This removes
+manual catalog hashes for this demo; it is not a replacement for production
+announcement/withdrawal semantics. Its catalog signer is the native host's key.
+The shared contract must still support distinct publisher and provider roles
+with validated authorization between them. Do not transfer the demo's implicit
+same-key assumption into general Nostr discovery. See the native architecture
+for framing, expiry, trust boundaries and retained limitations.
