@@ -37,6 +37,13 @@ discovery, host default views and map operations without a public HTTP map origi
 HTTP delivery is an explicit option. Existing Atlas files need no rebuild.
 See [FIPS hosting, configuration and protocol boundaries](docs/FIPS-HOSTING.md).
 
+## Android native FIPS viewer
+
+The isolated [Android module](apps/android/README.md) loads a real Atlas map over
+native TCP or UDP with pinned identity, signed discovery and verified Hashtree
+reads. Its configured demo opens automatically. See the [architecture and
+remaining integration boundaries](docs/ANDROID-NATIVE-FIPS.md).
+
 ## FIPS napplet preview
 
 The experimental [Atlas consumer napplet](atlas-consumer/README.md) reads a real

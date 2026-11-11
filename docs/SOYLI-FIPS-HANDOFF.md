@@ -84,3 +84,11 @@ consumer-session, consumer-bridge and timeout-cleanup regressions. Cover:
 Migrate `atlas-consumer/src/bridge.ts` and its manifest/build imports. Keep composition/rendering logic unless the supported contract requires a change. Remove the temporary launcher from the normal workflow only after parity; retain a clearly marked historical fixture if useful. Update authoring guidance, configuration examples, protocol pins and test evidence. Follow the repository's Nix checks before pushing changes affecting shared packages, CLI, dependencies or bundled preview assets.
 
 Commit coherent changes. Report implemented versus verified versus deployed/released separately, with exact commands and any protocol gaps. Do not deploy production or publish releases as a side effect of this handoff; prepare those steps for the next explicit rollout.
+
+## Native Android experiment
+
+The isolated [Android viewer](ANDROID-NATIVE-FIPS.md) now demonstrates real Atlas
+reads over native TCP/UDP with a separate Rust provider. Its signed
+`atlas-native-v1` catalog is explicitly experimental; it does not replace this
+handoff’s production discovery, SDK or sandbox requirements. No shell source
+changes or production native ingress are implied by that demo.

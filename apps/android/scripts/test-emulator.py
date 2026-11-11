@@ -55,12 +55,12 @@ def wait_text(fragment, timeout=30):
 
 
 def launch(config):
-    adb("shell", "am force-stop soy.napplet.fipsdemo")
-    adb("shell", "am start -n soy.napplet.fipsdemo/.MainActivity --es config "+shlex.quote(json.dumps(config)))
+    adb("shell", "am force-stop org.atlas.nativeviewer")
+    adb("shell", "am start -n org.atlas.nativeviewer/soy.napplet.fipsdemo.MainActivity --es config "+shlex.quote(json.dumps(config)))
     wait_text("Peer details loaded")
 
 
-adb("install","-r",str(ROOT/"output/native-fips-demo.apk"))
+adb("install","-r",str(ROOT/"output/atlas-native-viewer.apk"))
 adb("shell","input","keyevent","KEYCODE_WAKEUP")
 adb("shell","wm dismiss-keyguard")
 for transport in ["udp","tcp"]:
@@ -90,7 +90,7 @@ for transport in ["udp","tcp"]:
             wait_text("Authenticating")
             adb("shell","input","keyevent","KEYCODE_HOME")
             time.sleep(0.5)
-            adb("shell","am start -n soy.napplet.fipsdemo/.MainActivity")
+            adb("shell","am start -n org.atlas.nativeviewer/soy.napplet.fipsdemo.MainActivity")
             wait_text("Transfer cancelled",10)
             print("PASS Android background cancellation",flush=True)
     finally:

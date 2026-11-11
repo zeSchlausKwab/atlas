@@ -1,124 +1,129 @@
-> Migrated into Atlas from napplet-space commit `d00ec1ea657c279c120de2c25f071298d17ecfdc` (`codex/android-fips-demo`). The original source is retained. This document and VERIFICATION.md initially describe the source demo; Atlas viewer instructions and new acceptance evidence will be added separately.
+# Atlas Android viewer · native FIPS
 
-# Native FIPS Android demo
+An isolated Android Atlas viewer that opens a real `.atlas` map through a native
+FIPS peer. The supplied demo APK connects and opens its configured map on launch.
+Networking and authorization belong to the Android host; the existing Atlas
+WASM renderer and touch controls run locally in a restricted WebView.
 
-A small Android app that fetches a public Hashtree blob through **native UDP or
-TCP sockets**, authenticates a pinned FIPS peer, and verifies the content's
-SHA-256 before displaying it. Includes a companion desktop peer and CLI client.
+- Physical TCP **or** UDP, pinned peer authentication, signed map discovery,
+  SHA-256 verification and native Hashtree descendant checks.
+- Geometry-only startup: no routing, search, extraction or labels downloaded.
+- Pan, pinch, zoom buttons, fit, transfer diagnostics, cancel/disconnect,
+  foreground reconnect and network-change handling.
+- No HTTP map fallback, WebSocket hop, DNS lookup, STUN/TURN or VPN/TUN.
+- Independent native provider; the deployed TypeScript provider is unchanged.
 
-The Android app uses Java → JNI → embedded Rust FIPS. It contains no WebView,
-browser fetch bridge, VPN/TUN interface, WebSocket fallback, STUN or TURN client.
-Both endpoints use numeric IP addresses and fresh in-memory identities. Nostr,
-LAN/mDNS and local rendezvous discovery are disabled. Each transfer closes its
-endpoint when it finishes, fails, is cancelled or the activity leaves the
-foreground; there is no background service or persistent wallet/account identity.
+This is an experimental standalone viewer, not the production napplet shell.
+Read [architecture and security boundaries](../../docs/ANDROID-NATIVE-FIPS.md)
+and [verified behavior and limitations](VERIFICATION.md).
 
-This is an isolated transport demonstration, **not a mobile napplet shell or an
-Atlas map viewer**. The app talks directly to its companion peer. A server/peer
-still supplies the bytes. It does not turn an Android browser into a TCP client,
-prove NAT traversal between two phones, or remove the need for reachable peers.
+## Build a real-map demo
 
-## Build and install
+Requirements: Bun and the Atlas root dependencies, Rust with
+`aarch64-linux-android`, JDK 17+, Android SDK 36, NDK **29.0.14206865**.
+Gradle **8.14.3** and Android Gradle Plugin **8.11.0** are pinned. The APK supports
+ARM64 Android 11+ and is signed with a local debug key.
 
-Requirements: JDK 17+, Android SDK platform 36, NDK 29.0.14206865, Rust with
-`aarch64-linux-android`, Python 3 for the local acceptance suite. Tested with
-Gradle 8.14.3 (checksum pinned) and Android Gradle Plugin 8.11.0.
+From the Atlas repository root:
 
 ```sh
+bun install --frozen-lockfile
+bun run build:wasm
 rustup target add aarch64-linux-android
+bun apps/android/scripts/export-map.ts data/liechtenstein.atlas apps/android/output/provider
+cd apps/android
+cargo build --manifest-path native/Cargo.toml --locked --bins
+```
+
+The example requires an existing real Atlas file; replace the input path with
+one from your map library. Export reads the source without modifying it, and
+writes a Hashtree index, immutable blob files and an offer manifest. The simple
+demo export duplicates the map's bytes; it is not the production zero-copy store.
+
+Start a provider in a separate terminal, replacing the example IP with its
+reachable numeric LAN address. These are **physical listener ports**, separate
+from logical FIPS blob service port 39018:
+
+```sh
+cd apps/android
+native/target/debug/atlas-peer serve tcp 0.0.0.0:42131 192.168.1.20:42131 output/provider > output/tcp.json
+# Or a separate UDP listener:
+native/target/debug/atlas-peer serve udp 0.0.0.0:42132 192.168.1.20:42132 output/provider > output/udp.json
+```
+
+Each process prints one public connection JSON object. Its stderr reports served
+blobs. Keep the process running and allow the selected port on the local firewall.
+There is no adb reverse, USB forwarding or HTTP proxy in the data path. The phone
+must be able to reach the numeric endpoint.
+
+```sh
 export ANDROID_HOME=/path/to/Android/sdk
 export JAVA_HOME=/path/to/jdk
-bash scripts/build-android.sh
-adb install -r output/native-fips-demo.apk
+ATLAS_NATIVE_CONNECTION_FILE="$PWD/output/tcp.json" bash scripts/build-android.sh
+adb install -r output/atlas-native-viewer.apk
 ```
 
-The debug APK supports **64-bit ARM devices on Android 11+**. It is signed with
-the local Android debug key. The script builds JNI first, then assembles and lints
-the APK; invoking Gradle alone will not compile the Rust library. The native
-library and APK use 16 KiB-compatible page alignment.
+Launch **Atlas · Native FIPS**. The bundled public settings automatically connect,
+verify discovery, grant the first map and open it. No manual Connect/Open sequence
+is required. Connection settings allow a different public JSON config and a TCP
+or UDP endpoint. Settings are remembered on the device; explicit Disconnect stays
+disconnected until Reconnect is chosen. Backgrounding closes native networking;
+returning reconnects automatically. Building without
+`ATLAS_NATIVE_CONNECTION_FILE` produces an unconfigured APK.
 
-## Try it on a phone
+Only public connection settings go into the APK. Provider peer/publisher keys
+are generated under `output/provider`, stored with mode 0600, and must stay
+private. Keep that directory to preserve identities across provider restarts.
+The signed catalog is reused while valid, but expires after seven days; a new
+catalog requires refreshed public configuration. Persistent live discovery and
+withdrawal processing are future work, not claims of this demo.
 
-On a computer reachable from the phone's Wi-Fi network:
-
-```sh
-cargo build --manifest-path native/Cargo.toml --locked --bin fips-demo
-# Replace 192.168.1.20 with the computer's LAN IP. Allow UDP 42121 locally.
-native/target/debug/fips-demo serve udp 0.0.0.0:42121 192.168.1.20:42121
-```
-
-1. Copy the single JSON line printed by the peer. It contains only public
-   connection details: transport, IP:port, peer identity and content hash.
-2. Open **Native FIPS** → **Paste connection details** → **Use details**.
-3. Tap **Connect & verify**. The app shows authentication, transfer progress,
-   native carrier, verified byte count and elapsed time.
-4. To compare TCP, stop the peer with Ctrl-C and repeat with `serve tcp`.
-   Its identity changes on restart, so copy the new JSON. Allow TCP 42121 locally.
-
-The synthetic fixture is about 263 KiB and contains no personal or Atlas data.
-It binds only to loopback when no address is supplied. The explicit wildcard
-above makes this test fixture reachable on the LAN. Stop it when finished.
-The app requires a literal IP; for IPv6 use `[address]:port`.
-
-### Android emulator
-
-The standard emulator reaches its computer at `10.0.2.2`:
-
-```sh
-native/target/debug/fips-demo serve udp 127.0.0.1:42121 10.0.2.2:42121
-```
-
-Paste the emitted JSON into the app. Alternatively pass the same public JSON in
-the `config` string extra to `soy.napplet.fipsdemo/.MainActivity` with `adb shell
-am start`. This only fills the form; it never starts a connection automatically.
-
-## Architecture and protocol boundary
-
-```text
-Android UI → JNI → native FIPS endpoint
-                      │
-                direct TCP or UDP
-                      │
-                companion FIPS peer
-                      │
-                Hashtree blob service
-```
-
-The outer carrier is real operating-system TCP or UDP. Inside either carrier,
-the Hashtree service uses the same reliable **TCP/FIPS** stream framing as the
-browser integration, on FIPS service port **39018**. That service port is
-independent of the physical listener port (42121 in these examples).
-
-The client requests exactly the supplied hash with HTL 0 (local content only),
-validates response framing and size, then checks SHA-256. Its 2 MiB resource bound
-and 25-second transfer deadline are local demo policy. Invalid, missing, truncated
-or corrupt responses cannot produce a successful preview. There is no download
-URL or silent transport fallback. The caller must obtain the peer identity and
-hash from a trusted source; the demo does not discover signed resource offers.
-
-Native pins: `nvpn-fips-core` **0.4.95**, `nvpn-fips-tcp` **0.2.5**,
-`nvpn-fips-tcp-endpoint` **0.2.30**, with Cargo.lock committed. This is the Nostr VPN
-FIPS implementation, not an arbitrary build of another FIPS fork. Blob framing
-matches the MIT-licensed `@hashtree/fips-transport` 0.5.0 reference already vendored
-in `packages/runtime/src/fips/vendor/tcpBlobTransport.ts`.
-
-The current Atlas provider runs the TypeScript WebSocket transport. Connecting
-this native client to that provider needs a compatible TCP/UDP ingress peer with
-a route to it, or a native transport added to the provider. This demo makes neither
-change and does not contact, restart or deploy Atlas. It introduces no new NAP or
-napplet-visible network privilege. A future mobile shell should keep native FIPS
-in the host and expose the existing resource boundary to sandboxed napplets.
-
-## Verification
+## Reproduce acceptance
 
 ```sh
 cargo test --manifest-path native/Cargo.toml --locked --lib
-cargo build --manifest-path native/Cargo.toml --locked --bin fips-demo
+cargo build --manifest-path native/Cargo.toml --locked --bins
 python3 scripts/test-transports.py
+python3 scripts/test-atlas.py --export output/provider
+python3 scripts/test-phone.py --serial YOUR_PHONE --config output/tcp.json --label tcp --lifecycle --network-change
+python3 scripts/test-phone.py --serial YOUR_PHONE --config output/udp.json --label udp --lifecycle --network-change
 ```
 
-The process tests run real TCP and UDP peers, verified transfers, missing content,
-corrupt content, mismatched peer identity, and rejection of hostnames/WebSocket
-configuration. Unit tests cover response bounds, disabled discovery/system
-networking, and cancellation. Android acceptance and remaining hardware checks
-are recorded in [VERIFICATION.md](VERIFICATION.md).
+Physical tests operate only the selected device and this isolated app. Network
+acceptance temporarily disables Wi-Fi and restores it in a `finally` block.
+`--bundled-default` clears **this demo app's** settings and launches without any
+configuration intent, proving automatic startup from the APK's public preset.
+
+For touch gestures:
+
+```sh
+./gradlew --no-daemon assembleDebugAndroidTest
+python3 scripts/test-gestures.py --serial YOUR_PHONE
+```
+
+For corruption, start a separate `atlas-peer ... --corrupt` and pass its public
+config to `test-phone.py --expect-error 'SHA-256 mismatch'`. For unavailable-peer
+acceptance, use a copy of a valid config with an unused numeric endpoint and
+`--expect-error 'timed out after 25 seconds'`. Neither test enables fallback. `--cancel-pending` with an unreachable peer tests
+cancellation during authentication.
+Artifacts stay in ignored `output/`.
+
+## Migration and retained transport lab
+
+Copied from napplet-space commit
+`d00ec1ea657c279c120de2c25f071298d17ecfdc`, branch `codex/android-fips-demo`, without
+importing its Git history. The migration-only commit in Atlas preserves the
+original source files and instructions. The original checkout and original
+installed app have been retained.
+
+The new application ID is `org.atlas.nativeviewer`; it does not replace
+`soy.napplet.fipsdemo`. The original Java `MainActivity`, synthetic `fips-demo`
+peer, transport tests and emulator tests remain available. Run the retained lab
+with `adb shell am start -n org.atlas.nativeviewer/soy.napplet.fipsdemo.MainActivity`.
+Its operation is deliberately manual and separate from the viewer.
+`test-emulator.py --serial emulator-5554` exercises that lab in the migrated APK.
+
+Native dependency pins remain `nvpn-fips-core` **0.4.95**, `nvpn-fips-tcp`
+**0.2.5**, `nvpn-fips-tcp-endpoint` **0.2.30**. See [THIRD_PARTY.md](THIRD_PARTY.md)
+and the retained [MIT license](LICENSE). No shell private planning documents,
+source history, provider keys, APKs or generated map data are committed.

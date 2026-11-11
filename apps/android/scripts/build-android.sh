@@ -11,10 +11,11 @@ export AR_aarch64_linux_android="$toolchain/llvm-ar"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS='-C link-arg=-Wl,-z,max-page-size=16384'
 test -x "$CC_aarch64_linux_android" || { echo "Install Android NDK 29.0.14206865 or set ANDROID_NDK_HOME" >&2; exit 1; }
+bun scripts/build-viewer.ts
 cargo build --manifest-path native/Cargo.toml --locked --release --lib --target aarch64-linux-android
 mkdir -p app/build/native-libs/arm64-v8a
 cp native/target/aarch64-linux-android/release/libsoy_fips_demo.so app/build/native-libs/arm64-v8a/
 ./gradlew --no-daemon assembleDebug lintDebug
 mkdir -p output
-cp app/build/outputs/apk/debug/app-debug.apk output/native-fips-demo.apk
-echo "APK: $(pwd)/output/native-fips-demo.apk"
+cp app/build/outputs/apk/debug/app-debug.apk output/atlas-native-viewer.apk
+echo "APK: $(pwd)/output/atlas-native-viewer.apk"

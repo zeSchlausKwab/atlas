@@ -1,52 +1,90 @@
-# Local verification — 2026-11-11
+# Atlas Android acceptance — 2026-11-11
 
-Implemented on `codex/android-fips-demo`, based on shell main `05ecf4e`.
-This experiment is not part of the website build or a production deployment.
+Branch: `codex/android-atlas-native-fips`. The module was migrated without shell
+history from napplet-space `d00ec1ea657c279c120de2c25f071298d17ecfdc`.
+[Original transport-demo evidence](TRANSPORT-VERIFICATION.md) is retained as a
+historical report, not a claim that every old emulator check was rerun here.
 
-| Check | Observed result |
-| --- | --- |
-| Rust unit tests | 3 pass: response validation / hash integrity, carrier and discovery configuration, cancellation |
-| Real process/socket tests | 5 pass, including both TCP and UDP, missing blob, corrupt content, wrong peer identity, hostname and WebSocket rejection |
-| Android build | ARM64 debug APK assembled; Android lint has no errors |
-| Android emulator | API 36.1 ARM64: 270,080 bytes fetched and SHA-256 verified over UDP and TCP |
-| Cancel button | An unfinished connection closes and displays “Transfer cancelled”; retry remains available |
-| Leave / return | Home during authentication cancels the native operation; returning does not restart it |
-| APK signing | `apksigner verify` passes (local debug key, APK Signature Scheme v2) |
-| 16 KiB page support | `zipalign -c -P 16 4` passes; ELF LOAD segments have 0x4000 alignment |
-| Visual inspection | Emulator success screen inspected; configuration, carrier, hash and verified result visible |
+## Deliverable and real source
 
-The lifecycle test initially caught cancellation occurring too late in `onStop`.
-Cancellation now starts in `onPause`; the final emulator suite passes all four
-checks (UDP, TCP, explicit cancel, background cancel).
+- APK: `output/atlas-native-viewer.apk` (16,025,754 bytes, ARM64 debug build).
+- Application ID: `org.atlas.nativeviewer`; original `soy.napplet.fipsdemo` retained.
+- Physical device: Pixel 10 Pro XL, Android 17, connected by USB for installation,
+  test input and logs. **Map bytes used LAN Wi-Fi, not USB or adb forwarding.**
+- Real map: repository `data/liechtenstein.atlas`, 30,811,870 bytes, exported as
+  476 Hashtree blocks. Root:
+  `faeb9e03f4db9615d9114a85fc4445365fd3ac0a6aa4316622993a6e85c94b91`.
+- Independent native provider on a development computer. No production server,
+  WebSocket provider or HTTP proxy participates in these phone tests.
 
-The final emulator runs took approximately 399 ms over UDP and 1,130 ms over TCP,
-including authentication and shutdown. These are loopback/emulator observations,
-**not a comparative network-performance benchmark**.
-
-Reproduce the UI checks with an already running emulator:
-
-```sh
-python3 scripts/test-emulator.py --serial emulator-5554
-```
-
-This installs only `soy.napplet.fipsdemo`, starts temporary loopback fixture
-processes, fills the app using public configuration, operates its controls and
-saves screenshots/UI snapshots to ignored `output/emulator/`. It stops its
-fixtures on completion. It does not start or stop the emulator itself.
-
-Remaining limits: no physical phone, cellular network, NAT traversal, packet-loss
-or network-handoff acceptance; no direct connection to the current Atlas provider
-and no native map rendering. Android versions below API 36.1 are build-supported
-down to API 30 but have not been device-tested. Lint still reports English-only
-demo strings, absent ChromeOS x86 ABI, backup-rule guidance and an available
-Gradle upgrade. No lint errors are suppressed.
-
-Local deliverable: `output/native-fips-demo.apk` (ignored, about 15 MB).
-SHA-256:
+APK SHA-256:
 
 ```text
-8171116006e0a7a40bac4dcfb040db7bbd19627f953de13b7d9052a5b48f2dd4
+c2b9a8a35311cf1fce788febd55b63946fcb7322240e236cebc9538a6a6381f4
 ```
 
-The original checkout and unrelated files were left intact. Atlas services and
-builds were not changed or restarted. Nothing was pushed or deployed.
+## Observed results
+
+| Check | Result |
+| --- | --- |
+| Native unit tests | 7 pass: original response/carrier/cancellation tests plus signed discovery, grants, descendants, corruption, expiry and malformed-tree checks |
+| Retained native process tests | 5 pass: real TCP/UDP transfers, missing content, bad hashes, mismatched peer identity, no hostname/WS fallback |
+| Real Atlas provider acceptance | TCP and UDP pass: signed catalog, real `ATLAS001` header, grant/membership denials, 36 verified reads per probe, repeated consumers, stable pins/catalog across restart, corrupt map rejection |
+| Shared map input regressions | 2 pass: pinch midpoint scaling, pan after pinch, cancellation, no accidental click, existing mouse and tap behavior |
+| TypeScript | Root `bun run typecheck` passes |
+| Android build | ARM64 debug APK assembles; instrumentation APK builds; lint: 0 errors, 37 warnings |
+| APK validation | Signature v2 verifies; `zipalign -c -P 16 4` passes |
+| Physical TCP map | Automatic discovery and geometry render: 7/7 tiles, 166,947 triangles, 860,945 verified payload bytes in 16 blobs |
+| Physical UDP map | Same view and verified byte count as TCP |
+| No manual connection | Clearing only the new app's settings and launching without a config intent loads the bundled demo map automatically |
+| Pan and pinch, both carriers | Genuine injected two-pointer gestures change center and zoom from 11.08 to 12.67; new view reaches 5/5 tiles and 257,002 triangles |
+| Background/resume, both carriers | Home closes native connection; foreground authenticates again and reloads without Connect/Open taps |
+| Explicit disconnect, both carriers | Cancels session, remains disconnected, then explicit Reconnect succeeds |
+| Pending authentication cancellation | Physical unreachable-peer attempt cancels promptly through the UI |
+| Wi-Fi loss/restoration, both carriers | Native session closes on network loss/change; Wi-Fi restored in test cleanup; foreground map reconnects automatically |
+| Unavailable peers, both carriers | Actionable 25-second native timeout; no success view or fallback |
+| Corrupt map bytes, both carriers | Signed discovery succeeds, deliberately altered map blob fails SHA-256; map never renders |
+| Visual inspection | Physical-device map screenshots inspected, including geometry after pinch |
+
+Payload byte counts include catalog/tree content and exclude transport overhead.
+They are evidence of selective reads, not an Internet throughput benchmark. The
+initial view used about 2.8% of this map's bytes. Gesture runs reached 1,712,913
+verified bytes across 29 blobs. Geometry-only startup excludes labels, routing,
+search and feature extraction; their directory metadata can still describe them.
+
+The first gesture acceptance exposed a missing pinch implementation in the
+shared MapInput: it treated the second finger as another drag. The input handler
+now uses the two-pointer midpoint and logarithmic distance ratio. Physical
+acceptance passed after that change. A native provider slot leak was also fixed:
+completed application transfers no longer fill all eight serving slots.
+
+Evidence is stored locally in ignored `output/phone/`: `tcp-final`, `udp-final`,
+`default-final`, `gestures-tcp`, `gestures-udp`, `cancel-pending`,
+`unavailable-tcp`, `unavailable-udp`, `corrupted-tcp-final`,
+`corrupted-udp-final` logs, UI snapshots and screenshots. No device logs, keys,
+map exports or APKs are committed. Use [README.md](README.md) to reproduce.
+
+## Remaining limits
+
+- Discovery is the signed, hash-pinned `atlas-native-v1` snapshot profile, not
+  production Nostr relay discovery. No live revocation/revision feed or finalized
+  native provider descriptor is implemented. Catalog expiry needs fresh public
+  configuration. See [architecture](../../docs/ANDROID-NATIVE-FIPS.md).
+- This is an isolated native provider path, not native ingress into the deployed
+  TypeScript service. Internet/cellular reachability, NAT traversal, controlled
+  packet loss, prolonged sessions and large regional files are not accepted yet.
+- The viewer grants one map root, without multi-provider composition. Reconnect
+  resets its viewport and memory cache. Individual native queued reads are not
+  cancelled separately; session cancellation closes the endpoint.
+- Android 11–16 and other phone models are build-supported but not device-tested
+  in this pass. The migrated legacy emulator script is retained and retargeted;
+  the original emulator evidence is historical, not a new emulator run.
+- The debug test app accepts public config through an Android intent for the
+  acceptance harness. It is not a general production shell permission model.
+- Lint warnings concern English-only strings, ChromeOS x86 ABI, data-extraction
+  rules and an available Gradle plugin update. No lint errors are suppressed.
+
+The original demo checkout and installed app remain available. Android work did
+not restart/deploy production or publish source. Separately authorized preceding
+server changes were validated and staged, but activation was deferred at the
+user's request while North Sea continued building.
