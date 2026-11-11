@@ -136,3 +136,58 @@ latency and no public TCP fallback remain material limitations. Android now
 allows a 90-second blob read and one timeout-only retry, without relaxing any
 verification. Its alternate TCP profile is LAN-only. See the
 [phone evidence and reproducible test](../apps/android/VERIFICATION.md).
+
+## Direct Internet access on the existing Atlas server
+
+The direct-access experiment keeps the same provider and entry identities.
+Clients use the server router's numeric WAN IPv4 address as the entry hint:
+
+```text
+Phone cellular → router port forward → FIPS entry on Atlas server
+                                      → loopback TCP → native map provider
+```
+
+This path needs no external transit node, new hosting, DNS entry, map copy or
+Atlas restart. It still uses an authenticated entry and host npub. The router
+must actually have a reachable public address; an egress-IP lookup alone cannot
+exclude upstream NAT. Compare the router WAN address before adding forwards.
+On 11 November the router WAN and server egress IPv4 matched. The server had
+only link-local IPv6. UPnP discovery worked and neither target port was mapped.
+The Internet test remains pending firewall access and explicit approval of the
+one-hour forwards; no direct-access performance result has been claimed.
+
+Forward **TCP 42131 → server TCP 42131** and **UDP 42132 → server UDP 42132**.
+The destination for this installation is 192.168.0.179. Keep admin port 3100
+private. The current server firewall admits only LAN sources to the native
+ports. With administrator access, temporary test rules are:
+
+```sh
+sudo iptables -I nixos-fw 1 -i eno1 -p tcp --dport 42131 -m comment --comment atlas-native-direct-test -j nixos-fw-accept
+sudo iptables -I nixos-fw 1 -i eno1 -p udp --dport 42132 -m comment --comment atlas-native-direct-test -j nixos-fw-accept
+```
+
+Remove those exact rules after the test by changing `-I nixos-fw 1` to
+`-D nixos-fw`. The optional `apps/android/native/public-firewall.nix` makes this
+choice persistent during a separately approved NixOS update; it is not installed
+by preparing the file. A one-hour router lease is temporary even if the server
+firewall rules remain. Confirm both lease duration and destination after creation.
+Do not overwrite existing mappings or open unrelated ports.
+
+For each carrier, copy its existing mesh profile, preserve both npubs, and change
+only `bootstrap.address` to `WAN_IPV4:42131` (TCP) or `WAN_IPV4:42132` (UDP).
+A changing WAN address needs a refreshed authenticated configuration/hint; the
+host npub remains stable. Do not mistake a LAN hairpin test for off-LAN acceptance.
+
+```sh
+python3 apps/android/scripts/test-cellular.py --serial YOUR_PHONE \
+  --config apps/android/output/direct-public-tcp.json --configured-profile \
+  --label direct-public-tcp
+python3 apps/android/scripts/test-cellular.py --serial YOUR_PHONE \
+  --config apps/android/output/direct-public-udp.json --configured-profile \
+  --label direct-public-udp
+```
+
+The explicit-profile flag is essential: the default test proves the APK's bundled
+public-entry configuration, so supplying a different config file alone does not
+change its route. Each run verifies cellular connectivity before and after the
+map load and restores the original Wi-Fi setting. Run these tests sequentially.
