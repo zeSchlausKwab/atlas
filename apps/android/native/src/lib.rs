@@ -325,3 +325,6 @@ mod tests {
 
 pub mod atlas;
 pub mod policy;
+
+#[cfg(not(target_os = "android"))]
+pub mod host_store;

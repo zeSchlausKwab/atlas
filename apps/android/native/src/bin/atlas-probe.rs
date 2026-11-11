@@ -18,7 +18,10 @@ async fn main() -> Result<()> {
     let result=async {
         let catalog=link.get(&s.catalog,&cancel,&mut |_|{}).await?;
         let mut policy=Policy::discover(&catalog,&s.publisher,&s.peer,now())?;
-        let root=policy.offers[0]["hashtree"]["root"].as_str().unwrap().to_owned();
+        let index=std::env::args().nth(2).map(|v|v.parse::<usize>()).transpose()?.unwrap_or(0);
+        anyhow::ensure!(index<policy.offers.len(),"Map index out of range");
+        println!("{}",json!({"stage":"catalog","maps":policy.offers.len(),"selected":policy.offers[index]["manifest"]["name"]}));
+        let root=policy.offers[index]["hashtree"]["root"].as_str().unwrap().to_owned();
         anyhow::ensure!(policy.check(&root,&root,now()).is_err(),"Resource allowed before user grant");
         policy.select(&root,now())?;
         anyhow::ensure!(policy.check(&root,&"00".repeat(32),now()).is_err(),"Unrelated blob was authorized");

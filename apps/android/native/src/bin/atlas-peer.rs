@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
             serve(transport, bind, address, corrupt).await?;
         }
         _ => anyhow::bail!(
-            "Usage: atlas-peer serve tcp|udp bind-IP:port visible-IP:port exported-directory [--corrupt]"
+            "Usage: atlas-peer serve tcp|udp bind-IP:port visible-IP:port exported-directory [--corrupt] [--host-data /path/to/atlas/data]"
         ),
     }
     Ok(())
@@ -55,9 +55,24 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
             .bind()
             .await?,
     );
-    let offers: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
-        std::path::Path::new(&directory).join("offers.json"),
-    )?)?;
+    let host_arg = std::env::args()
+        .position(|a| a == "--host-data")
+        .map(|n| {
+            std::env::args()
+                .nth(n + 1)
+                .context("--host-data needs a path")
+        })
+        .transpose()?;
+    let mut host_store = host_arg
+        .map(|p| soy_fips_demo::host_store::HostStore::open(std::path::Path::new(&p)))
+        .transpose()?;
+    let offers: Vec<serde_json::Value> = if let Some(store) = &host_store {
+        store.offers()
+    } else {
+        serde_json::from_slice(&std::fs::read(
+            std::path::Path::new(&directory).join("offers.json"),
+        )?)?
+    };
     ensure!(
         !offers.is_empty() && offers.len() <= 16,
         "Expected 1–16 exported maps"
@@ -130,7 +145,12 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
         hash,
     };
     request.validate()?;
-    println!("{}", serde_json::to_string(&settings)?);
+    let public_config = serde_json::to_string(&settings)?;
+    std::fs::write(
+        std::path::Path::new(&directory).join(format!("connection-{transport}.json")),
+        &public_config,
+    )?;
+    println!("{}", public_config);
     let mut tcp = FipsTcpEndpoint::bind(
         endpoint.clone(),
         SERVICE_PORT,
@@ -179,7 +199,7 @@ async fn serve(transport: &str, bind: &str, address: &str, corrupt: bool) -> Res
                     if state.request.len() == 36 {
                         ensure!(state.request[..4]==[0x48,1,1,0],"Only local Hashtree GET is supported");
                         let requested=hex::encode(&state.request[4..]);
-                        let data=if requested==request.hash {Some(payload.clone())} else {
+                        let data=if requested==request.hash {Some(payload.clone())} else if let Some(store)=&mut host_store {store.get(&requested)?} else {
                             let path=std::path::Path::new(&directory).join("blobs").join(&requested);
                             match std::fs::metadata(&path) {
                                 Ok(meta) if meta.is_file() && meta.len()<=soy_fips_demo::MAX_BLOB as u64 => Some(std::fs::read(path)?),

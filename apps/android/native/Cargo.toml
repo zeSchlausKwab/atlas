@@ -25,6 +25,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signa
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21.1"
 
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+
 [profile.release]
 strip = true
 lto = "thin"

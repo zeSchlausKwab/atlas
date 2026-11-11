@@ -191,8 +191,10 @@ pub async fn run(
             match receiver.try_recv() {
                 Ok(Input::Select(root))=>{policy.select(&root,now())?; let offer=policy.offers.iter().find(|o|o["hashtree"]["root"]==root).unwrap(); report(json!({"stage":"selected","offer":offer,"message":"Map resource grant active"}));},
                 Ok(Input::Blob(command))=>{
+                    if let Err(e)=policy.check(&command.root,&command.hash,now()) {
+                        report(json!({"stage":"blob","id":command.id,"error":format!("{e:#}")}));continue;
+                    }
                     let result=async {
-                        policy.check(&command.root,&command.hash,now())?;
                         let data=link.get(&command.hash,cancel,&mut report).await?;
                         policy.accept(&command.root,&command.hash,&data,now())?;
                         ensure!(!cancel.load(Ordering::Relaxed),"Cancelled");
