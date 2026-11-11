@@ -173,11 +173,20 @@ and recorded in archive limitations. Boundary features are available for tools
 and drawing, not automatically styled as border lines in the visual basemap.
 External statistics such as population are not supplied by these presets.
 
-Whole-world sea fill needs a suitably generalized configured coastline input.
-The current ocean importer still enforces a **512 MiB clipped GeoJSON / 25-million
-point limit**. The form exposes this limitation when worldwide sea fill is
-selected; users can omit it and compose a separate ocean base. This change does
-not replace that importer with a streamed planet coastline pipeline.
+The low-zoom world recipes filter the verified planet PBF to water, places and
+administrative boundaries before source indexing. Osmium retains referenced ways,
+nodes and nested relations; original IDs and exact boundary coordinates remain.
+The two recipes reuse a checksum-verified derived input under
+`hosted/.world-inputs/`, so they do not repeat the full planet scan. A cancelled
+filter can repeat; only its fully written, verified output is reusable. The
+original planet is untouched. Other recipes retain the existing full import path.
+
+For a world extent at z0–6, ocean display is generalized to a quarter-pixel degree
+tolerance at the maximum zoom before GeoJSON is loaded. Its hash and tolerance
+are recorded in the archive. This applies only to the visual ocean, not retained
+administrative polygons. The **512 MiB / 25-million point** bound still applies;
+this is not a streamed high-detail planet coastline implementation. Regional
+coastline checkpoints and their identities remain compatible.
 
 The live estimate separates finished archive, temporary/checkpoint storage,
 new download, source bytes to read, and the 12 GiB reserve/stopping buffer.

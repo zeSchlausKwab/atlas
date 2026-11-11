@@ -1,3 +1,4 @@
+import { isWorldSelection } from "./world-selection";
 import { rename, rm, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { FeatureCollection, Polygon, MultiPolygon } from "geojson";
@@ -16,6 +17,7 @@ export interface PreparedOcean {
   source: OceanSource;
   clipHash: string;
   clipBytes: number;
+  simplificationDegrees?: number;
 }
 /** Paths are server configuration, never request input. Provider metadata is pinned into the recipe. */
 export async function configuredOcean(path = process.env.ATLAS_OCEAN_SOURCE) {
@@ -48,9 +50,22 @@ export async function prepareOcean(
   await mkdir(work, { recursive: true });
   const clip = join(work, "ocean.geojson"),
     receipt = clip + ".receipt.json";
+  const simplificationDegrees =
+    isWorldSelection(s.polygon) && s.maxZoom <= 6
+      ? 360 / (256 * 2 ** s.maxZoom) / 4
+      : undefined;
   const identity = new Bun.CryptoHasher("sha256")
     .update(
-      JSON.stringify({ version: 2, source: source.sha256, polygon: s.polygon }),
+      JSON.stringify(
+        simplificationDegrees
+          ? {
+              version: 3,
+              source: source.sha256,
+              polygon: s.polygon,
+              simplificationDegrees,
+            }
+          : { version: 2, source: source.sha256, polygon: s.polygon },
+      ),
     )
     .digest("hex");
   let saved: { identity: string; sha256: string } | undefined;
@@ -95,6 +110,9 @@ export async function prepareOcean(
           ...bounds(s.polygon).map(String),
           "-clipsrc",
           polygon,
+          ...(simplificationDegrees
+            ? ["-simplify", String(simplificationDegrees)]
+            : []),
           "-makevalid",
           "-t_srs",
           "EPSG:4326",
@@ -135,7 +153,13 @@ export async function prepareOcean(
     `Ocean input ready: ${data.features.length} polygons, ${(file.size / 1024 ** 2).toFixed(1)} MiB`,
   );
   const { path: _, ...metadata } = source;
-  return { data, source: metadata, clipHash, clipBytes: file.size };
+  return {
+    data,
+    source: metadata,
+    clipHash,
+    clipBytes: file.size,
+    simplificationDegrees,
+  };
 }
 
 /** Clipping can create collections with zero-area line remnants along the cut. Retain every polygon and hole. */

@@ -1,7 +1,8 @@
+import { prepareWorldInput, usesWorldInput } from "./world-input";
 import { prepareOcean } from "./ocean-source";
 import { BUILD_DISK_FLOOR, DISK_RESERVE, BUILD_STOP_MARGIN } from "./capacity";
 import { mkdir, rename, rm, statfs } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BuildCheckpoints,
@@ -39,8 +40,9 @@ export async function importPartitionedCached(
       identity,
     ).open(),
     name = "area.osm.pbf",
-    area = join(cp.directory, name),
-    partial = area + ".part.osm.pbf";
+    partial = join(cp.directory, name) + ".part.osm.pbf";
+  let area = join(cp.directory, name);
+  const filteredWorld = source.kind === "planet" && usesWorldInput(s);
   let completed = 0;
   let lastMeasured: Partial<PreparationProgress> | undefined;
   const progress = (
@@ -106,7 +108,14 @@ export async function importPartitionedCached(
         readBytes: done,
         writtenBytes: cp.savedBytes,
       });
-    if (!(await cp.reusable(name, hashProgress, signal))) {
+    if (filteredWorld) {
+      area = await prepareWorldInput(
+        source,
+        join(dirname(work), ".world-inputs"),
+        AbortSignal.any([signal, abort.signal]),
+        (line) => progress(line, "extracting"),
+      );
+    } else if (!(await cp.reusable(name, hashProgress, signal))) {
       await check();
       progress(
         "Extracting selected area from the verified local PBF (three passes)…",
@@ -179,9 +188,11 @@ export async function importPartitionedCached(
         ],
         extraction: {
           bounds,
-          strategy: s.featureKinds.includes("boundaries")
-            ? "smart; types=multipolygon,restriction,boundary; partitioned-build-v1"
-            : "smart; types=multipolygon,restriction; partitioned-build-v1",
+          strategy: filteredWorld
+            ? "world-families-v1; osmium tags-filter with referenced geometry; original OSM identities; display/labels clipped to supported world extent"
+            : s.featureKinds.includes("boundaries")
+              ? "smart; types=multipolygon,restriction,boundary; partitioned-build-v1"
+              : "smart; types=multipolygon,restriction; partitioned-build-v1",
           sourceDate: cachedSourceDate(source),
         },
       },

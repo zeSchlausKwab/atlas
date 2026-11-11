@@ -163,6 +163,10 @@ export async function compilePartitioned(o: PartitionedOptions) {
     },
   };
   if (o.ocean) {
+    if (o.ocean.simplificationDegrees)
+      base.limitations.push(
+        `World ocean display simplified with ${o.ocean.simplificationDegrees} degree tolerance (quarter pixel at maximum display zoom). Administrative polygons retain source detail.`,
+      );
     base.source = {
       ...base.source,
       inputs: [
