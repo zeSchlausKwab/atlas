@@ -60,8 +60,8 @@ export interface PartitionedOptions {
 /** Whole-source identity and durable stage artifacts; no per-partition graph identities. */
 export async function compilePartitioned(o: PartitionedOptions) {
   const workers = compilerWorkers(o.workers);
+  const progress: (message: string) => void = o.progress ?? console.log;
   const s = o.selection,
-    progress = o.progress ?? console.log,
     abort = new AbortController(),
     signal = o.signal
       ? AbortSignal.any([o.signal, abort.signal])
@@ -678,7 +678,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   writer,
                   signal,
                   (_key, done) => packing(done),
-                  (message) => progress({ phase: "compiling", message }),
+                  progress,
                 );
                 if (s.placeNames)
                   await writer.add({
@@ -770,7 +770,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   writer,
                   signal,
                   (_key, done) => packing(done),
-                  (message) => progress({ phase: "compiling", message }),
+                  progress,
                 );
                 const heights = {
                   tagged: 0,
