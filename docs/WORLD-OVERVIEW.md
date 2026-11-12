@@ -130,3 +130,43 @@ The GDAL test runs on the server when GDAL is absent on the development machine.
 The failing lake's server verification reduced its display feature to 766,649
 bytes and 31,592 vertices in 9.2 seconds at z6. Full world completion is a separate
 acceptance step; this is a measured single-feature result.
+
+### Crowded display tiles at the final zoom
+
+The next world-build stop was `tile/water/6/15/21`: its valid individual fragments
+combined to 4,983,364 points, above the unchanged 3,000,000-point tile decoder
+limit. `geojson-vt` deliberately uses zero simplification tolerance at its
+`maxZoom`; setting that to a coarse archive's final zoom (6) retained source
+precision where display-scale geometry was needed.
+
+New partitioned builds use an internal detail zoom of at least 13, while emitting
+only the zooms requested by the recipe. This keeps the existing simplification
+active at a coarse archive's final zoom. Detail archives retain their existing
+full-detail final-zoom behavior.
+
+Packing also recovers older saved fragments. If a tile below z13 exceeds the point
+budget after subpixel filtering, its land/water polygons are simplified by GDAL /
+GEOS at one quarter of a 512-pixel tile pixel, in integer tile coordinates, with no
+CRS transform. The packer checks that every feature, polygon component and hole
+survives (retaining original record bytes when a candidate would lose parts or
+produce degenerate rings); restores exterior/hole winding; and applies the original feature, point
+and byte limits. Other geometry classes are unchanged. There is no tolerance
+escalation, dropped-feature fallback or change to the analysis/source geometry.
+Per-feature topology is preserved; separate features' shared boundaries are not
+simplified jointly. Detail-zoom overflow still requires spatial partitioning.
+
+The real failing tile reduced to 246,732 points while retaining all 4,043 features
+and 38,265 rings, in about 15 seconds on the server. Its encoded fragments went
+from 20.10 MB to 1.19 MB. This recovery uses the completed display spool and does
+not require repeating extraction, semantic compilation or source tiling. Scratch
+files are removed on success, cancellation and error. Local tests cover maximum
+zoom behavior and the unchanged detail guard; server GDAL tests additionally
+exercise over-budget packing, holes, separate polygon components, untouched road
+records, and cancellation cleanup.
+
+A read-only preflight of all 4,448 saved display tiles found five over-budget
+water tiles, all at z6. All five passed recovery with feature and ring counts
+unchanged; one original feature was retained because its simplified candidate
+contained a degenerate ring. The preflight finished with zero remaining point,
+feature or block-size failures. This validates packing inputs, not completion of
+the final assembled archive.

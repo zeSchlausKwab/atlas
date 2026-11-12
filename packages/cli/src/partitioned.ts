@@ -674,8 +674,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   spool.blockCount,
                   "blocks",
                 );
-                await spool.write(writer, signal, (_key, done) =>
-                  packing(done),
+                await spool.write(
+                  writer,
+                  signal,
+                  (_key, done) => packing(done),
+                  (message) => progress({ phase: "compiling", message }),
                 );
                 if (s.placeNames)
                   await writer.add({
@@ -763,8 +766,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   spool.blockCount,
                   "blocks",
                 );
-                await spool.write(writer, signal, (_key, done) =>
-                  packing(done),
+                await spool.write(
+                  writer,
+                  signal,
+                  (_key, done) => packing(done),
+                  (message) => progress({ phase: "compiling", message }),
                 );
                 const heights = {
                   tagged: 0,
@@ -821,6 +827,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   tileLayers: s.layers,
                   limitations: [
                     ...base.limitations,
+                    "Coarse display tiles (below z13) use zoom-aware simplification, including the highest requested zoom. Crowded legacy tiles use quarter-pixel (512-pixel tile) per-feature topology-preserving simplification; shared feature boundaries are not jointly simplified. Analysis geometry is unchanged.",
                     "Display geometries larger than 32 MiB are simplified with per-feature topology preservation at a quarter pixel of the maximum zoom (256-pixel Web Mercator tiles). Analysis geometry is not generalized.",
                   ],
                   buildingHeights: s.layers.includes("buildings")

@@ -28,7 +28,10 @@ export function renderTileBatch(
     const index = geojsonvt(
       { type: "FeatureCollection", features: selected },
       {
-        maxZoom: selection.maxZoom,
+        // geojson-vt disables simplification AT maxZoom. Coarse archives
+        // still need a display tolerance at their last zoom; retain the existing
+        // full-detail behavior only at z13 and above.
+        maxZoom: Math.max(13, selection.maxZoom),
         extent: TILE_EXTENT,
         buffer: 0,
         tolerance: overview ? 5 : TILE_EXTENT / 512,
