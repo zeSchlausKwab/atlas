@@ -1,5 +1,11 @@
 import { compilerWorkers } from "../../compiler/src/settings";
 import { mkdtemp, rm } from "node:fs/promises";
+import { dirname } from "node:path";
+import {
+  DISPLAY_GEOMETRY_BYTES,
+  inflateDisplaySource,
+  generalizeDisplaySource,
+} from "./display-source";
 import { parallelMap } from "../../compiler/src/process-pool";
 import { renderTileBatch } from "./tile-batch";
 import type { TileTask } from "./tile-batch-worker";
@@ -44,6 +50,43 @@ export async function partitionTiles(
     "objects",
     scanned,
   );
+  // Keep every row in the cursor/count, but do not fetch or decode unselected blobs.
+  // This preserves existing (cell,rowid) checkpoints and source-count progress.
+  const classes = Array.from({ length: 8 }, (_, cls) => cls).filter((cls) =>
+    selection.layers.includes(layerForClass(cls)),
+  );
+  const payload = classes.length
+    ? `CASE WHEN class IN (${classes.join(",")}) THEN data END`
+    : "NULL";
+  const query = `SELECT rowid,id,cell,${payload} AS data FROM features WHERE cell>? OR (cell=? AND rowid>?) ORDER BY cell,rowid`;
+  type Row = {
+    rowid: number;
+    id: string;
+    cell: number;
+    data: Uint8Array | null;
+  };
+  const decode = async (row: Row) => {
+    if (row.data === null) return;
+    const bytes = inflateDisplaySource(row.data, row.id);
+    const feature: Feature =
+      bytes.length > DISPLAY_GEOMETRY_BYTES
+        ? await generalizeDisplaySource(
+            bytes,
+            row.id,
+            selection.maxZoom,
+            dirname(spool.path),
+            signal,
+            progress,
+          )
+        : JSON.parse(new TextDecoder().decode(bytes));
+    return {
+      feature,
+      bytes:
+        bytes.length > DISPLAY_GEOMETRY_BYTES
+          ? new TextEncoder().encode(JSON.stringify(feature)).length
+          : bytes.length,
+    };
+  };
   if (workers > 1) {
     const work = await mkdtemp(spool.path + ".parallel-");
     let batchIndex = 0;
@@ -54,12 +97,7 @@ export async function partitionTiles(
         saved = startCursor;
       const cell = Math.floor(startCursor / stride),
         rowid = startCursor % stride;
-      const rows = source.prepare<
-        { rowid: number; cell: number; data: Uint8Array },
-        [number, number, number]
-      >(
-        "SELECT rowid,cell,data FROM features WHERE cell>? OR (cell=? AND rowid>?) ORDER BY cell,rowid",
-      );
+      const rows = source.prepare<Row, [number, number, number]>(query);
       async function save() {
         const input = `${work}/${batchIndex}.json`,
           output = `${work}/${batchIndex++}.sqlite`;
@@ -76,20 +114,10 @@ export async function partitionTiles(
             throw new Error("Source object identity limit exceeded");
           last = row.cell * stride + row.rowid;
           scanned++;
-          const bytes = Bun.gunzipSync(row.data as Uint8Array<ArrayBuffer>);
-          if (bytes.length > 32 * 1024 * 1024)
-            throw new Error(
-              "One source geometry exceeds the 32 MiB tiling budget",
-            );
-          const f: Feature = JSON.parse(new TextDecoder().decode(bytes));
-          if (
-            Number(f.properties?.class) < 8 &&
-            selection.layers.includes(
-              layerForClass(Number(f.properties?.class)),
-            )
-          ) {
-            features.push(f);
-            size += bytes.length;
+          const decoded = await decode(row);
+          if (decoded) {
+            features.push(decoded.feature);
+            size += decoded.bytes;
           }
           if (size >= 4 * 1024 * 1024 || features.length >= 5000)
             yield await save();
@@ -128,7 +156,7 @@ export async function partitionTiles(
     size = 0,
     last = spool.cursor;
   async function flush() {
-    if (!batch.length) return;
+    if (!batch.length && last <= spool.cursor) return;
     spool.begin();
     renderTileBatch(batch, selection, signal, (key, bytes) =>
       spool.add(key, bytes),
@@ -144,12 +172,7 @@ export async function partitionTiles(
   const start = spool.cursor,
     cell = Math.floor(start / stride),
     rowid = start % stride;
-  const rows = source.prepare<
-    { rowid: number; cell: number; data: Uint8Array },
-    [number, number, number]
-  >(
-    "SELECT rowid,cell,data FROM features WHERE cell>? OR (cell=? AND rowid>?) ORDER BY cell,rowid",
-  );
+  const rows = source.prepare<Row, [number, number, number]>(query);
   try {
     for (const row of rows.iterate(cell, cell, rowid)) {
       signal.throwIfAborted();
@@ -157,17 +180,13 @@ export async function partitionTiles(
         throw new Error("Source object identity limit exceeded");
       last = row.cell * stride + row.rowid;
       scanned++;
-      const bytes = Bun.gunzipSync(row.data as Uint8Array<ArrayBuffer>);
-      if (bytes.length > 32 * 1024 * 1024)
-        throw new Error("One source geometry exceeds the 32 MiB tiling budget");
-      const f: Feature = JSON.parse(new TextDecoder().decode(bytes));
-      if (
-        Number(f.properties?.class) >= 8 ||
-        !selection.layers.includes(layerForClass(Number(f.properties?.class)))
-      )
+      const decoded = await decode(row);
+      if (!decoded) {
+        if (!batch.length && scanned % 5000 === 0) await flush();
         continue;
-      batch.push(f);
-      size += bytes.length;
+      }
+      batch.push(decoded.feature);
+      size += decoded.bytes;
       if (size >= 4 * 1024 * 1024 || batch.length >= 5000) await flush();
     }
     await flush();

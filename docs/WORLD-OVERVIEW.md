@@ -96,3 +96,37 @@ this fix does not silently omit oversized selected features or remove that limit
 Regression coverage: `tests/feature-selection.test.ts` checks family filtering,
 source-stage reuse, selective decoding, preserved boundary geometry and place
 labels, and repeated compilation from completed archives.
+
+## Oversized display geometry
+
+The next world pass exposed a genuinely selected water feature: Lake Nasser / Lake
+Nubia (`relation/13985343`) expands to 37,417,092 bytes with 1,334,768 vertices.
+It exceeded the old 32 MiB tiler input limit at about 84% of display processing.
+The completed 3,657,379,329-byte semantic archive remains reusable.
+
+Oversized display copies now take an isolated GDAL preprocessing path. It projects
+to EPSG:3857, simplifies at one quarter of a 256-pixel tile pixel at the recipe's
+maximum zoom, then projects back to EPSG:4326. Projection is a separate first pass
+because [ogr2ogr simplification uses the source coordinate system and preserves
+per-feature topology](https://gdal.org/en/stable/programs/ogr2ogr.html#cmdoption-ogr2ogr-simplify).
+Original IDs and properties are restored after conversion. Analysis geometry and
+receipted source artifacts are unchanged. The archive records this display policy.
+
+Decompression is bounded at 128 MiB per source object; the result handed to the
+JS tiler must still fit 32 MiB. If generalization cannot achieve that at the chosen
+zoom, preparation fails with the object ID and a spatial-partitioning diagnostic.
+It never increases tolerance until a shape fits, or silently drops a feature.
+Scratch files and child processes are cleaned up on failure/cancellation. GDAL is
+already part of the server's Nix runtime; local builds report an install instruction
+if an oversized feature needs it and it is unavailable.
+
+Both sequential and parallel tilers avoid fetching/decompressing unselected
+geometry. Counts and durable `(cell,rowid)` cursors still cover all source records,
+so existing display checkpoints remain valid, including trailing skipped records.
+Tests cover cancellation, malformed selected data, skipped unselected data, worker
+changes on resume, and GDAL preservation of holes, detached polygons and tags.
+The GDAL test runs on the server when GDAL is absent on the development machine.
+
+The failing lake's server verification reduced its display feature to 766,649
+bytes and 31,592 vertices in 9.2 seconds at z6. Full world completion is a separate
+acceptance step; this is a measured single-feature result.

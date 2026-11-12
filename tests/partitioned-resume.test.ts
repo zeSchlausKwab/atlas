@@ -38,9 +38,9 @@ for (const [workers, resumeWorkers] of [
     const dir = await mkdtemp("/tmp/atlas-tile-resume-");
     const source = new Database(":memory:");
     source.run(
-      "CREATE TABLE features(cell INTEGER,data BLOB); CREATE INDEX cells ON features(cell)",
+      "CREATE TABLE features(cell INTEGER,data BLOB,id TEXT,class INTEGER); CREATE INDEX cells ON features(cell)",
     );
-    const put = source.query("INSERT INTO features VALUES(?,?)");
+    const put = source.query("INSERT INTO features VALUES(?,?,?,?)");
     source.transaction(() => {
       for (let id = 0; id < 5001; id++) {
         const x = 9.501 + (id % 100) * 0.0001,
@@ -70,6 +70,8 @@ for (const [workers, resumeWorkers] of [
               }),
             ),
           ),
+          `way/${id}`,
+          2,
         );
       }
     })();
@@ -135,6 +137,62 @@ for (const [workers, resumeWorkers] of [
     } finally {
       resumed.close();
       reference.close();
+      source.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+for (const workers of [1, 3])
+  test(`display selection skips unselected payloads and checkpoints their trailing rows (${workers} workers)`, async () => {
+    const dir = await mkdtemp("/tmp/atlas-tile-selection-");
+    const source = new Database(":memory:");
+    source.run(
+      "CREATE TABLE features(id TEXT,class INTEGER,data BLOB,cell INTEGER); CREATE INDEX cells ON features(cell)",
+    );
+    // These deliberately invalid blobs must never reach decompression: only buildings are selected.
+    source.run(
+      "INSERT INTO features VALUES('relation/1',9,x'00',10),('way/2',1,x'00',11)",
+    );
+    const spool = new BlockSpool(dir + "/spool.sqlite", "selection fixture");
+    const progress: number[] = [];
+    const water = new BlockSpool(dir + "/water.sqlite", "water fixture");
+    try {
+      await partitionTiles(
+        source,
+        spool,
+        selection,
+        new AbortController().signal,
+        (line) => {
+          progress.push(compilerProgress(line)!.completed!);
+        },
+        workers,
+      );
+      expect(spool.cursor).toBe(11 * 2 ** 32 + 2);
+      expect(progress.at(-1)).toBe(2);
+      expect(spool.blockCount).toBe(0);
+      await partitionTiles(
+        source,
+        spool,
+        selection,
+        new AbortController().signal,
+        () => {},
+        workers,
+      );
+      expect(spool.cursor).toBe(11 * 2 ** 32 + 2);
+      // Requested corrupt content is still an error, never silently omitted.
+      await expect(
+        partitionTiles(
+          source,
+          water,
+          { ...selection, layers: ["water"] },
+          new AbortController().signal,
+          () => {},
+          workers,
+        ),
+      ).rejects.toThrow("way/2");
+    } finally {
+      water.close();
+      spool.close();
       source.close();
       await rm(dir, { recursive: true, force: true });
     }

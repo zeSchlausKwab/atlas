@@ -819,6 +819,10 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 return {
                   ...base,
                   tileLayers: s.layers,
+                  limitations: [
+                    ...base.limitations,
+                    "Display geometries larger than 32 MiB are simplified with per-feature topology preservation at a quarter pixel of the maximum zoom (256-pixel Web Mercator tiles). Analysis geometry is not generalized.",
+                  ],
                   buildingHeights: s.layers.includes("buildings")
                     ? heights
                     : undefined,
