@@ -605,14 +605,10 @@ async function main() {
           await rm(path, { force: true });
         }
       }
-      const cells = buildFeatures(imported.geojson);
+      const cells = buildFeatures(imported.geojson, selected?.featureKinds);
       const featureWriter = new PagedFeatureWriter(writer);
       for (const [key, features] of cells) {
-        if (
-          !selected ||
-          selected.featureKinds.includes(key.split("/")[1] as any)
-        )
-          await featureWriter.cell(key, features);
+        await featureWriter.cell(key, features);
         cells.delete(key);
       }
     }

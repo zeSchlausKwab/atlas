@@ -2,14 +2,35 @@ import type { FeatureCollection } from "geojson";
 import { project } from "../../format/src/index";
 import {
   FEATURE_ZOOM,
+  LEGACY_FEATURE_KINDS,
   geometryBounds,
   type FeatureKind,
   type MapFeature,
 } from "./index";
+// Native source-store classes; boundaries (9) and objects use separate indexes.
+const CLASS_KINDS = [
+  "land",
+  "water",
+  "buildings",
+  "roads",
+  "roads",
+  "roads",
+  "railways",
+] as const;
+export function featureClasses(kinds: readonly FeatureKind[]) {
+  return CLASS_KINDS.flatMap((kind, cls) =>
+    kinds.includes(kind) ? [cls] : [],
+  );
+}
 /** Full OSM shapes are replicated into intersecting grid cells; queries deduplicate by OSM identity. */
-export function buildFeatures(source: FeatureCollection) {
+export function buildFeatures(
+  source: FeatureCollection,
+  kinds: readonly FeatureKind[] = LEGACY_FEATURE_KINDS,
+) {
   const cells = new Map<string, MapFeature[]>(),
-    n = 2 ** FEATURE_ZOOM;
+    n = 2 ** FEATURE_ZOOM,
+    selected = new Set(featureClasses(kinds));
+  if (!selected.size) return cells;
   for (const f of source.features) {
     if (
       !f.geometry ||
@@ -20,19 +41,10 @@ export function buildFeatures(source: FeatureCollection) {
       continue;
     const p = f.properties ?? {},
       cls = Number(p.class);
-    const kind: FeatureKind | undefined =
-      cls === 2
-        ? "buildings"
-        : cls === 1
-          ? "water"
-          : cls === 6
-            ? "railways"
-            : [3, 4, 5].includes(cls)
-              ? "roads"
-              : cls === 0
-                ? "land"
-                : undefined;
-    if (!kind) continue;
+    const kind = CLASS_KINDS[cls];
+    // Filter before measuring or replicating geometry: unselected world-sized
+    // shapes must not consume the regional index's working set or cell budget.
+    if (!kind || !selected.has(cls)) continue;
     const id = String(p.id);
     if (!/^(way|relation)\/\d+$/.test(id)) continue;
     const bbox = geometryBounds(f.geometry),

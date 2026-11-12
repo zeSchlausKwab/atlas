@@ -34,7 +34,7 @@ import { SourceGeocoding } from "../../geocoding/src/source-build";
 import { PagedSearchBuilder } from "../../geocoding/src/paged-build";
 import { buildLabels, partitionLabels } from "../../labels/src/compile";
 import { LABEL_ZOOM } from "../../labels/src/index";
-import { buildFeatures } from "../../features/src/compile";
+import { buildFeatures, featureClasses } from "../../features/src/compile";
 import { FEATURE_ZOOM } from "../../features/src/index";
 import { inside, bounds, selectedCell } from "../../offline/src/geometry";
 import { clipLine } from "../../provisioning/src/prepare";
@@ -577,11 +577,24 @@ export async function compilePartitioned(o: PartitionedOptions) {
                     );
                   }
                 let count = 0;
+                // Class metadata is outside the compressed geometry. Avoid decoding
+                // unrelated shapes (e.g. all water ways in a boundaries-only build).
+                const legacyClasses = featureClasses(s.featureKinds);
+                const classes = [
+                  ...legacyClasses,
+                  ...(s.featureKinds.includes("boundaries") ? [9] : []),
+                ];
+                const featureWhere =
+                  s.search || s.reverse || s.streetNames || s.pois
+                    ? ""
+                    : classes.length
+                      ? ` WHERE class IN (${classes.join(",")})`
+                      : " WHERE 0";
                 const featureTotal = source!
                   .query<
                     { n: number },
                     []
-                  >("SELECT count(*) AS n FROM features")
+                  >("SELECT count(*) AS n FROM features" + featureWhere)
                   .get()!.n;
                 const featureProgress = measuredProgress(
                   progress,
@@ -593,7 +606,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   .query<
                     { data: Uint8Array },
                     []
-                  >("SELECT data FROM features ORDER BY rowid")
+                  >("SELECT data FROM features" + featureWhere + " ORDER BY rowid")
                   .iterate()) {
                   signal.throwIfAborted();
                   const bytes = Bun.gunzipSync(data as Uint8Array<ArrayBuffer>);
@@ -617,14 +630,16 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   if (s.search || s.reverse || s.streetNames || s.pois)
                     semantic.addFeatures(fc);
                   if (
-                    s.featureKinds.length &&
+                    legacyClasses.includes(Number(feature.properties?.class)) &&
                     booleanIntersects(feature, region)
                   )
-                    for (const [key, features] of buildFeatures(fc))
-                      if (s.featureKinds.includes(key.split("/")[1] as any)) {
-                        spool.json(key, { schema: "features-v1", features });
-                        featureCount++;
-                      }
+                    for (const [key, features] of buildFeatures(
+                      fc,
+                      s.featureKinds,
+                    )) {
+                      spool.json(key, { schema: "features-v1", features });
+                      featureCount++;
+                    }
                   if (++count % 5000 === 0) {
                     featureProgress(count);
                     spool.checkpoint(count);

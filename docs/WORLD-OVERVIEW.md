@@ -72,3 +72,27 @@ and recompression versus 0.135 s with verified stored-byte copying (~9.7×).
 The optimized input path made nine file reads totalling 26,568,746 bytes.
 Both variants use the buffered writer. This is a CPU/local-I/O comparison;
 NAS throughput and North Sea's completion time still require observation.
+
+## Selective OSM world preparation
+
+The OSM information-visualization recipe keeps water for display and administrative
+boundaries for analysis. These are independent selections: enabling a water display
+layer does not request a replicated, extractable water-feature index.
+
+The semantic compiler now filters source-store classes before decompressing
+geometry when search/street/POI semantics are not requested. A boundaries-only
+analysis pass reads class 9; place labels still come from the locations table.
+Both the partitioned and in-memory compilers apply the requested feature kinds
+before calculating legacy cell coverage. This fixes the world-build failure
+`Feature way/26530066 spans too many cells for this regional prototype`, which
+was caused by indexing an unselected shape before discarding its cells.
+
+This changes neither the file format nor completed-stage fingerprints. A failed
+semantic pass can reuse its verified source database and filtered PBF, then rebuild
+only the unfinished stages. Existing completed archives remain compatible. The
+regional cell limit still applies to explicitly requested legacy feature families;
+this fix does not silently omit oversized selected features or remove that limit.
+
+Regression coverage: `tests/feature-selection.test.ts` checks family filtering,
+source-stage reuse, selective decoding, preserved boundary geometry and place
+labels, and repeated compilation from completed archives.
