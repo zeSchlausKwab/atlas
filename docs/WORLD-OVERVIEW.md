@@ -170,3 +170,13 @@ unchanged; one original feature was retained because its simplified candidate
 contained a degenerate ring. The preflight finished with zero remaining point,
 feature or block-size failures. This validates packing inputs, not completion of
 the final assembled archive.
+
+End-to-end recovery completed on 2026-11-12: the server marked **World information
+visualization** ready, at 4,548,195,266 bytes (about 4.24 GiB), and its follow-up
+service resumed North Sea. A fresh production `AtlasReader` opened the completed
+file, validated its catalog of 761,971 administrative boundary polygons, and
+hash-checked/decoded all five recovered water tiles. Their final point counts
+were 246,732; 544,274; 284,085; 435,690; and 276,638, respectively. The tile limits
+remain unchanged. A progress-callback integration error found during the first
+resumption was corrected by explicitly typing the compiler progress sink as a
+string callback before the successful end-to-end run.
