@@ -22,7 +22,7 @@ import {
 import { CompilerPassHistory } from "../../../packages/provisioning/src/compiler-pass-history";
 import { buildProgressPanel, orderBuildJobs } from "./host-build-progress";
 import { project } from "../../../packages/format/src/index";
-import { openClient } from "./client-link";
+import { clientLinks, onClientDeliveryChange } from "./client-link";
 import { storageSize } from "./host-budget";
 import { storageRequest } from "./host-storage";
 import {
@@ -543,16 +543,26 @@ function selection(): PackageSelection {
 const request = storageRequest;
 const composition = new Set<string>();
 function updateComposition() {
-  el<HTMLAnchorElement>("compose").href = openClient(
+  const launches = clientLinks(
     composition.size ? { maps: [...composition] } : {},
   );
-  el("compose").textContent = composition.size
-    ? `Compose ${composition.size} selected maps ↗`
-    : "Compose hosted maps ↗";
+  for (const [index, id] of ["compose", "compose-fips"].entries()) {
+    const link = el<HTMLAnchorElement>(id),
+      launch = launches[index];
+    link.hidden = !launch;
+    if (!launch) {
+      link.removeAttribute("href");
+      continue;
+    }
+    link.href = launch.url;
+    link.textContent = composition.size
+      ? `Compose ${composition.size} selected maps · ${launch.transport.toUpperCase()} ↗`
+      : `Open library · ${launch.transport.toUpperCase()} ↗`;
+  }
   el<HTMLButtonElement>("export").disabled = !composition.size;
-  el("compose-count").textContent = composition.size
-    ? "These sources will share one map view."
-    : "Choose maps below, or open the full library.";
+  el("compose-count").textContent = launches.some((l) => l.transport === "http")
+    ? "HTTP inspects maps directly from this server. FIPS uses the peer network. Both read only the selected data."
+    : "Enable HTTP delivery in the FIPS tab for direct server inspection.";
 }
 let exportJobs: PreparationJob[] = [];
 el<HTMLFormElement>("export-form").onsubmit = async (event) => {
@@ -576,6 +586,10 @@ el<HTMLFormElement>("export-form").onsubmit = async (event) => {
   }
 };
 let lastJobs = "";
+onClientDeliveryChange(() => {
+  lastJobs = "";
+  jobs(exportJobs);
+});
 let observations = new Map<string, CompilerObservation>();
 let nextObservationRead = 0;
 const passHistories = new Map<string, CompilerPassHistory>();
@@ -672,7 +686,10 @@ function jobs(values: PreparationJob[]) {
       const links = document.createElement("div");
       links.className = "host-actions";
       for (const [label, url] of [
-        ["Open in client ↗", openClient({ maps: [job.id] })],
+        ...clientLinks({ maps: [job.id] }).map((link) => [
+          `${link.label} ↗`,
+          link.url,
+        ]),
         ["Download .atlas", `/admin/maps/${job.id}.atlas`],
         ["Capabilities ↗", `/admin/maps/${job.id}/api/capabilities`],
       ]) {
@@ -697,7 +714,7 @@ function jobs(values: PreparationJob[]) {
           report.append(body);
           void (async () => {
             const reader = new AtlasReader(
-              new HttpSource(`/maps/${job.id}.atlas`),
+              new HttpSource(`/admin/maps/${job.id}.atlas`),
             );
             try {
               await reader.open();

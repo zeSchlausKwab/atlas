@@ -10,7 +10,7 @@ Use `/Users/schlaus/workspace/geo-format` as the working reference and migrate i
 
 ## What already works
 
-Atlas's integrated provider serves multiple immutable roots, signed Nostr map announcements and default-view recipes, selective Hashtree blobs, and root-pinned operation RPC. HTTP delivery is optional and currently disabled on the demo host.
+Atlas's integrated provider serves multiple immutable roots, signed Nostr map announcements and default-view recipes, selective Hashtree blobs, and root-pinned operation RPC. HTTP delivery is optional. It is enabled on the demo host for explicit classic inspection; the FIPS napplet must still use FIPS with no HTTP fallback.
 
 The demo napplet now discovers the configured publisher's library, selects multiple maps, changes geometry layers, and optionally reads labels or imagery. Its default reads geometry plus necessary directory/manifest metadata. It does not preload routing, search or analysis. Verified live: six signed offers, two composed Lower Rhine maps, 27/27 tiles, no browser errors and no HTTP map requests. Cold rendering took minutes through the public relay path, so performance remains something to measure.
 
