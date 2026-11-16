@@ -1,3 +1,4 @@
+import { BorderOverlay } from "./borders";
 import { RasterPlane, type RasterLayerViews } from "./raster";
 import { PlacesView } from "../../labels/src/place-pages";
 import type { WorkspaceMap } from "./workspace-map";
@@ -59,6 +60,7 @@ interface Session {
   raster: RasterPlane;
   scheduler: TileScheduler;
   labels: MapLabels;
+  borders?: BorderOverlay;
   shown: string[];
   prefix: string;
   clips: Map<Channel, number>;
@@ -266,6 +268,7 @@ export class CompositionMap implements WorkspaceMap {
       s.scheduler.retry();
       s.raster.retry();
       s.labels.retry();
+      s.borders?.retry();
       s.placesView?.retry();
       s.placesFailed = false;
     }
@@ -503,6 +506,7 @@ export class CompositionMap implements WorkspaceMap {
         session.scheduler.destroy();
         session.raster.destroy();
         session.labels.destroy();
+        session.borders?.destroy();
         this.sessions.delete(id);
       }
     for (const source of this.sources) {
@@ -585,7 +589,7 @@ export class CompositionMap implements WorkspaceMap {
     )) {
       const s = this.sessions.get(part.source)!;
       s.tiles.parts.set(part.channel, part.coverage);
-      if (part.channel !== "labels") {
+      if (part.channel !== "labels" && part.channel !== "boundaries") {
         const a = clipArrays(part.coverage);
         this.renderer.set_clip(++id, a.coordinates, a.rings, a.polygons);
         s.clips.set(part.channel, id);
@@ -696,7 +700,12 @@ export class CompositionMap implements WorkspaceMap {
       stats.missing += result.missing + s.raster.stats.missing;
       stats.loading += result.loading + s.raster.stats.loading;
       stats.bytes += s.source.reader.bytesRead;
-      if (active && (layers.length || s.tiles.parts.has("labels")))
+      if (
+        active &&
+        (layers.length ||
+          s.tiles.parts.has("labels") ||
+          s.tiles.parts.has("boundaries"))
+      )
         stats.sources++;
     }
     this.renderer.set_visible(visible.join(","));
@@ -716,6 +725,33 @@ export class CompositionMap implements WorkspaceMap {
     );
     stats.drawMs = performance.now() - drawStart;
     for (const f of frames) this.debugOverlays.draw(f);
+    for (const source of [...this.sources].reverse()) {
+      const s = this.sessions.get(source.id)!;
+      const mask = s.tiles.parts.get("boundaries");
+      if (mask)
+        s.borders ??= new BorderOverlay(
+          source.reader,
+          () => this.invalidate(),
+          (e) => this.onError(source.id, e),
+        );
+      s.borders?.update(view, this.zoom, !!mask);
+      stats.loading += s.borders?.loading ?? 0;
+      if (!mask) continue;
+      const toScreen = worldProjector(camera);
+      ctx.save();
+      ctx.beginPath();
+      for (const polygon of polygonsOf(mask))
+        for (const ring of polygon) {
+          ring.forEach((p, i) => {
+            const [x, y] = toScreen(p as [number, number]);
+            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          });
+          ctx.closePath();
+        }
+      ctx.clip("evenodd");
+      s.borders?.draw(ctx, camera, this.style);
+      ctx.restore();
+    }
     this.featureOverlay.draw(ctx, camera);
     const occupied: [number, number, number, number][] = [],
       toScreen = worldProjector(camera);
@@ -834,6 +870,7 @@ export class CompositionMap implements WorkspaceMap {
       s.scheduler.destroy();
       s.raster.destroy();
       s.labels.destroy();
+      s.borders?.destroy();
     }
     this.renderer.free();
     this.overlay.remove();

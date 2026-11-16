@@ -12,13 +12,14 @@ import {
 import type { AtlasReader } from "../../format/src/reader";
 import { inside } from "../../offline/src/geometry";
 export type Coverage = Feature<Polygon | MultiPolygon>;
-export type Channel = MapLayer | "labels";
+export type Channel = MapLayer | "labels" | "boundaries";
 export interface CompositionSource {
   id: string;
   manifest: Manifest;
   enabled: boolean;
   layers: MapLayer[];
   labels: boolean;
+  boundaries?: boolean;
 }
 export interface CoveragePart {
   source: string;
@@ -96,15 +97,19 @@ export function planComposition(
   zoom: number,
 ): CoveragePart[] {
   const result: CoveragePart[] = [];
-  for (const channel of [...MAP_LAYERS, "labels"] as Channel[]) {
+  for (const channel of [...MAP_LAYERS, "labels", "boundaries"] as Channel[]) {
     const claimed: Coverage[] = [];
     for (const source of sources) {
       if (!source.enabled || zoom < source.manifest.minZoom) continue;
       const has =
-        channel === "labels"
-          ? source.labels && source.manifest.capabilities.includes("map-labels")
-          : source.layers.includes(channel) &&
-            (source.manifest.tileLayers ?? MAP_LAYERS).includes(channel);
+        channel === "boundaries"
+          ? source.boundaries &&
+            source.manifest.capabilities.includes("boundary-rendering")
+          : channel === "labels"
+            ? source.labels &&
+              source.manifest.capabilities.includes("map-labels")
+            : source.layers.includes(channel) &&
+              (source.manifest.tileLayers ?? MAP_LAYERS).includes(channel);
       if (!has) continue;
       const whole = coverageOf(source.manifest);
       const coverage = claimed.length

@@ -1,3 +1,4 @@
+import { BorderDisplayWriter } from "./display-build";
 import { includesAdminLevel } from "./selection";
 import type { Feature, Polygon, MultiPolygon } from "geojson";
 import type { BlockWriter } from "../../cli/src/stream-writer";
@@ -18,6 +19,7 @@ const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 /** One geometry per source object, bounded metadata pages, no replication into display cells. */
 export class BoundaryWriter {
   private ids = new Set<string>();
+  private display?: BorderDisplayWriter;
   private records: BoundaryRecord[] = [];
   private pages: BoundaryPage[] = [];
   count = 0;
@@ -50,6 +52,7 @@ export class BoundaryWriter {
     validateBoundary(feature);
     if (this.ids.has(id)) throw new Error(`Duplicate boundary ID ${id}`);
     this.ids.add(id);
+    (this.display ??= new BorderDisplayWriter(this.writer)).add(feature);
     const key = boundaryKey("geometry", this.count++);
     await this.writer.add({ key, bytes: encode(data), features: 1 });
     const coordinates = areaAnchor(
@@ -107,6 +110,8 @@ export class BoundaryWriter {
   }
   async finish() {
     await this.flush();
+    await (this.display ??= new BorderDisplayWriter(this.writer)).finish();
+    this.display = undefined;
     await this.writer.add({
       key: BOUNDARY_ROOT,
       bytes: encode({

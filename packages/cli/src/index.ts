@@ -662,7 +662,7 @@ async function main() {
           : []),
         ...(flags.features &&
         (!selected || selected.featureKinds.includes("boundaries"))
-          ? ["administrative-boundaries"]
+          ? ["administrative-boundaries", "boundary-rendering"]
           : []),
         ...(!selected || selected.layers.length ? ["vector-rendering"] : []),
         ...(!selected || selected.layers.includes("buildings")

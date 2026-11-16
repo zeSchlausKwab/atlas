@@ -54,12 +54,63 @@ most 256 records / 1 MiB decoded, including bounding boxes and links to geometry
 Each boundary geometry is stored once per archive, rather than being copied into
 every intersecting map tile or source cell. The standard paged archive directory
 indexes these blocks. Geometry loads only for requested objects or exact spatial
-intersection/containment checks. All boundary reads count as source-feature reads.
+intersection/containment checks. Exact boundary reads count as source-feature reads.
 
 This first version scans retained boundary metadata for a name search. Page
 bounding boxes prune spatial queries; it is not yet a global inverted name index
 or a country-aware administrative hierarchy. Very large individual geometries
 remain subject to the format's feature/block validation limits.
+
+## Automatic border display (16 November 2026)
+
+The classic viewer now draws administrative outlines independently of exact
+analysis geometry. Sources with `boundary-rendering` expose an **Administrative
+borders** checkbox, saved with composition links. Countries appear from z0,
+levels 3–4 from z3, 5–6 from z5, 7–8 from z8, and finer levels from z10. These
+are display thresholds, not a claim that administrative levels mean the same
+thing in every country. Country outlines are solid; smaller areas are dashed.
+The shared renderer opts in explicitly, so existing napplet/native consumer
+resource choices do not change automatically.
+
+`boundary-display/index` lists spatially grouped pages by administrative level.
+`boundary-display/16/x/y` uses virtual page addresses, like the exact boundary
+store; its page envelopes carry geographic coverage. Pages contain simplified
+outline fragments with original source IDs. Holes and islands remain outlines.
+Long rings are split with shared endpoints; date-line jumps do not draw a line
+across the world. Display simplification is measured in Mercator screen units;
+it does not jointly simplify shared edges and is unsuitable as analysis geometry.
+
+Each page is limited to 64 fragments and 1 MiB decoded; the root is limited to
+16 MiB. The renderer loads only visible levels/pages, with two concurrent reads
+and a conservative 24 MiB decoded display budget. It reports an explicit error
+rather than silently dropping geometry if that budget is exceeded. Border reads
+are counted as **map geometry**, including through the normal verified Hashtree
+reader; exact `boundaries/` reads remain feature/analysis reads. Source precedence
+and coverage clipping apply independently to borders.
+
+New boundary builds also produce display pages. To amend an existing archive
+without another PBF scan:
+
+```sh
+bun scripts/add-border-display.ts existing.atlas new-with-borders.atlas
+```
+
+This creates a new immutable snapshot, reuses every existing payload with the
+same hash, and preserves the exact polygons, tags and OSM source fingerprint.
+Republish the new snapshot; existing pinned links keep pointing to the old one.
+
+A low-zoom OSM overview can also be extracted from an already compiled OSM world
+archive, retaining country polygons, places and land/water display levels 0–4:
+
+```sh
+bun scripts/derive-osm-overview.ts world.atlas overview.atlas
+```
+
+This still needs to scan the existing boundary metadata and copy selected
+geometry; it does not read the planet PBF. Coastline provenance remains whatever
+the source archive declares, including a separate OSM coastline snapshot.
+`tests/border-display.test.ts` verifies selective display reads, source/hash
+preservation, date-line handling, validation, composition and disposal behavior.
 
 ## Upgrade existing archives
 

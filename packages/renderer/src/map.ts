@@ -1,3 +1,5 @@
+import { BorderOverlay } from "./borders";
+import { coverageOf, polygonsOf } from "./composition-plan";
 import { RasterPlane, type RasterLayerViews } from "./raster";
 import { PlacesView } from "../../labels/src/place-pages";
 import { defaultOverlays } from "./overlays";
@@ -16,6 +18,7 @@ import {
 } from "./style";
 import {
   cameraBounds,
+  worldProjector,
   fitZoom,
   groundDelta,
   metersPerPixel,
@@ -46,6 +49,7 @@ export interface MapOptions {
   placeNames?: boolean;
   streetNames?: boolean;
   pois?: boolean;
+  boundaries?: boolean;
   cacheBudgets?: { meshes?: number; labels?: number };
 }
 export interface MapStats {
@@ -63,6 +67,7 @@ export class AtlasMap {
   renderer!: Renderer;
   readonly overlays = defaultOverlays();
   private featureOverlay = new FeatureOverlay();
+  private borders?: BorderOverlay;
   onFeatureSelect?: (id: string) => void;
   setFeatures(features: MapFeature[], selected: Set<string>) {
     this.featureOverlay.features = features;
@@ -189,6 +194,12 @@ export class AtlasMap {
     readonly onError: (message: string) => void,
     options: MapOptions,
   ) {
+    if (options.boundaries)
+      this.borders = new BorderOverlay(
+        reader,
+        () => this.invalidate(),
+        onError,
+      );
     this.labels = new MapLabels(
       reader,
       () => this.invalidate(),
@@ -465,6 +476,7 @@ export class AtlasMap {
     this.tiles.retry();
     this.raster.retry();
     this.labels.retry();
+    this.borders?.retry();
     this.placesFailed = false;
     this.placesView?.retry();
     this.invalidate();
@@ -555,7 +567,10 @@ export class AtlasMap {
       fallbackTiles: state.presented.filter((b) => b.z !== state.view.zoom)
         .length,
       drawMs: this.lastDraw,
-      loading: state.loading + this.raster.stats.loading,
+      loading:
+        state.loading +
+        this.raster.stats.loading +
+        (this.borders?.loading ?? 0),
       labels: this.labelStats,
     });
   }
@@ -608,6 +623,27 @@ export class AtlasMap {
       },
       labelStats: { roads: 0, pois: 0, loading: 0, missing: 0 },
     };
+    if (this.borders) {
+      this.borders.update(
+        cameraBounds(this.camera),
+        this.zoom,
+        this.zoom >= this.reader.index.manifest.minZoom,
+      );
+      ctx.save();
+      ctx.beginPath();
+      const screen = worldProjector(this.camera);
+      for (const polygon of polygonsOf(coverageOf(this.reader.index.manifest)))
+        for (const ring of polygon) {
+          ring.forEach((p, i) => {
+            const [x, y] = screen(p as [number, number]);
+            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          });
+          ctx.closePath();
+        }
+      ctx.clip("evenodd");
+      this.borders.draw(ctx, this.camera, this.style);
+      ctx.restore();
+    }
     this.overlays.draw(frame);
     this.labelStats = frame.labelStats;
   }
@@ -616,6 +652,7 @@ export class AtlasMap {
     this.dead = true;
     this.placesView?.destroy();
     this.labels.destroy();
+    this.borders?.destroy();
     this.overlays.destroy();
     this.tiles.destroy();
     this.raster.destroy();

@@ -92,9 +92,15 @@ export function validateFamilies(
 }
 const builtIn = (id: string) =>
   /^(raster:|tile:|routing:)/.test(id) ||
-  ["labels", "search", "features", "boundaries", "objects", "query"].includes(
-    id,
-  );
+  [
+    "labels",
+    "search",
+    "features",
+    "boundaries",
+    "boundary-display",
+    "objects",
+    "query",
+  ].includes(id);
 /** Adapts old archives; rebuilds known descriptors from authoritative family metadata. */
 export function familyCatalog(m: Omit<Manifest, "snapshot">): DataFamily[] {
   const result: DataFamily[] = (m.families ?? []).filter((f) => !builtIn(f.id));
@@ -128,6 +134,8 @@ export function familyCatalog(m: Omit<Manifest, "snapshot">): DataFamily[] {
       maxZoom: m.maxZoom,
     });
   }
+  if (m.capabilities.includes("boundary-rendering"))
+    add("boundary-display", "boundary-display/", "atlas-boundary-lines");
   if (m.capabilities.includes("map-labels"))
     add("labels", "labels/", "atlas-labels");
   if (

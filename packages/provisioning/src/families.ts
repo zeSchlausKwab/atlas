@@ -13,6 +13,11 @@ export const CAPABILITY_CHOICES = [
     label: `${id[0]!.toUpperCase()}${id.slice(1)} geometry`,
     group: "Map",
   })),
+  {
+    id: "boundary-display",
+    label: "Administrative border outlines",
+    group: "Map",
+  },
   { id: "labels", label: "Place, street & POI labels", group: "Map" },
   ...TRANSPORT_MODES.map((id) => ({
     id: `routing:${id}`,
@@ -30,6 +35,9 @@ export function installedCapabilities(m: Manifest): string[] {
   return [
     ...(m.rasters ?? []).map((r) => `raster:${r.id}`),
     ...(m.tileLayers ?? []).map((l) => `tile:${l}`),
+    ...(m.capabilities.includes("boundary-rendering")
+      ? ["boundary-display"]
+      : []),
     ...(m.capabilities.includes("map-labels") ? ["labels"] : []),
     ...TRANSPORT_MODES.filter((p) => m.transport?.profiles[p]).map(
       (p) => `routing:${p}`,
@@ -56,6 +64,7 @@ export function blockFamily(key: string): string | undefined {
     return "reverse";
   if (key.startsWith("search/")) return "search";
   if (key.startsWith("features/")) return "features";
+  if (key.startsWith("boundary-display/")) return "boundary-display";
   if (key.startsWith("boundaries/")) return "boundaries";
   if (key.startsWith("objects/")) return "objects";
   if (key.startsWith("query/peaks")) return "peaks";

@@ -201,7 +201,7 @@ export function spatialAddress(key: string) {
       y: Number(label[3]),
     };
   const m =
-    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|members\/m[0-9]{1,3}|raster\/[a-z][a-z0-9_-]{0,63}|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
+    /^(tile(?:\/(?:land|water|buildings|roads|railways|peaks))?|members\/m[0-9]{1,3}|raster\/[a-z][a-z0-9_-]{0,63}|features\/(?:buildings|water|railways|roads|land|attributes|geometry)|boundary-display|boundaries\/(?:records|geometry)|objects\/(?:geometry|topology|records|spatial|ids|lookup|tag-values|tag-index|tag-pages)|search\/(?:records|postings|terms|streets-data|locations-data|location-pages|street-pages)|labels\/settlements|query\/peaks-data|routing\/(?:(?:walking|cycling|driving)\/)?cells)\/(\d+)\/(\d+)\/(\d+)$/.exec(
       key,
     );
   return m
@@ -454,6 +454,7 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
   for (const [capability, key] of [
     ["location-search", "search/locations"],
     ["administrative-boundaries", "boundaries/index"],
+    ["boundary-rendering", "boundary-display/index"],
     ["source-objects", "objects/index"],
     ["reverse-street", "search/streets"],
   ]) {
@@ -499,7 +500,9 @@ export function parseIndex(header: Header, bytes: Uint8Array): PackageIndex {
                           p.prefix!,
                         )
                       ? p.z !== 26
-                      : /^boundaries\/(records|geometry)$/.test(p.prefix!)
+                      : /^(boundary-display|boundaries\/(records|geometry))$/.test(
+                            p.prefix!,
+                          )
                         ? p.z !== 16
                         : pagedZoom(p.prefix!) !== undefined
                           ? p.z !== pagedZoom(p.prefix!)
@@ -641,6 +644,20 @@ export function validateBlocks(
           (block.rawLength ?? block.length) > 1024 ** 2)
       )
         throw new Error("Invalid boundary block address or size");
+    }
+    if (
+      block.key.startsWith("boundary-display/") &&
+      block.key !== "boundary-display/index"
+    ) {
+      const a = spatialAddress(block.key);
+      if (
+        !a ||
+        a.z !== 16 ||
+        a.x >= 65536 ||
+        a.y >= 65536 ||
+        (block.rawLength ?? block.length) > 1024 ** 2
+      )
+        throw new Error("Invalid administrative display block");
     }
     if (block.key.startsWith("members/")) {
       const a = spatialAddress(block.key),

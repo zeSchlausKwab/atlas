@@ -229,7 +229,11 @@ export async function preparePackage(
         p.completed++;
         continue;
       }
-      if (b.key.startsWith("boundaries/") || b.key.startsWith("objects/")) {
+      if (
+        b.key.startsWith("boundaries/") ||
+        b.key.startsWith("boundary-display/") ||
+        b.key.startsWith("objects/")
+      ) {
         p.completed++;
         continue;
       }
@@ -417,7 +421,7 @@ export async function preparePackage(
         caps.push("land-sea-surfaces");
     }
     if (featureKinds.includes("boundaries"))
-      caps.push("administrative-boundaries");
+      caps.push("administrative-boundaries", "boundary-rendering");
     for (const mode of s.profiles)
       if (!profiles[mode]!.count && !m.transport?.federation)
         delete profiles[mode];

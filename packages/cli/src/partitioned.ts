@@ -728,7 +728,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                     ...(s.featureKinds.length ? ["feature-extraction"] : []),
 
                     ...(s.featureKinds.includes("boundaries")
-                      ? ["administrative-boundaries"]
+                      ? ["administrative-boundaries", "boundary-rendering"]
                       : []),
                   ],
                 };

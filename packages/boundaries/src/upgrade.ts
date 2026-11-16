@@ -53,7 +53,11 @@ export async function upgradeBoundaries(
       last = 0;
     for await (const b of reader.iterateBlocks()) {
       signal.throwIfAborted();
-      if (b.key.startsWith("boundaries/")) continue;
+      if (
+        b.key.startsWith("boundaries/") ||
+        b.key.startsWith("boundary-display/")
+      )
+        continue;
       const offset = reader.index.header.payloadOffset + b.offset,
         bytes = await reader.source.read(offset, offset + b.length, signal);
       if ((await sha256(bytes)) !== b.hash)
@@ -100,6 +104,7 @@ export async function upgradeBoundaries(
           ...new Set([
             ...m.capabilities,
             "administrative-boundaries",
+            "boundary-rendering",
             "feature-extraction",
           ]),
         ],

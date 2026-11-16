@@ -385,6 +385,7 @@ async function open(source: ByteSource) {
         error(message);
       },
       {
+        boundaries: true,
         style: appearance.style,
         scene: appearance.scene,
         layers: selectedLayers(),
@@ -437,7 +438,9 @@ function bindTools() {
     reader.source instanceof RemoteSource && /^https?:/.test(reader.source.url);
   el("download").hidden = !directDownload;
   if (directDownload)
-    el<HTMLAnchorElement>("download").href = (reader.source as RemoteSource).url;
+    el<HTMLAnchorElement>("download").href = (
+      reader.source as RemoteSource
+    ).url;
   el<HTMLAnchorElement>("download").download =
     `${m.name.toLowerCase().replaceAll(" ", "-")}.atlas`;
   el("feature-count").textContent = number(m.features);
@@ -598,7 +601,9 @@ async function openComposition(local?: ByteSource) {
   el<HTMLInputElement>("offline").checked = false;
   el("render-status").textContent = "Opening map composition…";
   try {
-    await initCompositionRenderer({ module_or_path: "/wasm/atlas_renderer_bg.wasm" });
+    await initCompositionRenderer({
+      module_or_path: "/wasm/atlas_renderer_bg.wasm",
+    });
     const next = await CompositionMap.create(
       el<HTMLCanvasElement>("map"),
       stats,

@@ -67,6 +67,7 @@ interface Entry {
   enabled: boolean;
   layers: MapLayer[];
   labels: boolean;
+  boundaries?: boolean;
   rasterOpacity?: number;
   rasterLayers?: RasterLayerViews;
   root?: string;
@@ -85,6 +86,7 @@ interface SavedSource {
   enabled: boolean;
   layers: MapLayer[];
   labels: boolean;
+  boundaries?: boolean;
   rasterOpacity?: number;
   rasterLayers?: RasterLayerViews;
 }
@@ -214,6 +216,7 @@ export async function createComposer(
           enabled: true,
           layers: e.layers.filter((l) => m.manifest.tileLayers?.includes(l)),
           labels: e.labels,
+          boundaries: e.boundaries,
           rasterOpacity: e.rasterOpacity,
           rasterLayers: Object.fromEntries(
             (m.manifest.rasters ?? []).map((r) => [
@@ -326,6 +329,7 @@ export async function createComposer(
         enabled: e.enabled,
         layers: e.layers,
         labels: e.labels,
+        boundaries: e.boundaries,
         rasterOpacity: e.rasterOpacity,
         rasterLayers: e.rasterLayers,
         root: e.offer.hashtree?.root,
@@ -581,6 +585,34 @@ export async function createComposer(
         );
         layers.append(row);
       }
+      if (m.capabilities.includes("boundary-rendering")) {
+        const row = document.createElement("label"),
+          input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = entry.boundaries !== false;
+        input.onchange = () => {
+          entry.boundaries = input.checked;
+          sync();
+          save();
+        };
+        row.append(input, text("span", "Administrative borders"));
+        layers.append(row);
+        layers.append(
+          text(
+            "small",
+            "Countries first; regions and local areas appear as you zoom in. Dashed lines show smaller administrative areas.",
+            "quiet",
+          ),
+        );
+      } else if (m.capabilities.includes("administrative-boundaries")) {
+        layers.append(
+          text(
+            "small",
+            "Administrative polygons are available to analysis tools. This archive needs a border display amendment to draw them automatically.",
+            "quiet",
+          ),
+        );
+      }
       if (m.capabilities.includes("map-labels")) {
         const row = document.createElement("label"),
           input = document.createElement("input");
@@ -768,6 +800,9 @@ export async function createComposer(
       layers: saved?.layers?.filter((l) =>
         offer.manifest.tileLayers?.includes(l),
       ) ?? [...(offer.manifest.tileLayers ?? [])],
+      boundaries:
+        saved?.boundaries ??
+        offer.manifest.capabilities.includes("boundary-rendering"),
       labels:
         saved?.labels ?? offer.manifest.capabilities.includes("map-labels"),
       rasterOpacity: Number.isFinite(saved?.rasterOpacity)
@@ -1005,7 +1040,8 @@ export async function createComposer(
           typeof s.url === "string" &&
           typeof s.enabled === "boolean" &&
           Array.isArray(s.layers) &&
-          typeof s.labels === "boolean",
+          typeof s.labels === "boolean" &&
+          (s.boundaries === undefined || typeof s.boundaries === "boolean"),
       )
     )
       throw new Error("Invalid composition link");

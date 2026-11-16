@@ -160,6 +160,7 @@ export async function composeCapabilities(
       "feature-extraction",
       "source-objects",
       "administrative-boundaries",
+      "boundary-rendering",
       "transport-routing",
       "walking-routing",
       "paged-walking-routing",
@@ -192,6 +193,7 @@ export async function composeCapabilities(
       ...(featureKinds.length ? ["feature-extraction"] : []),
       ...(has("objects") ? ["source-objects"] : []),
       ...(has("boundaries") ? ["administrative-boundaries"] : []),
+      ...(has("boundary-display") ? ["boundary-rendering"] : []),
       ...(routingOwner ? ["transport-routing"] : []),
       ...((has("objects") &&
         owner("objects").capabilities.includes("land-sea-surfaces")) ||

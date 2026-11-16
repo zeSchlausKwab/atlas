@@ -276,12 +276,13 @@ export async function compileWorldOverview(
         "map-labels",
         "feature-extraction",
         "administrative-boundaries",
+        "boundary-rendering",
       ],
       limitations: [
         "Generalized Natural Earth v5.1.2 data, not current OSM or legal boundary authority.",
         "Country and dependency polygons only; no regions, municipalities, addresses or routing.",
         "Display detail ends at zoom 6; coverage is clipped to ±85° latitude.",
-        "Country polygons can be queried and drawn; automatic border-line styling is not included.",
+        "Country polygons can be queried; simplified administrative outlines are available as a separate display layer.",
         "Population and GDP attributes are estimates from the source’s stated years, not live statistics.",
       ],
     };
