@@ -342,3 +342,82 @@ test("boundary upgrade preserves legacy blocks and rejects another snapshot or i
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("administrative-depth excerpts omit finer geometry reads and preserve country geometry exactly", async () => {
+  const country = structuredClone(district);
+  country.id = "relation/20";
+  country.properties!.id = country.id;
+  country.properties!.tags.admin_level = "2";
+  country.properties!.boundaryRefs = [];
+  const reads: string[] = [];
+  const reader = await fixture([country, district], (e) => reads.push(e.key));
+  const dir = await mkdtemp("/tmp/atlas-boundary-depth-");
+  try {
+    const selection: PackageSelection = {
+      snapshot: reader.index.manifest.snapshot,
+      name: "Countries only",
+      polygon: ring(16, 48, 16.2, 48.2).slice(0, -1) as [number, number][],
+      minZoom: 0,
+      maxZoom: 6,
+      layers: [],
+      profiles: [],
+      featureKinds: ["boundaries"],
+      boundaryMaxAdminLevel: 2,
+      placeNames: false,
+      streetNames: false,
+      pois: false,
+      search: false,
+      reverse: false,
+      peaks: false,
+      paddingCells: 0,
+      maxBytes: 1024 ** 2,
+    };
+    await preparePackage(
+      reader,
+      selection,
+      dir + "/country.atlas",
+      signal(),
+      () => {},
+    );
+    const slice = await new AtlasReader(
+      new FileSource(Bun.file(dir + "/country.atlas")),
+    ).open();
+    try {
+      expect((await boundaryCatalog(slice)).count).toBe(1);
+      expect((await findBoundary(slice, "relation/20"))!.geometry).toEqual(
+        country.geometry,
+      );
+      expect(await findBoundary(slice, "relation/10")).toBeUndefined();
+      expect(slice.index.manifest.limitations.join(" ")).toContain(
+        "admin_level 1–2",
+      );
+      expect(reads).not.toContain("boundaries/geometry/1");
+    } finally {
+      slice.dispose();
+    }
+  } finally {
+    reader.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("boundary writer filters numbered levels without silently classifying missing levels", async () => {
+  const unknown = structuredClone(district);
+  delete unknown.properties!.tags.admin_level;
+  const blocks: InputBlock[] = [];
+  const filtered = new BoundaryWriter(
+    {
+      add: async (b) => {
+        blocks.push(b);
+      },
+    },
+    8,
+  );
+  await filtered.add(district);
+  await filtered.add(unknown);
+  await filtered.finish();
+  expect(filtered.count).toBe(0);
+  const unrestricted = new BoundaryWriter({ add: async () => {} });
+  await unrestricted.add(unknown);
+  expect(unrestricted.count).toBe(1);
+});

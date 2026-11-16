@@ -1,0 +1,9 @@
+{
+  "peers": [
+    {
+      "peer": "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh",
+      "transport": "udp",
+      "address": "65.109.48.91:51820"
+    }
+  ]
+}

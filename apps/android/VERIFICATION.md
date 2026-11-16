@@ -1,0 +1,373 @@
+# Atlas Android acceptance — 2026-11-11
+
+Branch: `codex/android-atlas-native-fips`. Migrated without shell history from
+napplet-space `d00ec1ea657c279c120de2c25f071298d17ecfdc`.
+[Original transport-demo evidence](TRANSPORT-VERIFICATION.md) is retained.
+
+## Direct server endpoint: physical cellular acceptance — 11 November 2026
+
+The reconnected Pixel 10 Pro XL completed both direct native transports while
+Wi-Fi was disabled. Android reported a **validated cellular default network
+before and after each run**; the original Wi-Fi setting was restored afterward.
+The same installed 0.5.0 APK was used, with explicit public connection profiles.
+USB carried test control/evidence only; no adb reverse or USB network proxy was
+used. Screenshots for both carriers were visually inspected.
+
+| Physical carrier to the server entry | Complete viewport | Verified payload | Result |
+| --- | --- | --- | --- |
+| TCP | **48.335 s**, 18/18 tiles, 67,466 triangles | 3,548,046 bytes, 76 hashed blobs | Pass |
+| UDP | **46.457 s**, 18/18 tiles, 67,466 triangles | 3,548,046 bytes, 76 hashed blobs | Pass |
+
+These are single observed loads of Lower Rhine East, measured from native
+connection start to the first complete viewport. They are not a throughput SLA
+or a controlled transport comparison. The map data traveled:
+
+```text
+Pixel cellular → router public IPv4 / approved port forward
+               → identity-pinned native FIPS entry on the Atlas server
+               → loopback TCP → native Atlas map provider → existing map files
+```
+
+There is no external transit node, map HTTP/WebSocket fallback, DNS lookup,
+VPN/TUN or additional hosting in this direct path. Both npub identities and all
+catalog, grant, descendant and content-hash checks remain enabled. This closes
+the direct off-LAN reachability gap for this phone/carrier and these endpoints.
+It does not establish other carriers, sustained performance, router restart
+survival, failover or permanent reachability. The approved router leases still
+expire around **16:29 Vienna time**; they were not extended. Persistent public
+exposure is a separate operational decision. The phone retains the tested direct
+UDP profile, so reconnecting through it after expiry requires renewed forwards.
+
+Run `scripts/test-cellular.py` sequentially with `--configured-profile` and each
+direct profile (see the hosting guide). Ignored evidence in `output/phone/` is
+prefixed `direct-public-tcp-cellular-20261111` and
+`direct-public-udp-cellular-20261111`. The `*-network.json` companions record
+`validatedAtCompletion: true`; the generic UI harness's environment file alone
+does not attest to the network route. No production service restart or new APK
+was needed. Layer/lifecycle checks were not repeated over cellular in this short
+window; their emulator and earlier phone evidence remains below.
+
+## Direct endpoint emulator experiment — 11 November 2026
+
+The user substituted an emulator when the Pixel disconnected. The existing
+0.5.0 APK was installed on `Medium_Phone_API_36.1` (ARM64, Emulator 36.1.9).
+Automatic host graphics produced a black display despite successful reads;
+a cold boot with SwiftShader and Vulkan disabled restored rendering. The APK,
+native dependencies and provider were unchanged.
+
+Path tested: Android emulator → Mac host network → router WAN IPv4/hairpin
+forward → same-server native FIPS entry → loopback TCP → native Atlas provider.
+The entry uses the selected physical TCP or UDP carrier; both identities remain
+pinned. The user-approved public router mappings have one-hour leases, expiring
+around **16:29 Vienna time on 11 November**. This test does **not** establish
+reachability or performance from outside the LAN. At that point direct cellular
+acceptance was pending; the later physical-phone follow-up above completed it.
+Earlier cellular acceptance below used a different public entry.
+
+| Direct carrier | Observed result |
+| --- | --- |
+| TCP | **Pass**: Lower Rhine East, 18/18 tiles, 67,466 triangles, 3,548,046 verified payload bytes, 76 hashed blobs. First complete viewport in **40.88 seconds**. |
+| TCP layers | Disabling all display layers stopped tile reads even when zooming; re-enabling loaded tiles. |
+| TCP lifecycle | Background closed the native session; foreground reconnected. Explicit cancellation and reconnect passed. Final screenshot visually inspected. |
+| Initial UDP, 2 GB emulator | **Fail**: exceeded the 240-second acceptance deadline. Continued observation reached only **15/18 tiles**, 62,556 triangles, 3,476,485 verified payload bytes and 74 blobs after **9 minutes 11 seconds**, with no requests left loading. Screenshot inspected; missing geometry is visible. |
+| Clean UDP, 4 GB emulator | **Pass**: 18/18 tiles, 67,466 triangles, 3,548,046 verified payload bytes and 76 blobs in **43.788 seconds**. Native-log readiness polling replaced frequent UiAutomator processes; screenshot visually inspected. |
+| Clean UDP layers/lifecycle | **Pass**: disabling layers stops tile reads, re-enabling loads them; background/resume and explicit cancellation/reconnect complete automatically. Latest renderer state is checked for each reconnect. |
+| Independent Mac UDP probe | Completed signed discovery and 36 verified reads / 136,145 payload bytes in **5.69 seconds** while the emulator was slow. This smaller workload does not isolate the cause or substitute for a viewport test. |
+
+The initial UDP logs show long gaps and timeout retries. A subsequent LAN TCP
+reload also slowed, and Android killed its UI snapshot helper (exit 137). The
+emulator had 2 GB RAM and its low-memory killer was active. A fresh 4 GB boot,
+together with native-log readiness polling instead of frequent UiAutomator
+processes, completed the full UDP viewport in 44 seconds. These two changes were
+made together: their individual effects and any remaining network contribution
+are not isolated. The earlier failure is retained as resource-stress evidence,
+not a general claim that UDP cannot load the map. These single-run timings are
+not a controlled TCP-versus-UDP benchmark.
+
+No verification was disabled and no alternate transport was used. The UI still
+incorrectly reports `15/18 tiles · ready` when its queue drains after failures;
+the acceptance assertion requires every wanted tile and correctly refuses to
+count this as success. Follow-up work should report partial map loads accurately
+and measure resource pressure alongside network retransmission/flow control.
+
+The real-map acceptance harness now allows an explicit `--allow-emulator` opt-in,
+keeps emulator evidence separate from phone evidence, records the network caveat,
+retries transient UI snapshot failures, waits for native completion before UI
+inspection, and rejects stale successful frames from an earlier connection. Reproduction
+commands are in [README.md](README.md). Evidence is ignored in `output/emulator/`:
+`direct-public-tcp*`, `direct-public-udp-live.log`,
+`direct-public-udp-observed.log`, `direct-public-udp-partial.*`,
+`direct-public-udp-4gb*` (including the layer/lifecycle follow-up),
+`memory-pressure.log` and environment JSON.
+The emulator was finally left on the stable LAN TCP profile; the clean 4 GB
+reload passed with 18/18 tiles (`lan-tcp-4gb-final*`). This keeps the demo usable
+after the temporary public router leases expire. No production service restart
+was needed for these tests.
+
+The initial UDP log preserves startup; the observed log retains later progress
+because Android's logcat ring can evict early events during long runs.
+
+## Current deliverable: public FIPS viewer
+
+- ARM64 debug APK **0.5.0-public-fips**, version code 4, 31,765,371 bytes.
+  SHA-256: `1c8ddb13080a80b581dc34b31951bfde26f373f5a165ba7c0b9158448c12b63f`.
+- Installed on the Pixel 10 Pro XL. The bundled default is the pinned public UDP
+  entry and stable map-host npub; the alternate TCP profile remains LAN-only.
+  Saved connection preferences migrate from `connection-v2` to `connection-v3`,
+  selecting this new bundled default once on upgrade. Custom old profiles may
+  be entered again through Connection. No keys are bundled.
+- **Physical off-LAN acceptance passed** with Wi-Fi disabled and Android reporting
+  a validated cellular default network. A clean launch, without a configuration
+  intent or manual connection, loaded Lower Rhine East: **18/18 tiles, 67,466
+  triangles, 3,542,996 verified payload bytes and 76 hashed blobs**. Payload bytes
+  include the separately signature-verified catalog; transport overhead is excluded.
+- Connection began at 14:36:22 CET and the viewport completed at 14:44:24 on
+  11 November 2026: about **8 minutes cold**. This proves reachability, not good
+  interactive performance. Some individual reads took over a minute.
+- Path: phone cellular → public entry over native UDP → the provider's outbound
+  native UDP link → existing Atlas files/indexes. No LAN address, DNS lookup,
+  HTTP/WebSocket map hop, VPN/TUN, or adb forwarding carried the map data.
+  USB was used only for installation, test input and evidence. Wi-Fi was restored
+  in test cleanup; the final screenshot was inspected.
+- Reads have a 90-second deadline and one fresh-stream retry only on timeout.
+  Partial bytes are discarded; integrity, membership and cancellation failures
+  never retry. Joining/discovery retains its 25-second bound. Native unit tests:
+  **16 passed**, including deadline classification and prompt cancellation.
+- The isolated three-node regression passed for TCP and UDP, corrupted content,
+  wrong entry identity, absent provider and concurrent public-style UDP/LAN TCP
+  entries. APK assembly and Android lint passed. The 504-test Atlas core suite
+  also passed for the server/format changes deployed with this update.
+
+Reproduce with `scripts/test-cellular.py`; evidence is ignored under
+`output/phone/public-cellular*`. Earlier LAN lifecycle, gesture, layer-control and
+corruption evidence below is retained; it was **not** rerun on cellular. Public
+TCP through this external entry, carrier/network diversity, loss injection,
+sustained performance and failover remain unverified. Direct-server TCP and UDP
+cellular acceptance subsequently passed as recorded above. A later Mac public-entry probe timed out during its 25-second
+join, before requesting a map; this is an additional availability limitation, not
+a failed hash check or a retraction of the completed cellular run. There is one
+external public UDP entry. Soyli/napplet.soy
+standard integration and full native discovery/RPC parity remain separate work.
+
+## Earlier LAN mesh viewer (historical)
+
+- APK: `output/atlas-native-viewer.apk`, ARM64 debug, **0.4.0-npub-mesh**, code 3,
+  **15,970,447 bytes**, SHA-256
+  `f08f3cf7eb05a49ed745656c5b6f7ce944f83087f4c7112994f32aa5a1d82297`.
+- Installed on the connected Pixel 10 Pro XL (Android 17). The original transport
+  demo remains installed and its source is retained.
+- The APK contains public profiles only. A clean launch requires no pasted IP,
+  catalog hash, publisher key or manual Connect/Open sequence.
+- One map-host npub serves both carriers through a distinct entry peer. The host
+  listens on server loopback; its address is absent from the client profile.
+
+### Verified in this update
+
+| Check | Observed result |
+| --- | --- |
+| Native unit tests | 12 pass; mesh settings derive catalog trust from the host npub and reject mixed trust, DNS endpoints, unknown fields and unexpected carriers |
+| Three-node fixture | Both TCP and UDP entry links reach a separate provider over its TCP link; the observed next hop is the entry identity, not the target identity |
+| Resource checks | Signed catalog, root grant, descendants, real Atlas header, repeated reads and corrupt-content rejection pass on both mesh carriers |
+| Wrong identity / unavailable host | Fail with a bounded error; no target substitution or transport fallback |
+| Original direct fixtures | TCP/UDP regression, restart pins and corrupted-content rejection still pass |
+| Server native probes | Six real published maps discovered, `ATLAS001` header and repeated reads verified over TCP and UDP; 131,095 payload bytes / 36 hashed blobs including the separately signature-verified catalog bytes |
+| Phone automatic startup | Clean app launch loaded Lower Rhine East via bundled TCP entry settings, 12/12 tiles, 57,608 triangles |
+| Phone map selection | TCP: Lower Rhine West, 18/18 tiles, 40,925 triangles; UDP: West and Netherlands satellite, 4/4 raster tiles |
+| Layer controls | Both carriers: disable layers, zoom, observe 0/0 tiles and no additional package reads; re-enable and load tiles |
+| Lifecycle | Both carriers: background/foreground, explicit cancel/reconnect, Wi-Fi loss/restoration all reload the map |
+| Real touch gestures | UDP imagery: zoom 6.87→8.47, changed center, 6/6 tiles. TCP vectors: 7.25→8.84, changed center, 10/10 tiles, 74,441 triangles |
+| Build validation | Root TypeScript check passes; Android app/instrumentation build; lint 0 errors / 39 warnings; APK signature v2 and 16 KiB alignment verified |
+
+The first phone attempt failed because Wi-Fi was disconnected and the device
+routed the private LAN address over cellular. It is not counted as a pass. After
+the user reconnected Wi-Fi, the tests above passed. This remains a LAN entry;
+Internet/cellular reachability is **not** verified. USB carried test input/logs,
+not map data. Phone screenshots were visually inspected.
+
+Server processes are `atlas-native-gateway.service` and
+`atlas-native-provider.service`, with separate identities. First physical hop:
+phone→entry via selected TCP/UDP. Second: entry→provider via TCP over loopback.
+There is no HTTP/WebSocket map proxy. The main Atlas template release was also
+activated with the user's authorization, after preserving North Sea checkpoints;
+world preparations run independently of these native services.
+
+Evidence remains ignored under `output/phone/mesh-tcp`, `mesh-udp`,
+`mesh-final`, `mesh-gestures-tcp`, `mesh-gestures-udp`; public profiles are
+`output/mesh-tcp.json` and `mesh-udp.json`. The firewall's persistent Nix module
+is still prepared but unapplied; current administrator-installed LAN rules are
+runtime rules. Setup and exact limitations are in [README.md](README.md) and
+[architecture](../../docs/ANDROID-NATIVE-FIPS.md).
+
+## Previous direct-host deliverable (historical)
+
+- APK: `output/atlas-native-viewer.apk`, ARM64 debug, version `0.3.0-hosted-maps`
+  (version code 2), **15,940,387 bytes**.
+- Application ID: `org.atlas.nativeviewer`; original `soy.napplet.fipsdemo` retained.
+- Physical device: Pixel 10 Pro XL, Android 17. USB was used for installation,
+  test input and logs. **Map bytes used LAN Wi-Fi, without adb forwarding.**
+- Bundled default: actual Atlas server `192.168.0.179:42131`, physical TCP.
+  Alternative preset: `192.168.0.179:42132`, physical UDP. Both have separate
+  authenticated peer/publisher pins and signed catalog hashes.
+- A clean app launch connects automatically. Saved custom settings take
+  precedence over the bundled default.
+
+APK SHA-256:
+
+```text
+40a21381aba6dd499222f97ef695c44d7e138b45e624f9fe211241da6000349c
+```
+
+## Running-server acceptance
+
+Two isolated Rust `atlas-peer` services on the Atlas server read the existing
+published files and Hashtree indexes directly and read-only. No map copy,
+TypeScript proxy, HTTP range request or WebSocket hop participates. The Android
+host owns native networking; the restricted WebView only renders verified bytes.
+
+The signed catalog contains these six maps. Initial views were loaded on the
+physical phone; satellite rendering is measured by raster tiles, not triangles.
+
+| Published archive | Bytes in archive | Observed initial view |
+| --- | ---: | --- |
+| Lower Rhine East | 19,112,765,373 | 18/18 tiles; 67,466 triangles; TCP and UDP |
+| Lower Rhine West | 16,631,274,453 | 18/18 tiles; 40,925 triangles; TCP and UDP |
+| Satellite · Netherlands | 149,584,071 | 4/4 raster tiles; TCP and UDP |
+| Satellite · Alps | 579,904,977 | 2/2 raster tiles; TCP |
+| Satellite · Iran | 2,415,395,452 | 2/2 raster tiles; TCP |
+| Satellite · GCC States | 2,264,115,874 | 4/4 raster tiles; TCP |
+
+| Check | Observed result |
+| --- | --- |
+| Native host-store unit tests | 11 total pass, including four new tests covering original-file ranges, inline nodes, publication/serving withdrawal, changed files/index mismatch and corrupted content |
+| Fixture provider regression | Real Atlas signed discovery, header reads, grants, descendant checks, repeat reads and corruption rejection pass over TCP and UDP |
+| Actual-server native probes | TCP and UDP: six signed offers, verified `ATLAS001` header, 37 verified blobs / 131,095 payload bytes including repeated reads |
+| Shared renderer/input/raster tests | 7 pass, 55 assertions |
+| TypeScript | Root `bun run typecheck` passes |
+| Android build | App and instrumentation APKs build; lint: 0 errors, 39 warnings |
+| APK validation | Signature v2 verifies; 16 KiB zip alignment passes |
+| Automatic server connection | Cleared only this app's settings, launched without a config intent, loaded Lower Rhine East through bundled server TCP pins |
+| Native map picker | Switched through all six maps over TCP; East, West and Netherlands over UDP; no new connection settings required |
+| Display-layer choices | Disabled all selected layers, zoomed, observed 0/0 tiles and no additional verified package bytes; enabling layers resumed loading. Tested both geometry and imagery |
+| UDP touch gestures | Real injected pan and two-pointer pinch on Netherlands imagery: zoom 6.87 → 8.47, changed center, then 6/6 raster tiles |
+| TCP touch gestures | Lower Rhine West: zoom 7.25 → 8.84, changed center, then 10/10 tiles and 74,441 triangles |
+| Lifecycle, both carriers | Background/foreground, explicit cancel/reconnect and Wi-Fi loss/restoration all reauthenticated and loaded the selected map |
+| Legacy manifest compatibility | Liechtenstein omits `tileLayers`; its geometry and six layer switches still work |
+| Production isolation | `atlas.service` remained active with PID 1318650 and zero restarts; North Sea remained running at about 34% of final assembly |
+
+The six-map TCP tour used **14,995,115 verified payload bytes / 307 blobs**,
+including directory/tree reads and the layer-toggle check. Archive sizes above
+are not download sizes. Counts exclude transport/encryption overhead and are not
+an Internet throughput benchmark. Routing, labels, search and analysis stay off.
+
+An initial Wi-Fi acceptance check missed a close event because it compared
+successive snapshots of logcat's rotating ring. The harness now captures a
+continuous log. The repeat recorded `closed Network disconnected`, authenticated
+again after Wi-Fi restoration and reached 4/4 Netherlands tiles. No application
+network policy was weakened to make the test pass.
+
+Evidence stays in ignored `output/`: `server-probe-tcp.log`,
+`server-probe-udp.log`, and `phone/hosted-tcp`, `hosted-udp-recovery`,
+`hosted-gestures-udp`, `hosted-gestures-tcp`, `hosted-final`, `picker-local` logs, UI snapshots and
+screenshots. Failed
+acceptance attempts are not counted as passes. Physical map screenshots were
+visually inspected. See [README.md](README.md) for reproducible commands.
+
+The LAN firewall rules were opened by the administrator without restarting
+Atlas. They are runtime rules and will disappear on a firewall rebuild/restart.
+`native/lan-firewall.nix` is prepared and syntax-checked, but has **not** been
+applied. Import it during the next approved NixOS update. The separate native
+sidecar services are enabled; the prior main-server release remains staged.
+
+## Earlier Liechtenstein fixture acceptance
+
+These results below used the previous APK and a native provider on the development
+computer, with `data/liechtenstein.atlas` (30,811,870 bytes; root
+`faeb9e03f4db9615d9114a85fc4445365fd3ac0a6aa4316622993a6e85c94b91`).
+They remain evidence for the unchanged authentication/corruption paths, not
+claims that production files were deliberately corrupted. Previous APK SHA-256:
+`c2b9a8a35311cf1fce788febd55b63946fcb7322240e236cebc9538a6a6381f4`.
+
+| Check | Result |
+| --- | --- |
+| Native unit tests (before host adapter) | 7 pass: original response/carrier/cancellation tests plus signed discovery, grants, descendants, corruption, expiry and malformed-tree checks |
+| Retained native process tests | 5 pass: real TCP/UDP transfers, missing content, bad hashes, mismatched peer identity, no hostname/WS fallback |
+| Real Atlas provider acceptance | TCP and UDP pass: signed catalog, real `ATLAS001` header, grant/membership denials, 36 verified reads per probe, repeated consumers, stable pins/catalog across restart, corrupt map rejection |
+| Shared map input regressions | 2 pass: pinch midpoint scaling, pan after pinch, cancellation, no accidental click, existing mouse and tap behavior |
+| TypeScript | Root `bun run typecheck` passes |
+| Android build | ARM64 debug APK assembles; instrumentation APK builds; lint: 0 errors, 37 warnings |
+| APK validation | Signature v2 verifies; `zipalign -c -P 16 4` passes |
+| Physical TCP map | Automatic discovery and geometry render: 7/7 tiles, 166,947 triangles, 860,945 verified payload bytes in 16 blobs |
+| Physical UDP map | Same view and verified byte count as TCP |
+| No manual connection | Clearing only the new app's settings and launching without a config intent loads the bundled demo map automatically |
+| Pan and pinch, both carriers | Genuine injected two-pointer gestures change center and zoom from 11.08 to 12.67; new view reaches 5/5 tiles and 257,002 triangles |
+| Background/resume, both carriers | Home closes native connection; foreground authenticates again and reloads without Connect/Open taps |
+| Explicit disconnect, both carriers | Cancels session, remains disconnected, then explicit Reconnect succeeds |
+| Pending authentication cancellation | Physical unreachable-peer attempt cancels promptly through the UI |
+| Wi-Fi loss/restoration, both carriers | Native session closes on network loss/change; Wi-Fi restored in test cleanup; foreground map reconnects automatically |
+| Unavailable peers, both carriers | Actionable 25-second native timeout; no success view or fallback |
+| Corrupt map bytes, both carriers | Signed discovery succeeds, deliberately altered map blob fails SHA-256; map never renders |
+| Visual inspection | Physical-device map screenshots inspected, including geometry after pinch |
+
+Payload byte counts include catalog/tree content and exclude transport overhead.
+They are evidence of selective reads, not an Internet throughput benchmark. The
+initial view used about 2.8% of this map's bytes. Gesture runs reached 1,712,913
+verified bytes across 29 blobs. Geometry-only startup excludes labels, routing,
+search and feature extraction; their directory metadata can still describe them.
+
+The first gesture acceptance exposed a missing pinch implementation in the
+shared MapInput: it treated the second finger as another drag. The input handler
+now uses the two-pointer midpoint and logarithmic distance ratio. Physical
+acceptance passed after that change. A native provider slot leak was also fixed:
+completed application transfers no longer fill all eight serving slots.
+
+Evidence is stored locally in ignored `output/phone/`: `tcp-final`, `udp-final`,
+`default-final`, `gestures-tcp`, `gestures-udp`, `cancel-pending`,
+`unavailable-tcp`, `unavailable-udp`, `corrupted-tcp-final`,
+`corrupted-udp-final` logs, UI snapshots and screenshots. No device logs, keys,
+map exports or APKs are committed. Use [README.md](README.md) to reproduce.
+
+## Remaining limits
+
+- Discovery is the experimental `atlas-native-v1` contract, not live relay
+  discovery or the finalized shell contract. Npub profiles fetch a fresh signed
+  catalog when reconnecting; legacy hash-pinned profiles need refreshing on
+  expiry. Server reads honor publication/serving withdrawal; the picker is a
+  session snapshot.
+- This is a separate native provider reading production files, not native ingress
+  into the TypeScript process. Public UDP cellular reachability through an external entry and direct-server
+  TCP/UDP cellular reachability are verified above; other carriers/NATs,
+  controlled packet loss and prolonged sessions remain unverified.
+- The viewer selects one map at a time. Multi-provider composition, signed
+  hoster default views and failover are not implemented here. Reconnect resets
+  the viewport and memory cache. Session cancellation closes all work; individual
+  already-queued native reads are not cancelled separately.
+- Native root grants authorize verified descendants. Layer selection governs the
+  trusted renderer's reads, not a per-family security ACL.
+- Other Android versions/models have not been physically retested. The new
+  emulator run above covers direct TCP rendering/lifecycle, a resource-constrained
+  UDP failure and successful clean UDP rendering/lifecycle; original synthetic transport evidence remains historical.
+- The debug app accepts public config through an Android intent for acceptance;
+  it is not a general production shell permission model. Lint warnings concern
+  localization, ABI/data-extraction configuration, layouts and tool updates;
+  there are no suppressed lint errors.
+
+The original demo checkout and installed app remain intact. No private source,
+keys, device artifacts or APKs are committed or published. Production Atlas was
+not restarted during the historical direct-host tests. The later server update
+was activated separately, with the requested builds paused and checkpoints kept.
+
+## Earlier server-only public entry extension — 11 November 2026
+
+The native provider now keeps its LAN bootstrap and additionally joins an
+identity-pinned public UDP entry. Public probes with independent consumer
+identities selected Lower Rhine East and West from six signed offers, validated
+root grants/descendants and `ATLAS001` headers, and each completed 36 verified
+blob reads (131,095 and 127,993 payload bytes respectively). Both probes used
+only the public entry endpoint and map host npub. Retained LAN TCP reads passed.
+Fourteen native unit tests and the extended isolated dual-entry mesh suite passed.
+
+This is public-entry route verification, not physical cellular acceptance. No
+phone build/profile was changed in this server-only rollout. The installed APK
+still selects its LAN entry. The native public profile uses UDP only and one
+external entry; TCP WAN availability and automatic client failover are not
+claimed. See [public hosting](../../docs/NATIVE-FIPS-HOSTING.md) for reproduction.

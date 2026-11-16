@@ -1,0 +1,6 @@
+.gradle/
+local.properties
+**/build/
+native/target/
+output/
+__pycache__/

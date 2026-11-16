@@ -1,3 +1,4 @@
+import { buildWorldOverview } from "../../packages/provisioning/src/world-overview";
 import {
   initializeWorkspace,
   checkWorkspace,
@@ -55,6 +56,7 @@ process.on(
     source: string;
     output: string;
     selection: PackageSelection;
+    naturalEarth?: boolean;
     sourcePlan?: PbfPlan;
     cachedSource?: VerifiedBuildSource;
     imageImport?: ImageImport;
@@ -130,7 +132,15 @@ process.on(
       }
       await checkDisk();
       abort.signal.throwIfAborted();
-      if (data.compositionExport) {
+      if (data.naturalEarth) {
+        await buildWorldOverview(
+          join(dirname(output), ".natural-earth"),
+          output,
+          data.selection.name,
+          abort.signal,
+          report,
+        );
+      } else if (data.compositionExport) {
         const files: PackageSource[] = [],
           readers: AtlasReader[] = [];
         try {

@@ -9,7 +9,7 @@ import { parseViewAnnouncement } from "../../../packages/views/src/announcement"
 import { STYLE_PRESETS } from "../../../packages/renderer/src/style";
 import { MAP_LAYERS, type MapLayer } from "../../../packages/format/src/index";
 import type { MapOffer } from "../../../packages/format/src/catalog";
-import { openClient } from "./client-link";
+import { clientLinks, onClientDeliveryChange } from "./client-link";
 const node = (tag: string, text = "") => {
   const e = document.createElement(tag);
   e.textContent = text;
@@ -151,6 +151,7 @@ export async function startViews() {
     drawSources();
     el<HTMLDetailsElement>("view-editor").open = true;
   }
+  onClientDeliveryChange(() => void load());
   async function load() {
     try {
       const r = await fetch("/admin/views");
@@ -163,8 +164,7 @@ export async function startViews() {
         const { recipe } = parseViewAnnouncement(event, data.pubkey);
         const card = node("article"),
           title = node("strong", recipe.name),
-          button = document.createElement("button"),
-          link = document.createElement("a");
+          button = document.createElement("button");
         card.className = "published-view";
         button.type = "button";
         button.textContent = "Edit defaults";
@@ -173,19 +173,23 @@ export async function startViews() {
           el<HTMLInputElement>("view-default").checked =
             data.defaultView === recipe.id;
         };
-        const url = new URL(openClient());
-        url.searchParams.set("viewRecipe", event.id);
-        link.href = url.href;
-        link.target = "_blank";
-        link.rel = "noopener";
-        link.textContent = "Open published view ↗";
+        const links = clientLinks().map((launch) => {
+          const link = document.createElement("a"),
+            url = new URL(launch.url);
+          url.searchParams.set("viewRecipe", event.id);
+          link.href = url.href;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = `Open published view · ${launch.transport.toUpperCase()} ↗`;
+          return link;
+        });
         card.append(
           title,
           node(
             "small",
             `${data.defaultView === recipe.id ? "Host default · " : ""}${recipe.sources.length} sources · ${recipe.presentation.style.name}`,
           ),
-          link,
+          ...links,
           button,
         );
         list.append(card);

@@ -1,0 +1,4 @@
+<resources>
+    <item name="udp" type="id" />
+    <item name="tcp" type="id" />
+</resources>

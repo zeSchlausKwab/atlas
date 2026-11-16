@@ -45,6 +45,25 @@ The library's serving/capability choices still apply. Turning off an operation r
 
 The host can mark a saved composition as its default view. Clients start with it when opening the publisher and may override both presentation and data selection. A view is a recipe referring to roots; it does not change those files.
 
+## Classic host inspection
+
+With **Allow HTTP delivery for direct map inspection** enabled in the FIPS tab,
+use **Inspect over HTTP** on a library map, or select maps and choose **Compose
+selected maps · HTTP**. These links explicitly set the server address and
+`transport=http`; they do not wait for discovery relays or FIPS peers. The
+client still reads selective Hashtree blobs and verifies their hashes and the
+pinned map snapshot. No rebuild or restart of a preparation job is needed.
+
+**Open over FIPS** and **Compose selected maps · FIPS** remain separate launches
+with a publisher and relay hints, and no HTTP fallback. Changing delivery
+settings refreshes existing host links. When HTTP is off, only FIPS links appear;
+when both are off, map launch links are hidden. Admin downloads and source
+retention reports remain available locally under `/admin/maps/`.
+
+The standalone client must also be running (`bun run build:client`, then
+`bun run client`). Its offline shell can display an older UI when that process
+is stopped. Restart the client and reload before diagnosing map transport.
+
 ## Connect a browser
 
 Use the client link in the FIPS tab. It contains a trusted publisher and relay hints rather than a map-server URL, for example:
@@ -99,3 +118,24 @@ The mini PC runs release `20261110T115215681Z-6d4a3512f79f-5fc971c0` (revision `
 The persisted discovery relays are `wss://relay.primal.net/` and `wss://relay.snort.social/`. Both acknowledged and returned all six signed map offers. The initial relays were unsuitable during this check: Damus intermittently returned HTTP 503 during WebSocket upgrade, and nos.lol accepted a connection but did not acknowledge or return these announcements. Relay choice is configurable in the FIPS tab and does not require restarting a build.
 
 Validation before activation: 474 core tests passed, plus visible Brave checks for signed default views, rendering, server search, zooming, cache purge and reopen without HTTP map/catalog reads. North Sea was paused with approval for activation, then resumed with its saved stages; its unfinished final assembly pass must run again after checkpoint verification.
+
+## Classic inspection recovery — 13 November 2026
+
+The demo host now permits HTTP alongside FIPS. Library actions expose the two
+paths separately, including multi-map composition. The browser's FIPS default
+and no-fallback policy are unchanged. HTTP inspection consumes the host's signed
+announcement response directly; it does not wait for a relay connection.
+
+The host frontend was updated without restarting release
+`20261112T093649191Z-b6c9f9fb4a01-6f43c72a` or its running World overview job.
+The versioned bundle is `host-inspection-a00d22b78cdc.js`; the prior HTML and
+checksums are in `shared/host-ui-backups/a00d22b78cdc/`. A normal subsequent
+deployment builds the same changes from source. The local viewer was rebuilt
+and restarted on port 5173; its stopped process had left an obsolete offline
+shell visible.
+
+Verification: 23 focused host-link, transport and server/client tests passed,
+TypeScript checks passed, North Sea rendered and zoomed over HTTP, and Lower
+Rhine East/West composed with 18/18 visible tiles and no browser errors. The
+same content roots and hash verification are used on both delivery paths.
+This check does not certify mesh throughput or repair public FIPS routing.

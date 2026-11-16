@@ -1,4 +1,4 @@
-import { RasterPlane } from "./raster";
+import { RasterPlane, type RasterLayerViews } from "./raster";
 import { PlacesView } from "../../labels/src/place-pages";
 import { defaultOverlays } from "./overlays";
 import { MapInput } from "./input";
@@ -42,6 +42,7 @@ export interface MapOptions {
   style?: MapStyle;
   scene?: MapScene;
   layers?: readonly MapLayer[];
+  rasterLayers?: RasterLayerViews;
   placeNames?: boolean;
   streetNames?: boolean;
   pois?: boolean;
@@ -180,6 +181,7 @@ export class AtlasMap {
   private triangles = 0;
   private overlay: HTMLCanvasElement;
   private raster: RasterPlane;
+  private rasterLayers: RasterLayerViews = {};
   private constructor(
     readonly canvas: HTMLCanvasElement,
     readonly reader: AtlasReader,
@@ -232,6 +234,7 @@ export class AtlasMap {
     map.setStyle(options.style ?? PAPER);
     map.setScene(options.scene ?? FLAT_SCENE);
     map.setLayers(options.layers ?? 255);
+    map.setRasterLayers(options.rasterLayers ?? {});
     map.setLabels(
       options.streetNames ?? true,
       options.pois ?? true,
@@ -448,6 +451,10 @@ export class AtlasMap {
     this.renderer.set_layers(mask);
     this.invalidate();
   }
+  setRasterLayers(layers: RasterLayerViews) {
+    this.rasterLayers = { ...layers };
+    this.invalidate();
+  }
   setOffline(offline: boolean) {
     this.reader.offline = offline;
     this.retryLoads();
@@ -523,7 +530,7 @@ export class AtlasMap {
         c.height = Math.round(height * ratio);
     }
     const state = this.tiles.update(this.visibleTiles());
-    this.raster.draw(this.camera, ratio);
+    this.raster.draw(this.camera, ratio, 0.6, this.rasterLayers);
     const start = performance.now();
     this.triangles = this.renderer.render(
       ...this.center,

@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { dirname } from "node:path";
+import { generalizePackedDisplay } from "./display-tile-recovery";
 import type { BlockWriter } from "./stream-writer";
 import { decodeLabels } from "../../labels/src/index";
 import { decodePlaces } from "../../labels/src/places";
@@ -110,6 +112,7 @@ export class BlockSpool {
     writer: BlockWriter,
     signal: AbortSignal,
     progress: (key: string, completed: number) => void,
+    onMessage: (message: string) => void = () => {},
   ) {
     let completed = 0;
     const featureWriter = new PagedFeatureWriter(writer);
@@ -141,7 +144,23 @@ export class BlockSpool {
       }
       let bytes: Uint8Array, features: number;
       if (key.startsWith("tile/")) {
-        const records = parts
+        const zoom = Number(key.split("/")[2]);
+        const points = parts.reduce(
+          (n, p) =>
+            n + [...tileRecords(p)].reduce((m, r) => m + r.pointCount, 0),
+          0,
+        );
+        const displayParts =
+          points > 3000000 && zoom < 13
+            ? await generalizePackedDisplay(
+                parts,
+                key,
+                dirname(this.path),
+                signal,
+                onMessage,
+              )
+            : parts;
+        const records = displayParts
           .flatMap((p) =>
             [...tileRecords(p)].map((r) => ({
               bytes: p.subarray(r.start, r.end),

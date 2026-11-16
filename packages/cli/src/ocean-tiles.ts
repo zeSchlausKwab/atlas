@@ -15,10 +15,12 @@ export async function oceanTiles(
   manifest: Pick<Manifest, "bounds" | "minZoom" | "maxZoom" | "selection">,
   signal: AbortSignal,
   emit: (tile: InputBlock) => Promise<void>,
+  layer: "land" | "water" = "water",
 ) {
   validateOcean(data, manifest.bounds);
   const [west, south, east, north] = manifest.bounds;
-  for (const f of data.features) f.properties = { class: 1 };
+  for (const f of data.features)
+    f.properties = { class: layer === "water" ? 1 : 0 };
   signal.throwIfAborted();
   const index = geojsonvt(data, {
     maxZoom: manifest.maxZoom,
@@ -60,7 +62,7 @@ export async function oceanTiles(
       );
       if (features) {
         await emit({
-          key: `tile/water/${z}/${x}/${y}`,
+          key: `tile/${layer}/${z}/${x}/${y}`,
           z,
           x,
           y,

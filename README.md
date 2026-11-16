@@ -37,6 +37,13 @@ discovery, host default views and map operations without a public HTTP map origi
 HTTP delivery is an explicit option. Existing Atlas files need no rebuild.
 See [FIPS hosting, configuration and protocol boundaries](docs/FIPS-HOSTING.md).
 
+## Android native FIPS viewer
+
+The isolated [Android module](apps/android/README.md) loads a real Atlas map over
+native TCP or UDP with pinned identity, signed discovery and verified Hashtree
+reads. Its configured demo opens automatically. See the [architecture and
+remaining integration boundaries](docs/ANDROID-NATIVE-FIPS.md).
+
 ## FIPS consumer napplet
 
 The [Atlas consumer napplet](atlas-consumer/README.md) discovers signed map offers
@@ -501,3 +508,5 @@ service restart; activate it later with the printed `--resume` command.
 
 
 The host workbench uses **Library / Prepare / Import / Network / Tools** tabs, with downloads and preparations in a persistent Activity rail (a bottom drawer on mobile). In the client, **Offline → Save an area here** reviews and pins selected capabilities in browser storage for later map and AI-tool reuse. It supports pause/resume and overlapping saved areas. The AI tools `acquisition_catalog`, `acquisition_plan`, `acquisition_save` and `acquisition_status` share that workflow. Browser saves are persistent caches; the host flow exports a portable `.atlas`. See [area acquisition](docs/AREA-ACQUISITION.md) for scope and offline limits.
+
+The [fast world overview](docs/WORLD-OVERVIEW.md) builds a small global visualization map without processing the OSM planet.

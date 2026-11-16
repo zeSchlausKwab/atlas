@@ -1,3 +1,4 @@
+import { includesAdminLevel } from "./selection";
 import type { Feature, Polygon, MultiPolygon } from "geojson";
 import type { BlockWriter } from "../../cli/src/stream-writer";
 import { areaAnchor } from "../../geocoding/src/anchor";
@@ -20,9 +21,13 @@ export class BoundaryWriter {
   private records: BoundaryRecord[] = [];
   private pages: BoundaryPage[] = [];
   count = 0;
-  constructor(private writer: BlockWriter) {}
+  constructor(
+    private writer: BlockWriter,
+    private maxAdminLevel?: number,
+  ) {}
   async add(source: Feature) {
     if (source.properties?.tags?.boundary !== "administrative") return;
+    if (!includesAdminLevel(source.properties.tags, this.maxAdminLevel)) return;
     if (!["Polygon", "MultiPolygon"].includes(source.geometry.type)) return;
     const geometry = source.geometry as Polygon | MultiPolygon,
       id = String(source.id ?? source.properties?.id);

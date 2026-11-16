@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Real-map acceptance on a phone or explicitly opted-in emulator. No adb reverse."""
+import argparse,atexit,json,os,pathlib,re,shlex,subprocess,time,xml.etree.ElementTree as ET
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+P=argparse.ArgumentParser();P.add_argument('--serial',required=True);P.add_argument('--allow-emulator',action='store_true',help='Test the real viewer in an emulator; this does not prove off-LAN connectivity');P.add_argument('--ready-timeout',type=int,default=120);P.add_argument('--config',required=True);P.add_argument('--expect-error');P.add_argument('--label',default='map');P.add_argument('--lifecycle',action='store_true');P.add_argument('--network-change',action='store_true');P.add_argument('--bundled-default',action='store_true');P.add_argument('--cancel-pending',action='store_true');P.add_argument('--switch-map',action='append',default=[]);P.add_argument('--check-layers',action='store_true');a=P.parse_args()
+is_emulator=a.serial.startswith('emulator-')
+if is_emulator and not a.allow_emulator:P.error('Use a connected physical device, or explicitly opt in with --allow-emulator')
+if not re.fullmatch(r'[A-Za-z0-9_-]+',a.label):P.error('--label must contain only letters, digits, underscores and hyphens')
+if a.ready_timeout<=0:P.error('--ready-timeout must be positive')
+SDK=pathlib.Path(os.environ.get('ANDROID_HOME',str(pathlib.Path.home()/'Library/Android/sdk')))
+ADB=[str(SDK/'platform-tools/adb'),'-s',a.serial];OUT=ROOT/'output'/('emulator' if is_emulator else 'phone');OUT.mkdir(parents=True,exist_ok=True)
+PACKAGE='org.atlas.nativeviewer';ACTIVITY=PACKAGE+'/soy.napplet.fipsdemo.AtlasActivity'
+def adb(*args,binary=False):return subprocess.check_output(ADB+list(args),text=not binary,timeout=40)
+def screen():
+ # Progress updates can keep accessibility busy. Retry failed snapshots rather
+ # than parsing a missing/stale dump or mistaking a test-driver error for a map failure.
+ end=time.monotonic()+45;last='No UI snapshot'
+ while time.monotonic()<end:
+  result=adb('shell','uiautomator dump /sdcard/atlas-native-ui.xml')
+  if 'dumped to: /sdcard/atlas-native-ui.xml' not in result:last=result.strip();continue
+  try:return ET.fromstring(adb('exec-out','cat','/sdcard/atlas-native-ui.xml'))
+  except ET.ParseError as error:last=str(error)
+ raise AssertionError('Could not capture current Android UI: '+last)
+def texts(tree):return '\n'.join(n.get('text','') for n in tree.iter('node'))
+def wait_ui(check,timeout=40):
+ end=time.monotonic()+timeout
+ while time.monotonic()<end:
+  t=screen()
+  if check(texts(t)):return t
+ (OUT/(a.label+'-failure.png')).write_bytes(adb('exec-out','screencap','-p',binary=True));raise AssertionError(texts(t))
+def tap(fragment):
+ for n in screen().iter('node'):
+  if fragment.casefold() in (n.get('text','') or n.get('content-desc','')).casefold() and (n.get('clickable')=='true' or n.get('checkable')=='true'):
+   x,y,x2,y2=map(int,re.findall(r'\d+',n.get('bounds')));adb('shell','input','tap',str((x+x2)//2),str((y+y2)//2));return
+ raise AssertionError('Control absent: '+fragment)
+def logs():return live_path.read_text(errors='replace')
+def renderer_state():
+ data=logs();selected_at=data.rfind('selected root=')
+ # A new connection must emit its own selected root and renderer events.
+ if data.rfind('connecting carrier=')>selected_at:return {}
+ current={}
+ for line in data[selected_at if selected_at>=0 else 0:].splitlines():
+  if 'AtlasRenderer: ' in line:
+   try:current=json.loads(line.split('AtlasRenderer: ',1)[1])
+   except ValueError:pass
+ selected=re.findall(r'selected root=([a-f0-9]{64})',data)
+ if selected and current.get('root')!=selected[-1]:return {}
+ return current
+def ready():
+ # Starting a fresh UiAutomator process for every progress update perturbs a
+ # memory-constrained emulator. Observe native progress, then verify the UI.
+ end=time.monotonic()+a.ready_timeout
+ while time.monotonic()<end:
+  current=renderer_state()
+  if current.get('tiles',0)>0 and current.get('tiles')==current.get('wanted') and current.get('loading')==0:
+   tree=screen();shown=texts(tree)
+   if 'Map · z' in shown and f"{current['tiles']}/{current['wanted']} tiles · ready" in shown:
+    latest=renderer_state()
+    if latest.get('tiles')==current['tiles'] and latest.get('wanted')==current['wanted'] and latest.get('loading')==0:return tree,latest
+  time.sleep(.2)
+ (OUT/(a.label+'-failure.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))
+ raise AssertionError('Viewport did not complete: '+json.dumps(renderer_state()))
+config=json.loads(pathlib.Path(a.config).read_text());assert config.get('bootstrap',config)['address'].split(':')[0] not in ['127.0.0.1','10.0.2.2','localhost'],'Real-map acceptance must use a non-loopback endpoint'
+evidence={'deviceKind':'emulator' if is_emulator else 'physical','serial':a.serial,'transport':config['transport'],'entry':config.get('bootstrap',config)['address'],'offLanVerified':False,'networkNote':'Emulator uses the host network; simulated cellular is not off-LAN proof' if is_emulator else 'This harness does not verify the network route; use test-cellular.py for off-LAN acceptance'}
+(OUT/(a.label+'-environment.json')).write_text(json.dumps(evidence,indent=2)+'\n')
+print('Testing',evidence['deviceKind'],evidence['transport'],evidence['networkNote'],flush=True)
+adb('shell','am','force-stop',PACKAGE)
+adb('shell','input','keyevent','KEYCODE_WAKEUP');adb('shell','wm','dismiss-keyguard')
+if a.bundled_default:
+ adb('shell','pm','clear',PACKAGE) # Only this isolated test app; prove the APK needs no setup.
+ adb('shell','am','start','-W','-n',ACTIVITY)
+else:adb('shell','am','start','-W','-n',ACTIVITY,'--es','config',shlex.quote(json.dumps(config)))
+pid=adb('shell','pidof',PACKAGE).strip()
+# Stream evidence: logcat's ring can wrap during long multi-map tests, so slicing
+# successive snapshots by character count can otherwise miss lifecycle events.
+live_path=OUT/(a.label+'-live.log');live_file=live_path.open('w')
+log_reader=subprocess.Popen(ADB+['logcat','--pid',pid,'-s','AtlasNative:I','AtlasRenderer:I','*:S'],stdout=live_file,stderr=subprocess.STDOUT)
+def stop_logs():
+ log_reader.terminate()
+ try:log_reader.wait(timeout=5)
+ except subprocess.TimeoutExpired:log_reader.kill();log_reader.wait()
+ live_file.close()
+atexit.register(stop_logs)
+if a.cancel_pending:
+ wait_ui(lambda t:'Joining native FIPS' in t or 'Finding the map host' in t)
+ tap('Cancel / disconnect')
+ tree=wait_ui(lambda t:'Disconnected by you' in t and 'Reconnect & discover' in t)
+ assert 'closed Cancelled' in logs(),logs()
+ print('PASS cancellation while authentication is pending',flush=True)
+elif a.expect_error:
+ tree=wait_ui(lambda t:a.expect_error in t)
+ assert 'Map · z' not in texts(tree),'Map must not render on verification failure'
+else:
+ tree,stats=ready();assert config['transport'].upper()+' · ' in texts(tree)
+ print('PASS automatic real-map load',config['transport'],stats,flush=True)
+ for name in a.switch_map:
+  # The persistent native map button has the selected name, and sits beside Layers.
+  buttons=[n for n in screen().iter('node') if n.get('class')=='android.widget.Button' and ('Lower Rhine' in n.get('text','') or 'Satellite ·' in n.get('text','') or 'Hosted maps' in n.get('text',''))]
+  assert len(buttons)==1, texts(screen())
+  tap(buttons[0].get('text'))
+  tree=wait_ui(lambda t:'Hosted maps ·' in t and name in t)
+  tap(name)
+  tree,stats=ready()
+  assert name in texts(tree),texts(tree)
+  print('PASS map selection',name,stats,flush=True)
+ if a.check_layers:
+  tap('Layers');tree=wait_ui(lambda t:'Display layers ·' in t)
+  controls=[n.get('text') for n in tree.iter('node') if n.get('checkable')=='true' and n.get('checked')=='true']
+  assert controls,texts(tree)
+  for label in controls:tap(label)
+  tap('Apply');tree=wait_ui(lambda t:'0/0 tiles · ready' in t)
+  before=re.findall(r'verified carrier=\w+ bytes=(\d+)',logs())[-1]
+  tap('Zoom in');tree=wait_ui(lambda t:'0/0 tiles · ready' in t)
+  assert re.findall(r'verified carrier=\w+ bytes=(\d+)',logs())[-1]==before,'Disabled layers fetched more package bytes'
+  tap('Layers');wait_ui(lambda t:'Display layers ·' in t)
+  for label in controls:tap(label)
+  tap('Apply');tree,stats=ready()
+  print('PASS display choices disable rendering and further tile reads; re-enable loads tiles',flush=True)
+ if a.lifecycle:
+  adb('shell','input','keyevent','KEYCODE_HOME')
+  # Observe native close before resuming; no arbitrary sleep.
+  end=time.monotonic()+10
+  while 'closed Cancelled' not in logs() and time.monotonic()<end:time.sleep(.05)
+  assert 'closed Cancelled' in logs(),logs()
+  adb('shell','am','start','-W','-n',ACTIVITY)
+  tree,stats=ready();print('PASS foreground reconnect',flush=True)
+  tap('Cancel / disconnect');tree=wait_ui(lambda t:'Disconnected by you' in t and 'Reconnect & discover' in t)
+  before=logs();assert 'closed Cancelled' in before
+  tap('Reconnect & discover');tree,stats=ready();print('PASS cancellation and explicit reconnect',flush=True)
+ if a.network_change:
+  try:
+   before=logs()
+   adb('shell','svc','wifi','disable')
+   end=time.monotonic()+20
+   while time.monotonic()<end:
+    changed=logs()[len(before):]
+    if 'closed Network' in changed:break
+    time.sleep(.05)
+   else:raise AssertionError('Native session did not close on network change')
+  finally:adb('shell','svc','wifi','enable')
+  tree,stats=ready();print('PASS Wi-Fi loss and automatic reconnect',flush=True)
+(OUT/(a.label+'.xml')).write_text(ET.tostring(tree,encoding='unicode'))
+(OUT/(a.label+'.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))
+(OUT/(a.label+'.log')).write_text(logs())
+print('PASS',a.label,flush=True)

@@ -1,3 +1,4 @@
+import { startWorldOverview } from "./host-world-overview";
 import { startWorkStorage } from "./host-work-storage";
 import { startViews } from "./host-views";
 import { startWorkbench } from "./host-workbench";
@@ -7,7 +8,7 @@ import { startImagery } from "./host-imagery";
 import { startDiscovery } from "./host-discovery";
 import { startFips } from "./host-fips";
 import { startSources } from "./host-sources";
-import { openClient } from "./client-link";
+import { clientLinks, onClientDeliveryChange } from "./client-link";
 import { startBuilder } from "./host-builder";
 import type { CatalogEntry } from "../../../packages/operations/src/registry";
 const el = (id: string) => document.getElementById(`host-${id}`)!;
@@ -87,8 +88,17 @@ function render(catalog: any) {
   }
 }
 el("refresh").onclick = () => void load();
-(document.getElementById("open-client") as HTMLAnchorElement).href =
-  openClient();
+function updateClientLink() {
+  const link = document.getElementById("open-client") as HTMLAnchorElement;
+  const launch = clientLinks()[0];
+  link.hidden = !launch;
+  if (launch) {
+    link.href = launch.url;
+    link.textContent = `${launch.label} ↗`;
+  } else link.removeAttribute("href");
+}
+onClientDeliveryChange(updateClientLink);
+updateClientLink();
 async function start() {
   try {
     const response = await fetch("/host-config.json");
@@ -103,6 +113,7 @@ async function start() {
     await Promise.all([
       load(),
       startBuilder(),
+      startWorldOverview(),
       startWorkStorage(),
       startViews(),
       startImagery(),

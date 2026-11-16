@@ -1,3 +1,4 @@
+import { includesAdminLevel } from "../../boundaries/src/selection";
 import { readSearchCell } from "../../geocoding/src/cell-pages";
 import { objectRecords } from "../../objects/src/index";
 import {
@@ -27,6 +28,8 @@ import {
   type Polygon,
 } from "../../offline/src/geometry";
 export interface PackageSelection {
+  /** Optional administrative depth; does not simplify retained polygons. */
+  boundaryMaxAdminLevel?: number;
   /** Optional, pinned server-configured assembled ocean source. */
   ocean?: { sha256: string };
   /** Intersecting raster tiles; pixels remain unchanged. */
@@ -132,6 +135,17 @@ export function validateSelectionScope(
   if (!value || typeof value !== "object")
     throw new Error("Invalid package selection");
   const s = value as PackageSelection;
+  if (
+    s.boundaryMaxAdminLevel !== undefined &&
+    (!Number.isInteger(s.boundaryMaxAdminLevel) ||
+      s.boundaryMaxAdminLevel < 1 ||
+      s.boundaryMaxAdminLevel > 12 ||
+      !Array.isArray(s.featureKinds) ||
+      !s.featureKinds.includes("boundaries"))
+  )
+    throw new Error(
+      "Administrative depth must be 1–12 and requires boundary features.",
+    );
   if (
     s.ocean !== undefined &&
     (!s.ocean || !/^[a-f0-9]{64}$/.test(s.ocean.sha256))
@@ -306,6 +320,7 @@ export async function planPreparation(
         signal,
         report,
       )) {
+        if (!includesAdminLevel(record.tags, s.boundaryMaxAdminLevel)) continue;
         const block = await featureBlock(reader, record.geometry);
         if (!block)
           throw new Error(`Missing boundary geometry ${record.geometry}`);

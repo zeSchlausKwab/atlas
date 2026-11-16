@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { boundarySelectionNote } from "../../boundaries/src/selection";
 import { routingAuthority } from "./routing-authority";
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
@@ -549,7 +550,10 @@ async function main() {
     if (flags.features) {
       console.log("Partitioning selectable source geometry…");
       if (!selected || selected.featureKinds.includes("boundaries")) {
-        const boundaries = new BoundaryWriter(writer);
+        const boundaries = new BoundaryWriter(
+          writer,
+          selected?.boundaryMaxAdminLevel,
+        );
         for (const feature of imported.geojson.features)
           await boundaries.add(feature);
         await boundaries.finish();
@@ -601,14 +605,10 @@ async function main() {
           await rm(path, { force: true });
         }
       }
-      const cells = buildFeatures(imported.geojson);
+      const cells = buildFeatures(imported.geojson, selected?.featureKinds);
       const featureWriter = new PagedFeatureWriter(writer);
       for (const [key, features] of cells) {
-        if (
-          !selected ||
-          selected.featureKinds.includes(key.split("/")[1] as any)
-        )
-          await featureWriter.cell(key, features);
+        await featureWriter.cell(key, features);
         cells.delete(key);
       }
     }
@@ -686,6 +686,7 @@ async function main() {
       ],
       semantics: !selected || selected.search ? SEMANTIC_RETENTION : undefined,
       limitations: [
+        ...boundarySelectionNote(selected?.boundaryMaxAdminLevel),
         "Experimental schema; no compatibility guarantee",
         `${imported.assembledRelations} area relations assembled; ${imported.skippedRelations} incomplete or unsupported area relations skipped. Nested multipolygon members are expanded with composed inner/outer roles.`,
         "Transport-v1: estimated times and common via-node turn restrictions; unsupported conditional/complex turn restrictions exclude incoming ways. No traffic, elevation costs, transit schedules or country-specific defaults",

@@ -10,7 +10,7 @@ Use `/Users/schlaus/workspace/geo-format` as the working reference and migrate i
 
 ## What already works
 
-Atlas's integrated provider serves multiple immutable roots, signed Nostr map announcements and default-view recipes, selective Hashtree blobs, and root-pinned operation RPC. HTTP delivery is optional and currently disabled on the demo host.
+Atlas's integrated provider serves multiple immutable roots, signed Nostr map announcements and default-view recipes, selective Hashtree blobs, and root-pinned operation RPC. HTTP delivery is optional. It is enabled on the demo host for explicit classic inspection; the FIPS napplet must still use FIPS with no HTTP fallback.
 
 The demo napplet now discovers the configured publisher's library, selects multiple maps, changes geometry layers, and optionally reads labels or imagery. Its default reads geometry plus necessary directory/manifest metadata. It does not preload routing, search or analysis. Verified live: six signed offers, two composed Lower Rhine maps, 27/27 tiles, no browser errors and no HTTP map requests. Cold rendering took minutes through the public relay path, so performance remains something to measure.
 
@@ -84,3 +84,55 @@ consumer-session, consumer-bridge and timeout-cleanup regressions. Cover:
 Migrate `atlas-consumer/src/bridge.ts` and its manifest/build imports. Keep composition/rendering logic unless the supported contract requires a change. Remove the temporary launcher from the normal workflow only after parity; retain a clearly marked historical fixture if useful. Update authoring guidance, configuration examples, protocol pins and test evidence. Follow the repository's Nix checks before pushing changes affecting shared packages, CLI, dependencies or bundled preview assets.
 
 Commit coherent changes. Report implemented versus verified versus deployed/released separately, with exact commands and any protocol gaps. Do not deploy production or publish releases as a side effect of this handoff; prepare those steps for the next explicit rollout.
+
+## Native Android experiment
+
+The isolated [Android viewer](ANDROID-NATIVE-FIPS.md) now demonstrates real Atlas
+reads over native TCP/UDP with a separate Rust provider. Its signed
+`atlas-native-v1` catalog is explicitly experimental; it does not replace this
+handoff’s production discovery, SDK or sandbox requirements. Its host-backed
+sidecar can also read the deployed server's published Atlas files and Hashtree
+indexes directly, using separate identities and physical TCP/UDP ports. That adapter does not add native ingress to the TypeScript process or
+implement the shared shell/discovery contract above. No shell source changes
+are implied by that demo.
+
+### Npub routing addendum — 11 November 2026
+
+Atlas commit `79ea2d2` adds a tested native three-node path: Android selects a
+**map host npub**, joins a separately pinned entry peer over physical TCP or UDP,
+then uses FIPS identity routing to reach the provider through that peer. The
+provider has no publicly reachable listener in this deployment; its outbound
+link to the entry is TCP on server loopback. The client never receives its IP.
+Both carriers share one host identity. Public entry-peer profiles are bundled,
+so launching the phone viewer needs no manual connection. Physical Pixel tests
+cover maps, satellite imagery, layers, pan/pinch and lifecycle/network recovery.
+
+Keep **identity selection** separate from **network bootstrap** in the shared
+shell. An npub identifies the destination; a reachable entry point remains
+necessary. Do not promise public Internet reachability from this LAN-only test,
+or label a mixed UDP-entry/TCP-onward path as UDP on every hop. Show the selected
+carrier, entry identity and authenticated target identity in diagnostics.
+
+The native experiment requests a fresh, host-signed catalog from a well-known
+service at that npub, then grants roots and verifies descendants. This removes
+manual catalog hashes for this demo; it is not a replacement for production
+announcement/withdrawal semantics. Its catalog signer is the native host's key.
+The shared contract must still support distinct publisher and provider roles
+with validated authorization between them. Do not transfer the demo's implicit
+same-key assumption into general Nostr discovery. See the native architecture
+for framing, expiry, trust boundaries and retained limitations.
+
+### Public native entry addendum — 11 November 2026
+
+The native provider now also joins a pinned public entry using physical UDP.
+Signed catalog and real Atlas reads have been verified through that public route,
+without HTTP/WebSocket fallback or a map-host DNS entry. See
+[NATIVE-FIPS-HOSTING.md](NATIVE-FIPS-HOSTING.md) for public profiles, exact hops and
+limits. Android 0.5.0 now bundles the public UDP entry and passed a separate
+cellular test: Wi-Fi disabled, clean automatic launch, complete Lower Rhine East
+viewport (18/18 tiles, 3,542,996 verified bytes). The cold load took about eight
+minutes, so shell work must include transport performance and recovery rather
+than assume LAN responsiveness. Shared Soyli/shell integration remains pending.
+The public path depends on one verified external UDP entry; do not advertise
+native TCP WAN access or high availability. Preserve host npub addressing and
+separately pinned entry settings; never expose unrestricted page sockets.

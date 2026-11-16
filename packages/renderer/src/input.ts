@@ -8,6 +8,7 @@ export interface InputActions {
 /** Normalizes pointer, trackpad and keyboard gestures into camera/picking actions. */
 export class MapInput {
   private abort = new AbortController();
+  private touches = new Map<number, { x: number; y: number }>();
   private drag?: {
     mode: "pan" | "orbit";
     id: number;
@@ -25,6 +26,19 @@ export class MapInput {
     canvas.addEventListener(
       "pointerdown",
       (event) => {
+        if (event.pointerType === "touch") {
+          if (this.touches.size >= 2) return;
+          event.preventDefault();
+          this.touches.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+          });
+          canvas.setPointerCapture(event.pointerId);
+          if (this.touches.size === 2) {
+            this.drag = undefined;
+            return;
+          }
+        }
         if (this.drag || ![0, 2].includes(event.button)) return;
         event.preventDefault();
         canvas.focus({ preventScroll: true });
@@ -47,6 +61,27 @@ export class MapInput {
     canvas.addEventListener(
       "pointermove",
       (event) => {
+        if (this.touches.has(event.pointerId)) {
+          const before = this.touchPair();
+          this.touches.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+          });
+          const after = this.touchPair();
+          if (before && after) {
+            event.preventDefault();
+            actions.pan(after.x - before.x, after.y - before.y);
+            if (before.distance > 0 && after.distance > 0) {
+              const box = canvas.getBoundingClientRect();
+              actions.zoom(
+                Math.log2(after.distance / before.distance),
+                after.x - box.left - box.width / 2,
+                after.y - box.top - box.height / 2,
+              );
+            }
+            return;
+          }
+        }
         const d = this.drag;
         if (!d || d.id !== event.pointerId) return;
         if (Math.hypot(event.clientX - d.startX, event.clientY - d.startY) > 5)
@@ -61,6 +96,10 @@ export class MapInput {
     canvas.addEventListener(
       "pointerup",
       (event) => {
+        if (this.touches.delete(event.pointerId) && this.touches.size) {
+          this.resumeTouchPan();
+          return;
+        }
         const d = this.drag;
         if (!d || d.id !== event.pointerId) return;
         this.drag = undefined;
@@ -74,8 +113,10 @@ export class MapInput {
     for (const name of ["pointercancel", "lostpointercapture"])
       canvas.addEventListener(
         name,
-        () => {
-          this.drag = undefined;
+        (event) => {
+          const id = (event as PointerEvent).pointerId;
+          if (this.touches.delete(id)) this.resumeTouchPan();
+          if (this.drag?.id === id) this.drag = undefined;
         },
         options,
       );
@@ -140,8 +181,32 @@ export class MapInput {
       options,
     );
   }
+  private touchPair() {
+    if (this.touches.size !== 2) return undefined;
+    const [a, b] = [...this.touches.values()];
+    return {
+      x: (a!.x + b!.x) / 2,
+      y: (a!.y + b!.y) / 2,
+      distance: Math.hypot(b!.x - a!.x, b!.y - a!.y),
+    };
+  }
+  private resumeTouchPan() {
+    const remaining = this.touches.entries().next().value;
+    this.drag = remaining
+      ? {
+          mode: "pan",
+          id: remaining[0],
+          x: remaining[1].x,
+          y: remaining[1].y,
+          startX: remaining[1].x,
+          startY: remaining[1].y,
+          moved: true,
+        }
+      : undefined;
+  }
   destroy() {
     this.abort.abort();
     this.drag = undefined;
+    this.touches.clear();
   }
 }

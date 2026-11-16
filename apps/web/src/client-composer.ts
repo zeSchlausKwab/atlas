@@ -985,7 +985,9 @@ export async function createComposer(
     }
     el<HTMLInputElement>("relay").value = info.relay;
     el<HTMLInputElement>("publisher").value = info.pubkey;
-    await listen(info.relay, info.pubkey);
+    // The HTTP response already contains signed offers. Direct inspection must
+    // not wait for a WebSocket relay; peer discovery remains a FIPS concern.
+    if (delivery.transport === "fips") await listen(info.relay, info.pubkey);
   }
 
   const hash = new URLSearchParams(location.hash.slice(1)).get("view");

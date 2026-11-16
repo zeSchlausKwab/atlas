@@ -157,6 +157,45 @@
         </form>
       </section>
       <section id="prepare" class="host-builder">
+        <form
+          id="world-overview-form"
+          class="host-source-step"
+          method="post"
+          action="/admin/preparations"
+          aria-labelledby="world-overview-title"
+        >
+          <h2 id="world-overview-title">A whole world, ready in moments.</h2>
+          <p>
+            Generalized countries, major places, oceans and lakes. A small
+            starting map for world-scale visualization, with country polygons
+            available for analysis and drawing.
+          </p>
+          <p class="quiet" id="world-overview-details">
+            Natural Earth v5.1.2 · 1:50m · zoom 0–6 · 8.3 MiB source download ·
+            about 3.3 MiB finished. Allow 1 GiB working space plus the server
+            reserve. Municipalities and routing use the detailed OSM builder
+            below.
+          </p>
+          <label class="host-field" for="world-overview-name"
+            ><span>Map name (required)</span></label
+          >
+          <input
+            id="world-overview-name"
+            name="name"
+            required
+            maxlength="80"
+            value="World overview · Natural Earth"
+            aria-describedby="world-overview-details"
+          />
+          <button type="submit" id="world-overview-start">
+            Prepare world overview
+          </button>
+          <p id="world-overview-status" role="status"></p>
+          <noscript
+            >This server console requires JavaScript to queue
+            preparations.</noscript
+          >
+        </form>
         <section class="host-source-step" aria-labelledby="source-step-title">
           <div class="host-step-heading">
             <span class="host-step-number">01</span>
@@ -292,18 +331,17 @@
               >Map name<input id="prepare-name" required maxlength="80"
             /></label>
             <label class="host-field"
-              >Capabilities preset<select id="prepare-preset">
-                <option value="view">Map display · geometry & labels</option>
-                <option value="analysis">
-                  Analysis · source objects, areas &amp; search
-                </option>
-                <option value="geometry">Geometry only</option>
-                <option value="water-buildings">Water & buildings only</option>
-                <option value="all">All capabilities</option>
-                <option value="custom">Custom selection</option>
-              </select></label
-            >
+              >Start with a preset<select
+                id="prepare-preset"
+                aria-describedby="prepare-preset-note prepare-preset-status"
+              ></select
+            ></label>
             <p class="quiet" id="prepare-preset-note"></p>
+            <p
+              id="prepare-preset-status"
+              class="host-source-note"
+              role="status"
+            ></p>
             <div class="host-field-pair">
               <label class="host-field"
                 >Minimum zoom<input
@@ -361,6 +399,29 @@
               <fieldset id="prepare-features">
                 <legend>GeoJSON categories</legend>
               </fieldset>
+              <label class="host-field" id="prepare-boundary-depth-row" hidden>
+                Administrative detail
+                <select id="prepare-boundary-depth">
+                  <option value="">All available levels</option>
+                  <option value="2">Countries · through level 2</option>
+                  <option value="4">Major regions · through level 4</option>
+                  <option value="6">
+                    Regional divisions · through level 6
+                  </option>
+                  <option value="8">Local divisions · through level 8</option>
+                  <option value="10">
+                    Local divisions &amp; districts · through level 10
+                  </option>
+                  <option value="12">
+                    Finest numbered divisions · through level 12
+                  </option>
+                </select>
+                <span class="quiet"
+                  >Municipality levels vary by country. A depth limit omits
+                  missing or non-numeric levels. Retained polygons keep their
+                  original detail, independently of display zoom.</span
+                >
+              </label>
               <p class="quiet">
                 Full source objects for extraction and tools. Independent of
                 display geometry.
@@ -401,6 +462,28 @@
                 value="0"
                 aria-label="Available server disk space"
               ></meter>
+              <section
+                id="prepare-estimate-breakdown"
+                aria-label="Preparation estimate"
+                hidden
+              >
+                <h3>What this selection could need</h3>
+                <p class="quiet">
+                  Planning model · broad ranges, not measured sizes
+                </p>
+                <dl
+                  id="prepare-estimate-totals"
+                  class="prepare-estimate-totals"
+                ></dl>
+                <details>
+                  <summary>Selected data &amp; estimate assumptions</summary>
+                  <dl
+                    id="prepare-estimate-components"
+                    class="prepare-estimate-totals"
+                  ></dl>
+                  <ul id="prepare-estimate-notes" class="quiet"></ul>
+                </details>
+              </section>
               <p id="prepare-storage-estimate"></p>
               <p id="prepare-work-storage"></p>
               <a href="#storage">Choose build storage ↗</a>
@@ -635,6 +718,13 @@
         <div class="host-composition-bar">
           <a id="prepare-compose" href="#library" target="_blank" rel="noopener"
             >Compose hosted maps ↗</a
+          ><a
+            id="prepare-compose-fips"
+            href="#library"
+            target="_blank"
+            rel="noopener"
+            hidden
+            >Compose over FIPS ↗</a
           ><a href="/discovery" target="_blank" rel="noopener"
             >Signed announcements ↗</a
           ><span id="prepare-compose-count" class="quiet"
@@ -945,8 +1035,8 @@
               over FIPS</label
             >
             <label
-              ><input id="fips-http" type="checkbox" /> Also allow HTTP map
-              delivery</label
+              ><input id="fips-http" type="checkbox" /> Allow HTTP delivery for
+              direct map inspection</label
             >
           </div>
           <div class="fips-panels">

@@ -99,8 +99,8 @@ Prepared map computation shares the existing engine and plugin registry. A bound
 | `POST /admin/preparations/source-plan` | Inspect a worldwide PBF source and return a bounded quote     |
 | `POST /admin/preparations`             | Start a validated selection                                   |
 | `POST /admin/preparations/:id/cancel`  | Cancel a running job                                          |
-| `POST /admin/preparations/:id/resume` | Resume a stopped cached-source build using checkpoints |
-| `POST /admin/preparations/:id/delete` | Delete an inactive dataset, its record and workspace |
+| `POST /admin/preparations/:id/resume`  | Resume a stopped cached-source build using checkpoints        |
+| `POST /admin/preparations/:id/delete`  | Delete an inactive dataset, its record and workspace          |
 | `GET /catalog`                         | Installed source and ready map manifests/URLs                 |
 | `GET /maps/:id.atlas`                  | Full download or HTTP byte ranges                             |
 | `GET /maps/:id/api/capabilities`       | Actual per-package operation availability                     |
@@ -128,7 +128,6 @@ Source acquisition uses the [Geofabrik catalog](https://download.geofabrik.de/in
 
 Storage UI verification covers exact 8 GiB output / 64 GiB source budgets, slider keyboard controls, empty values, live disk statistics and refresh, quoted-size estimates, insufficient-space rejection in both UI and server, and 390 px mobile layout. This check uses recorded provider metadata; disk reporting and server preflight are live. The earlier Monaco import used the real public PBF. Provider requests can time out independently of disk checks and can be retried without downloading an unquoted source.
 
-
 ## Library lifecycle verification
 
 Provisioning tests build an Atlas child from a prepared parent, reject absent
@@ -137,3 +136,79 @@ map, exercise the same-origin deletion endpoint, close warmed serving readers,
 verify catalog/file/compute removal, preserve the child and source files, and
 recover a deletion interrupted after its persistent tombstone. No existing LAN
 map is deleted as part of verification.
+
+## Purpose-based presets and estimates
+
+The Prepare form groups recipes into **World** and **Your area**. Applying a
+recipe updates its checkboxes, administrative depth and display zoom; it never
+submits a build. Editing a checkbox, depth or zoom changes the recipe to Custom.
+World recipes select the verified planet PBF and the supported extent
+−180°…180°, −85°…85°. If no verified planet is installed, submission stays disabled
+with directions to the source-library workflow. A regional PBF is not worldwide data.
+
+| Recipe                            | Included                                                                                           | Display detail   |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------- |
+| World · country overview          | Country polygons through OSM level 2, place labels, inland water and configured sea fill           | z0–6             |
+| World · information visualization | Administrative polygons through level 10, place labels, water and configured sea fill              | z0–6             |
+| World · full display geometry     | All six display layers and configured sea fill; no labels, routing, search or extractable features | z0–16            |
+| Regional overview                 | Landscape, water, roads, sea fill and place labels                                                 | z0–10            |
+| Administrative analysis           | Boundaries through level 10, places and water                                                      | z0–8             |
+| Walking & cycling                 | Detailed display, labels and two routing profiles                                                  | z0–16            |
+| Driving                           | Detailed display, labels, driving and address/nearest-street search                                | z0–16            |
+| Search companion                  | Places, explicit OSM addresses and nearest-street queries                                          | No display tiles |
+| AI analysis                       | Tagged objects and relationships, administrative areas, search and peak queries                    | No display tiles |
+
+Map display, geometry-only, water/buildings, all-capabilities and Custom remain
+available. Unavailable source capabilities are called out rather than silently
+promised. World presets are configuration recipes, not a completed planet-scale
+benchmark; no whole-planet file was generated to validate these changes.
+
+“Compact” means fewer retained families, not a promised megabyte target. Local
+administrative polygons retain their original coordinates, holes, IDs and tags.
+Their size does not shrink when display zoom is lowered. Municipality levels
+vary by country; a level-10 cutoff is not a universal municipality classifier.
+A depth filter omits unnumbered/malformed levels and finer divisions. The same
+filter is applied by regional and partitioned PBF compilers and Atlas excerpts,
+and recorded in archive limitations. Boundary features are available for tools
+and drawing, not automatically styled as border lines in the visual basemap.
+External statistics such as population are not supplied by these presets.
+
+The low-zoom world recipes filter the verified planet PBF to water, places and
+administrative boundaries before source indexing. Osmium retains referenced ways,
+nodes and nested relations; original IDs and exact boundary coordinates remain.
+The two recipes reuse a checksum-verified derived input under
+`hosted/.world-inputs/`, so they do not repeat the full planet scan. A cancelled
+filter can repeat; only its fully written, verified output is reusable. The
+original planet is untouched. Other recipes retain the existing full import path.
+
+For a world extent at z0–6, ocean display is generalized to a quarter-pixel degree
+tolerance at the maximum zoom before GeoJSON is loaded. Its hash and tolerance
+are recorded in the archive. This applies only to the visual ocean, not retained
+administrative polygons. The **512 MiB / 25-million point** bound still applies;
+this is not a streamed high-detail planet coastline implementation. Regional
+coastline checkpoints and their identities remain compatible.
+
+The live estimate separates finished archive, temporary/checkpoint storage,
+new download, source bytes to read, and the 12 GiB reserve/stopping buffer.
+Expanded rows show each selected family and candidate tile-cell counts. Source
+bytes are actual known file lengths. PBF output ranges use an **uncalibrated
+planning model**, with documented coefficients in `packages/provisioning/src/estimate.ts`:
+
+- Display layers respond to minimum/maximum zoom. Routing profiles, labels,
+  search and extractable data are counted separately.
+- Exact administrative and source-object data are independent of display zoom.
+- Planet/known regional coverage uses bounding-area extrapolation with wide
+  density bounds. With no regional coverage metadata, 5–100% of the entire PBF
+  is used; this can greatly overestimate a small crop.
+- Sea-fill tile estimates account for the growth of filled ocean cells at high
+  zoom. Coastline source/clipping overhead is explicitly excluded.
+- Existing Atlas inputs currently use a whole-file allowance (including index rewrite headroom), not a precise
+  selected-block prediction. No claim of per-family precision is made there.
+- Temporary storage includes the crop, compiler indexes/checkpoints and output
+  spooling. A tiny output still requires reading and processing the source.
+
+The server and form use the same upper planning scenario for new uncapped jobs.
+It is an overridable warning, not a reservation or a hard size cap. Explicit API
+ceilings, resume headroom and runtime low-disk protections retain their existing
+behavior. With an external workspace, the displayed total spans disks; the
+server separately checks the assigned map and working locations.

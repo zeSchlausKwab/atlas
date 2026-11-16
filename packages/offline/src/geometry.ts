@@ -63,7 +63,16 @@ export function validatePolygon(p: Polygon) {
   if (p.length < 3 || p.length > 128 || !p.every(validPosition))
     throw new Error("Draw 3–128 valid corners.");
   const b = bounds(p);
-  if (b[2] - b[0] > 180)
+  // An explicit world rectangle is unambiguous in our planar map domain.
+  // Other wide polygons still have ambiguous date-line semantics.
+  const worldRectangle =
+    p.length === 4 &&
+    b[0] === -180 &&
+    b[2] === 180 &&
+    p.every(
+      ([x, y]) => (x === -180 || x === 180) && (y === b[1] || y === b[3]),
+    );
+  if (b[2] - b[0] > 180 && !worldRectangle)
     throw new Error("Date-line crossing polygons are not supported yet.");
   let area = 0;
   for (let i = 0; i < p.length; i++) {

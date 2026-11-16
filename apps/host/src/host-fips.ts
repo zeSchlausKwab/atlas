@@ -58,6 +58,11 @@ export function startFips() {
     section!.dataset.state = view.state;
     text("state", view.title);
     if (!snapshot) return;
+    updateClientDiscovery(
+      snapshot.discovery,
+      snapshot.settings.enabled,
+      snapshot.settings.httpEnabled,
+    );
     const s = snapshot,
       c = s.counters,
       w = c.websocket;
@@ -212,7 +217,6 @@ export function startFips() {
       snapshot = value;
       settingsLoaded = false;
       paint();
-      updateClientDiscovery(value.discovery, value.settings.enabled);
       text(
         "settings-status",
         value.error

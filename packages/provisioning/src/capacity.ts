@@ -1,3 +1,5 @@
+import { estimatePreparation, type EstimateSource } from "./estimate";
+import type { PackageSelection } from "./selection";
 export const MIB = 1024 * 1024;
 const GIB = 1024 ** 3;
 /** Shared host policy: source downloads, compiler guards and UI use one reserve. */
@@ -72,6 +74,8 @@ export const NO_SIZE_LIMIT = Number.MAX_SAFE_INTEGER;
 export function hostPreparationSpace(
   maxBytes: number,
   input: {
+    selection?: PackageSelection;
+    estimateSource?: EstimateSource;
     sourceBytes?: number;
     atlasBytes?: number;
     cached?: boolean;
@@ -90,6 +94,15 @@ export function hostPreparationSpace(
           )
         : cachedBuildSpace(maxBytes, !!input.partitioned)
       : preparationSpace(maxBytes, input.sourceBytes);
+  if (input.selection && input.estimateSource && !input.resume) {
+    const estimate = estimatePreparation(input.selection, input.estimateSource);
+    return (
+      BUILD_DISK_FLOOR +
+      estimate.downloadBytes +
+      estimate.output.high +
+      estimate.temporary.high
+    );
+  }
   if (input.cached)
     return (
       BUILD_DISK_FLOOR +

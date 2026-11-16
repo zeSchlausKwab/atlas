@@ -1,3 +1,5 @@
+import { copyArchiveBlocks } from "./archive-copy";
+import { boundarySelectionNote } from "../../boundaries/src/selection";
 import { routingAuthority } from "./routing-authority";
 import type { PreparedOcean } from "../../provisioning/src/ocean-source";
 import { oceanObjects } from "../../objects/src/ocean";
@@ -32,7 +34,7 @@ import { SourceGeocoding } from "../../geocoding/src/source-build";
 import { PagedSearchBuilder } from "../../geocoding/src/paged-build";
 import { buildLabels, partitionLabels } from "../../labels/src/compile";
 import { LABEL_ZOOM } from "../../labels/src/index";
-import { buildFeatures } from "../../features/src/compile";
+import { buildFeatures, featureClasses } from "../../features/src/compile";
 import { FEATURE_ZOOM } from "../../features/src/index";
 import { inside, bounds, selectedCell } from "../../offline/src/geometry";
 import { clipLine } from "../../provisioning/src/prepare";
@@ -58,8 +60,8 @@ export interface PartitionedOptions {
 /** Whole-source identity and durable stage artifacts; no per-partition graph identities. */
 export async function compilePartitioned(o: PartitionedOptions) {
   const workers = compilerWorkers(o.workers);
+  const progress: (message: string) => void = o.progress ?? console.log;
   const s = o.selection,
-    progress = o.progress ?? console.log,
     abort = new AbortController(),
     signal = o.signal
       ? AbortSignal.any([o.signal, abort.signal])
@@ -147,6 +149,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
     places: [],
     capabilities: [],
     limitations: [
+      ...boundarySelectionNote(s.boundaryMaxAdminLevel),
       "Prototype compiler: bounded source batches and spatial graph/search pages.",
       "Estimated transport costs; common via-node restrictions. Unsupported conditional/complex restrictions exclude incoming ways.",
       "Search includes explicit OSM house-number addresses; no interpolation or authoritative administrative hierarchy. Very broad text queries have a bounded candidate budget.",
@@ -161,6 +164,10 @@ export async function compilePartitioned(o: PartitionedOptions) {
     },
   };
   if (o.ocean) {
+    if (o.ocean.simplificationDegrees)
+      base.limitations.push(
+        `World ocean display simplified with ${o.ocean.simplificationDegrees} degree tolerance (quarter pixel at maximum display zoom). Administrative polygons retain source detail.`,
+      );
     base.source = {
       ...base.source,
       inputs: [
@@ -455,7 +462,10 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 spoolPath,
               ])
                 await rm(file, { force: true });
-              const boundaries = new BoundaryWriter(writer);
+              const boundaries = new BoundaryWriter(
+                writer,
+                s.boundaryMaxAdminLevel,
+              );
               const search = new PagedSearchBuilder(searchPath),
                 spool = new BlockSpool(spoolPath, identity);
               const region: GeoPolygon = {
@@ -567,11 +577,24 @@ export async function compilePartitioned(o: PartitionedOptions) {
                     );
                   }
                 let count = 0;
+                // Class metadata is outside the compressed geometry. Avoid decoding
+                // unrelated shapes (e.g. all water ways in a boundaries-only build).
+                const legacyClasses = featureClasses(s.featureKinds);
+                const classes = [
+                  ...legacyClasses,
+                  ...(s.featureKinds.includes("boundaries") ? [9] : []),
+                ];
+                const featureWhere =
+                  s.search || s.reverse || s.streetNames || s.pois
+                    ? ""
+                    : classes.length
+                      ? ` WHERE class IN (${classes.join(",")})`
+                      : " WHERE 0";
                 const featureTotal = source!
                   .query<
                     { n: number },
                     []
-                  >("SELECT count(*) AS n FROM features")
+                  >("SELECT count(*) AS n FROM features" + featureWhere)
                   .get()!.n;
                 const featureProgress = measuredProgress(
                   progress,
@@ -583,7 +606,7 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   .query<
                     { data: Uint8Array },
                     []
-                  >("SELECT data FROM features ORDER BY rowid")
+                  >("SELECT data FROM features" + featureWhere + " ORDER BY rowid")
                   .iterate()) {
                   signal.throwIfAborted();
                   const bytes = Bun.gunzipSync(data as Uint8Array<ArrayBuffer>);
@@ -607,14 +630,16 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   if (s.search || s.reverse || s.streetNames || s.pois)
                     semantic.addFeatures(fc);
                   if (
-                    s.featureKinds.length &&
+                    legacyClasses.includes(Number(feature.properties?.class)) &&
                     booleanIntersects(feature, region)
                   )
-                    for (const [key, features] of buildFeatures(fc))
-                      if (s.featureKinds.includes(key.split("/")[1] as any)) {
-                        spool.json(key, { schema: "features-v1", features });
-                        featureCount++;
-                      }
+                    for (const [key, features] of buildFeatures(
+                      fc,
+                      s.featureKinds,
+                    )) {
+                      spool.json(key, { schema: "features-v1", features });
+                      featureCount++;
+                    }
                   if (++count % 5000 === 0) {
                     featureProgress(count);
                     spool.checkpoint(count);
@@ -649,8 +674,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   spool.blockCount,
                   "blocks",
                 );
-                await spool.write(writer, signal, (_key, done) =>
-                  packing(done),
+                await spool.write(
+                  writer,
+                  signal,
+                  (_key, done) => packing(done),
+                  progress,
                 );
                 if (s.placeNames)
                   await writer.add({
@@ -738,8 +766,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
                   spool.blockCount,
                   "blocks",
                 );
-                await spool.write(writer, signal, (_key, done) =>
-                  packing(done),
+                await spool.write(
+                  writer,
+                  signal,
+                  (_key, done) => packing(done),
+                  progress,
                 );
                 const heights = {
                   tagged: 0,
@@ -794,6 +825,11 @@ export async function compilePartitioned(o: PartitionedOptions) {
                 return {
                   ...base,
                   tileLayers: s.layers,
+                  limitations: [
+                    ...base.limitations,
+                    "Coarse display tiles (below z13) use zoom-aware simplification, including the highest requested zoom. Crowded legacy tiles use quarter-pixel (512-pixel tile) per-feature topology-preserving simplification; shared feature boundaries are not jointly simplified. Analysis geometry is unchanged.",
+                    "Display geometries larger than 32 MiB are simplified with per-feature topology preservation at a quarter pixel of the maximum zoom (256-pixel Web Mercator tiles). Analysis geometry is not generalized.",
+                  ],
                   buildingHeights: s.layers.includes("buildings")
                     ? heights
                     : undefined,
@@ -840,33 +876,14 @@ export async function compilePartitioned(o: PartitionedOptions) {
         "bytes",
       );
       for (const path of artifacts) {
-        let payloadCopied = 0;
-        const reader = await new AtlasReader(
-          new FileSource(Bun.file(path)),
-        ).open();
-        try {
-          const { snapshot, ...m } = reader.index.manifest;
-          manifest = { ...manifest, ...m, capabilities: [] };
-          for (const c of m.capabilities) caps.add(c);
-          for (const kind of m.featureKinds ?? []) featureKinds.add(kind);
-          // Optional fields from earlier artifacts survive Object.assign (absent fields are omitted in JSON).
-          for await (const block of reader.iterateBlocks()) {
-            signal.throwIfAborted();
-            await writer.add({
-              ...block,
-              codec: undefined,
-              rawLength: undefined,
-              bytes: await reader.block(block.key),
-            });
-            copied += block.length;
-            payloadCopied += block.length;
-            packing(copied);
-            reader.cache.delete(block.key);
-          }
-        } finally {
-          reader.dispose();
-        }
-        copied += Bun.file(path).size - payloadCopied;
+        const result = await copyArchiveBlocks(path, writer, signal, (done) =>
+          packing(copied + done),
+        );
+        const { snapshot, ...m } = result.manifest;
+        manifest = { ...manifest, ...m, capabilities: [] };
+        for (const c of m.capabilities) caps.add(c);
+        for (const kind of m.featureKinds ?? []) featureKinds.add(kind);
+        copied += Bun.file(path).size;
         packing(copied);
       }
       // Base counters in later stage manifests must not overwrite semantic counts.
