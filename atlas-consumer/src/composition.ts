@@ -1,6 +1,6 @@
 import { AtlasReader } from '../../packages/format/src/reader';
 import { MAP_LAYERS, type MapLayer } from '../../packages/format/src/index';
-import { HashtreeSource } from '../../packages/hashtree/src/source';
+import { HashtreeReader } from '../../packages/hashtree/src/reader';
 import { verifyPublishedMap } from '../../packages/hashtree/src/published-map';
 import type { CompositionMap, CompositionMapSource } from '../../packages/renderer/src/composition';
 import type { ConsumerStatus, PreviewBridge } from './bridge';
@@ -16,7 +16,7 @@ export class MapComposition {
   imagery = false;
   private selected: string[] = [];
   private userSelected = false;
-  private discoveryReady = false;
+  private discoverySettled = false;
   private appliedStyle = "";
   private fitted = false;
   private dead = false;
@@ -40,13 +40,13 @@ export class MapComposition {
     if (this.dead) return;
     this.timeoutMs = status.requestTimeoutMs;
     this.catalog = status.catalog.filter(e => !!e.offer.hashtree);
-    this.discoveryReady = status.discovery.ready;
+    this.discoverySettled = status.discovery.settled;
     if (!this.userSelected) {
       const preferred = status.preferredMapIds.flatMap(id => this.catalog.filter(e => e.offer.id === id));
       const recipe = status.defaultView?.sources.filter(s => s.enabled).flatMap(s => this.catalog.filter(e => e.offer.hashtree!.root === s.root)) ?? [];
       const vectors = this.catalog.filter(e => (e.offer.manifest.tileLayers ?? MAP_LAYERS).length > 0);
       const defaults = status.preferredMapIds.length ? preferred : status.defaultView ? recipe
-        : status.discovery.ready ? (vectors.length ? vectors : this.catalog).slice(0, 1) : [];
+        : this.discoverySettled ? (vectors.length ? vectors : this.catalog).slice(0, 1) : [];
       // Discovery is incremental. Keep collecting configured/default sources until
       // an explicit selection takes authority; never let the first offer win a race.
       this.selected = [...new Set(defaults.map(identity))];
@@ -100,7 +100,7 @@ export class MapComposition {
         continue;
       }
       const tree = entry.offer.hashtree!;
-      const source = new HashtreeSource(`htree://${tree.root}`, tree, undefined, {
+      const source = new HashtreeReader(`htree://${tree.root}`, tree, undefined, {
         memoryBytes: 16 * 1024 ** 2, requestTimeoutMs: this.timeoutMs + 1000,
         fetchBlob: (hash, signal) => this.bridge.blob(hash, tree.root, signal),
       });
@@ -131,7 +131,7 @@ export class MapComposition {
     }
   }
   private fitIfReady() {
-    if (!this.fitted && this.discoveryReady && this.active.length && this.active.every(e => this.sessions.get(e.key)?.ready)) {
+    if (!this.fitted && (this.discoverySettled || this.userSelected) && this.active.length && this.active.every(e => this.sessions.get(e.key)?.ready)) {
       this.map.fit(); this.fitted = true;
     }
   }

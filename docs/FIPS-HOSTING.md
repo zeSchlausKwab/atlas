@@ -1,3 +1,12 @@
+## Shared shell consumer migration — 10 November 2026
+
+The companion `codex/soyli-fips-consumer` change uses ordinary soyLI preview and
+the shared shell runtime through the explicit experimental `soy.fips/1` profile.
+See [consumer setup, authority and verification](../atlas-consumer/README.md).
+Provider configuration, published announcements and active builds are unchanged.
+The older preview injection described below is historical, not the normal launch
+path or a production standard. No production rollout is included.
+
 # FIPS-first Atlas hosting
 
 An Atlas host does not need a publicly reachable HTTP map origin. Its stable public identities are the publisher's Nostr public key, each immutable Hashtree root, and the FIPS provider's public key.

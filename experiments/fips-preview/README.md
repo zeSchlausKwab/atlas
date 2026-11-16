@@ -1,3 +1,7 @@
+> Historical fixture: the normal Atlas consumer now uses shared shell support.
+> See [atlas-consumer](../../atlas-consumer/README.md). This injected launcher is
+> retained for reference regressions only, not conformance or publication.
+
 # Atlas FIPS preview experiment
 
 The current consumer uses **signed discovery and multi-map composition**. A trusted

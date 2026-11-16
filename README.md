@@ -44,15 +44,18 @@ native TCP or UDP with pinned identity, signed discovery and verified Hashtree
 reads. Its configured demo opens automatically. See the [architecture and
 remaining integration boundaries](docs/ANDROID-NATIVE-FIPS.md).
 
-## FIPS napplet preview
+## FIPS consumer napplet
 
-The experimental [Atlas consumer napplet](atlas-consumer/README.md) reads a real
-hosted archive through FIPS and Hashtree, using a temporary Soyli preview bridge.
-The original preview uses a separate provider sidecar; the integrated host can
-replace it while preserving its provider identity. The browser verifies blobs by
-hash and renders locally. There is no HTTP map fallback in this demo.
-See [setup and transport boundaries](experiments/fips-preview/README.md).
-This preview is not yet a production Soyli/NAP integration.
+The [Atlas consumer napplet](atlas-consumer/README.md) discovers signed map offers
+through NAP-OUTBOX and reads verified Hashtree blocks through the shared soyLI and
+napplet.soy runtime. It uses the explicitly experimental `soy.fips/1` resource
+profile, with shell approval for provider/root access and no direct-network or
+HTTP fallback in the napplet. Other shells show a missing-profile explanation.
+
+Use ordinary `soyli dev` with a compatible runtime. The
+[historical preview experiment](experiments/fips-preview/README.md) is retained
+for reference; its injected bridge is no longer required. The existing Atlas
+provider works with the shared runtime without a server upgrade or restart.
 
 ## Run locally
 

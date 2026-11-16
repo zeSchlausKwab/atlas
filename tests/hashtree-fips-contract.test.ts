@@ -205,6 +205,7 @@ test("advertised FIPS is preferred; failure never silently falls back to HTTP", 
     await expect(disconnected.read(0, 1)).rejects.toThrow(
       "FIPS transport is unavailable",
     );
+    expect(disconnected.failovers).toBe(1);
     const corrupt = new HashtreeSource(
       `htree://${offer.root}`,
       offer,
@@ -214,6 +215,7 @@ test("advertised FIPS is preferred; failure never silently falls back to HTTP", 
       },
     );
     await expect(corrupt.read(0, 1)).rejects.toThrow("Blob hash mismatch");
+    expect(corrupt.failovers).toBe(1);
     expect(http).not.toHaveBeenCalled();
   } finally {
     http.mockRestore();
@@ -255,6 +257,7 @@ test("HTTP use requires explicit selection or fallback when FIPS is advertised",
     );
     expect(httpReads).toBe(2);
     expect(fipsReads).toBe(2);
+    expect(fallback.failovers).toBe(2);
     const explicit = new HashtreeSource(
       `htree://${offer.root}`,
       offer,

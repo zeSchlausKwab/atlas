@@ -1,7 +1,8 @@
+import './napplet-settings';
 import './styles.css';
 import { MAP_LAYERS } from '../../packages/format/src/index';
 import { CompositionMap, type CompositionStats } from '../../packages/renderer/src/composition';
-import init from '../../packages/renderer/pkg/atlas_renderer';
+import { initSync } from '../../packages/renderer/pkg/atlas_renderer';
 import wasmBase64 from 'atlas-renderer-wasm';
 import { PreviewBridge, type ConsumerStatus, type PreviewUpdate } from './bridge';
 import { MapComposition } from './composition';
@@ -19,14 +20,15 @@ function bytes(value: number) {
 let map: CompositionMap | undefined;
 let composition: MapComposition | undefined;
 let latest: ConsumerStatus | undefined;
-let generation = 0, opening = false, failed = false, closed = false;
+let generation = 0, opening = false, closed = false;
+let failed: false | 'map' | 'discovery' = false;
 const bridge = new PreviewBridge(update);
 function diagnostics() {
   if (!latest) return;
   const s = latest.stats;
   el('bytes').textContent = bytes(s.fipsBytes);
   el('blobs').textContent = s.verifiedBlobs.toLocaleString();
-  el('reuse').textContent = `${s.cacheHits.toLocaleString()} bridge cache hits · ${composition?.cacheHits ?? 0} Atlas cache hits`;
+  el('reuse').textContent = `${s.cacheHits.toLocaleString()} shell cache hits · ${composition?.cacheHits ?? 0} Atlas cache hits`;
   el('requests').textContent = `${s.networkRequests} FIPS requests · ${s.activeTransfers} active · ${s.queuedTransfers} queued · ${s.retries} retries · ${s.errors} errors · ${s.cancelledRequests} cancelled`;
 }
 function update(status: PreviewUpdate) {
@@ -34,12 +36,13 @@ function update(status: PreviewUpdate) {
   if ('catalog' in status) {
     latest = status;
     composition?.setCatalog(status);
-    el('discovery').textContent = `${status.catalog.length} signed maps · ${status.discovery.ready ? 'discovery current' : 'discovering…'}`;
+    el('discovery').textContent = `${status.catalog.length} signed maps · ${status.discovery.ready ? 'discovery current' : status.discovery.settled ? 'discovery incomplete' : 'discovering…'}`;
     el('publishers').textContent = status.discovery.publishers.join('\n');
     el('relays').textContent = status.discovery.relayUrls.join('\n');
     el('discovery-notes').textContent = status.discovery.messages.join(' · ');
-    if (status.state === 'error') fail(status.error ?? 'FIPS discovery failed');
-    if (status.state === 'closed') { fail('The preview session closed. Reopen the hosted preview to continue.'); shutdown(); }
+    if (status.state === 'error') fail(status.error ?? 'FIPS discovery failed', 'discovery');
+    else if (failed === 'discovery') clearFailure();
+    if (status.state === 'closed') { fail('The resource session closed. Reopen the napplet to continue.'); shutdown(); }
   } else if (latest) latest.stats = status.stats;
   diagnostics(); connection();
 }
@@ -51,14 +54,18 @@ function connection() {
     : active.length ? 'Reading over FIPS · geometry first'
     : latest?.catalog.length ? 'Select one or more signed maps below'
     : latest?.discovery.ready ? 'No signed maps found · refresh discovery to try again'
-    : 'Discovering signed maps from the host…';
+    : 'Discovering signed maps through OUTBOX…';
   document.body.dataset.state = composition?.readyCount ? 'ready' : 'starting';
 }
-function fail(message: string) {
+function clearFailure() {
+  failed = false; el('error').hidden = true; el('retry').hidden = true;
+}
+function fail(message: string, kind: 'map' | 'discovery' = 'map') {
   if (closed) return;
-  failed = true;
-  el('status').textContent = composition?.readyCount ? 'Some map data could not load · you can keep exploring' : 'Could not open selected maps · retry or refresh discovery';
-  el('retry').textContent = map ? 'Retry map loading' : 'Try connection';
+  failed = kind;
+  el('status').textContent = kind === 'discovery' ? 'Could not discover signed maps · refresh to retry'
+    : composition?.readyCount ? 'Some map data could not load · you can keep exploring' : 'Could not open selected maps · retry or refresh discovery';
+  el('retry').textContent = kind === 'discovery' ? 'Refresh discovery' : map ? 'Retry map loading' : 'Try connection';
   el('error').textContent = message; el('error').hidden = false;
   el('retry').hidden = false; document.body.dataset.state = 'error';
 }
@@ -66,8 +73,8 @@ function renderStats(s: CompositionStats) {
   el('zoom').textContent = `z${s.zoom.toFixed(1)}`;
   const complete = s.wanted > 0 && s.tiles === s.wanted && s.missing === 0 && s.loading === 0 && s.labels.loading === 0 && s.labels.missing === 0;
   el('render-status').textContent = `${s.sources} sources in view · ${s.tiles}/${s.wanted} tiles · ${s.triangles.toLocaleString()} triangles${s.loading ? ' · receiving…' : complete ? ' · ready' : ' · partial view'}`;
-  if (failed && complete && !composition?.errors.length && !composition?.opening && latest?.state === 'ready') {
-    failed = false; el('error').hidden = true; el('retry').hidden = true; connection();
+  if (failed === 'map' && complete && !composition?.errors.length && !composition?.opening && latest?.state !== 'error') {
+    clearFailure(); connection();
   }
 }
 function renderCatalog() {
@@ -104,14 +111,14 @@ async function start() {
   opening = true; failed = false;
   const run = ++generation;
   el('error').hidden = true; el('retry').hidden = true;
-  el('status').textContent = 'Connecting to the preview’s discovery host…';
+  el('status').textContent = 'Discovering signed maps through the shell…';
   try {
     const status = await bridge.status();
     if (closed || run !== generation) return;
     update(status);
     if (closed) return;
     // Embedded bytes initialize WASM before CompositionMap's shared loader is called.
-    await init({ module_or_path: Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0)) });
+    initSync({ module: Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0)) });
     if (closed || run !== generation) return;
     let created: CompositionMap | undefined;
     const current = () => !closed && run === generation && created !== undefined && map === created;
@@ -156,9 +163,9 @@ async function refresh() {
 }
 el('refresh').addEventListener('click', () => { void refresh(); });
 el('retry').addEventListener('click', () => {
+  if (failed === 'discovery') { void refresh(); return; }
   if (!map) { void start(); return; }
   composition?.retry();
-  if (latest?.state === 'error') void refresh();
   el('status').textContent = 'Retrying missing map data…';
 });
 function shutdown() {

@@ -3,6 +3,7 @@ import {
   AtlasReader,
   FileSource,
   HttpSource,
+  RemoteSource,
 } from "../../../packages/format/src/reader";
 import type { WorkspaceMap } from "../../../packages/renderer/src/workspace-map";
 import { plan, type Selection } from "../../../packages/offline/src/index";
@@ -238,7 +239,7 @@ export class OfflineControls {
       void this.exportOnServer();
       return;
     }
-    if (this.reader.offline && this.reader.source instanceof HttpSource) {
+    if (this.reader.offline && this.reader.source instanceof RemoteSource) {
       this.message(
         "Turn off “Cache only” to fetch the source blocks for export.",
       );

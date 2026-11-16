@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { Federation } from "../apps/server/federation";
+import { Acquisitions } from "../apps/server/acquisitions";
 import { ArchiveUploads } from "../apps/server/archive-uploads";
 import { Preparations } from "../apps/server/preparations";
 import { adminAccess } from "../apps/server/admin-access";
@@ -276,6 +277,88 @@ test("portable composition coverage uses member areas rather than the parent env
     parent?.dispose();
     b?.dispose();
     await s.close();
+  }
+});
+
+test("area resume waits for review persistence but still rejects an active acquisition", async () => {
+  const dir = await mkdtemp("/tmp/atlas-area-finalize-"),
+    fixture = await pluginFixture(),
+    planning = Promise.withResolvers<void>(),
+    continuePlanning = Promise.withResolvers<void>(),
+    reviewing = Promise.withResolvers<void>(),
+    finishReview = Promise.withResolvers<void>();
+  await Bun.write(dir + "/source.atlas", fixture.bytes);
+  const manager = await Acquisitions.open(dir + "/areas", async () => {});
+  const space = spyOn(storage, "readStorage").mockResolvedValue({
+    availableBytes: 100 * 1024 ** 3,
+    totalBytes: 200 * 1024 ** 3,
+    checkedAt: new Date().toISOString(),
+  });
+  const write = Bun.write;
+  const saves = spyOn(Bun, "write").mockImplementation(
+    async (path, data, options) => {
+      if (
+        typeof path === "string" &&
+        path.startsWith(dir + "/areas/") &&
+        path.endsWith(".json.tmp") &&
+        typeof data === "string"
+      ) {
+        const state = JSON.parse(data).state;
+        if (state === "planning") {
+          planning.resolve();
+          await continuePlanning.promise;
+        } else if (state === "review") {
+          reviewing.resolve();
+          await finishReview.promise;
+        }
+      }
+      return Reflect.apply(write, Bun, [path, data, options]);
+    },
+  );
+  try {
+    const id = await manager.create(
+      {
+        name: "Review finalization",
+        polygon,
+        families: ["features"],
+        minZoom: 0,
+        maxZoom: 0,
+        paddingCells: 0,
+        sourceIds: ["local"],
+      },
+      [{
+        id: "local",
+        path: dir + "/source.atlas",
+        location: "local",
+        verified: true,
+        manifest: fixture.reader.index.manifest,
+        bytes: fixture.bytes.length,
+      }],
+    );
+    await planning.promise;
+    await expect(manager.resume(id, false, true)).rejects.toThrow(
+      "Pause the active area acquisition",
+    );
+    continuePlanning.resolve();
+    await reviewing.promise;
+    expect(manager.view()[0]!.state).toBe("review");
+    const resuming = manager.resume(id, false, true);
+    // Execute the queued command while the review's durable save is still held.
+    await Promise.resolve();
+    finishReview.resolve();
+    await resuming;
+    await until(() => ["ready", "failed"].includes(manager.view()[0]!.state));
+    expect(manager.view()[0]!.state).toBe("ready");
+    expect(manager.view()[0]!.error).toBeUndefined();
+  } finally {
+    continuePlanning.resolve();
+    finishReview.resolve();
+    await manager.close();
+    saves.mockRestore();
+    space.mockRestore();
+    fixture.reader.dispose();
+    fixture.engine.destroy();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
