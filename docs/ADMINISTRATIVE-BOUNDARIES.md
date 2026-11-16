@@ -82,20 +82,21 @@ it does not jointly simplify shared edges and is unsuitable as analysis geometry
 
 Each page is limited to 64 fragments and 1 MiB decoded; the root is limited to
 16 MiB. The renderer loads only visible levels/pages, with two concurrent reads
-and a conservative 24 MiB decoded display budget. It reports an explicit error
+and a bounded display cache: 24 MiB for small views, scaled with viewport area
+up to 96 MiB for large desktop views. It reports an explicit error
 rather than silently dropping geometry if that budget is exceeded. Border reads
 are counted as **map geometry**, including through the normal verified Hashtree
 reader; exact `boundaries/` reads remain feature/analysis reads. Source precedence
 and coverage clipping apply independently to borders.
 
 The live canvas cache further simplifies these display outlines to the current
-screen scale (an eighth pixel or less) and clips strokes to a buffered viewport
+screen scale (half a pixel or less) and clips strokes to a buffered viewport
 in Mercator coordinates. Zoom changes and movement outside that buffer rebuild
 the cache from verified display blocks, restoring available detail without
 touching exact analysis geometry. This prevents regional views from retaining
 invisible close-up vertices and far-away outlines from intersecting pages.
 Cached vertices use packed Float64 world coordinates, avoiding a JavaScript array
-per vertex and repeated projection on each draw frame; the 24 MiB cache budget
+per vertex and repeated projection on each draw frame; the cache budget
 accounts for buffer lengths and container overhead.
 Regressions cover the memory failure, zoom refinement, panning and clipping
 without joining disconnected strokes.

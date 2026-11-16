@@ -359,7 +359,7 @@ test("regional views retain screen-scale border detail and refine after zooming"
   const nw = project(-0.1, 1.1),
     se = project(1.1, -0.1);
   view = [nw[0], nw[1], se[0], se[1]];
-  zoom = 12;
+  zoom = 14;
   overlay.update(view, zoom, true);
   await settle();
   expect(reads).toBe(92);

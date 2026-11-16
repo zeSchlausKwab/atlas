@@ -79,6 +79,7 @@ export class BorderOverlay {
   private opening = false;
   private dead = false;
   private bytes = 0;
+  private budget = 24 * 1024 ** 2;
   private detailZoom = -1;
   private window?: Bounds;
   private generation = 0;
@@ -123,7 +124,16 @@ export class BorderOverlay {
     // Stored outlines also support close inspection. Keep only screen-scale
     // detail in the live canvas cache; otherwise regional views retain millions
     // of invisible sub-pixel vertices. Rebuild from verified blocks when zooming.
-    const detailZoom = Math.ceil(zoom) + 1;
+    const detailZoom = Math.ceil(zoom) - 1;
+    // A 4K desktop exposes far more geometry than a phone at the same zoom.
+    // Keep an explicit bound, scaled to the actual Mercator viewport in pixels.
+    const worldPixels = 256 * 2 ** zoom;
+    const pixelArea =
+      (view[2] - view[0]) * (view[3] - view[1]) * worldPixels ** 2;
+    this.budget = Math.min(
+      96 * 1024 ** 2,
+      Math.max(24 * 1024 ** 2, pixelArea * 32),
+    );
     const windowContainsView =
       this.window &&
       this.window[0] <= view[0] &&
@@ -209,13 +219,13 @@ export class BorderOverlay {
             0,
           );
           for (const [old, entry] of this.cache) {
-            if (this.bytes + size <= 24 * 1024 ** 2) break;
+            if (this.bytes + size <= this.budget) break;
             if (!this.wanted.has(old)) {
               this.cache.delete(old);
               this.bytes -= entry.bytes;
             }
           }
-          if (this.bytes + size > 24 * 1024 ** 2)
+          if (this.bytes + size > this.budget)
             throw new Error(
               "Administrative borders exceed the display memory budget. Zoom in to a smaller area.",
             );
