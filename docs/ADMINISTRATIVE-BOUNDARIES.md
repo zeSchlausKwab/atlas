@@ -94,6 +94,9 @@ in Mercator coordinates. Zoom changes and movement outside that buffer rebuild
 the cache from verified display blocks, restoring available detail without
 touching exact analysis geometry. This prevents regional views from retaining
 invisible close-up vertices and far-away outlines from intersecting pages.
+Cached vertices use packed Float64 world coordinates, avoiding a JavaScript array
+per vertex and repeated projection on each draw frame; the 24 MiB cache budget
+accounts for buffer lengths and container overhead.
 Regressions cover the memory failure, zoom refinement, panning and clipping
 without joining disconnected strokes.
 
@@ -136,7 +139,8 @@ fresh planet import. The retained source fingerprint and separate coastline
 provenance remain in both manifests.
 
 Live HTTP browser checks covered country outlines at z0, regional outlines over
-central Europe at z5, local areas at z8, and panning beyond the cached viewport.
+central Europe at z5, local areas at z8, and panning beyond the cached viewport,
+including narrow and desktop layouts.
 The final suite passed 540 tests, with four environment-dependent checks skipped;
 TypeScript and client builds also passed. Native/FIPS client rendering was not
 retested for this opt-in display extension.

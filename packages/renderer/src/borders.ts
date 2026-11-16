@@ -7,14 +7,13 @@ import {
   validateBorderPage,
   visibleBorderPages,
   simplifyBorder,
-  type Border,
   type BorderCatalog,
   type BorderPage,
 } from "../../boundaries/src/display";
 import type { Bounds } from "../../features/src/index";
 import { overlaps } from "../../features/src/pages";
 import { project, unproject } from "../../format/src/index";
-import { projectScreen, type Camera } from "./camera";
+import { worldToScreen, type Camera } from "./camera";
 import type { MapStyle } from "./style";
 
 /** Clip display strokes in the same Mercator plane used by the canvas. */
@@ -67,7 +66,13 @@ export function clipBorderLines(lines: [number, number][][], box: Bounds) {
 /** Display reads only: no scan of exact boundary metadata or analysis polygons. */
 export class BorderOverlay {
   private catalog?: BorderCatalog;
-  private cache = new Map<string, { borders: Border[]; bytes: number }>();
+  private cache = new Map<
+    string,
+    {
+      borders: Array<{ level: number; lines: Float64Array[] }>;
+      bytes: number;
+    }
+  >();
   private wanted = new Map<string, BorderPage>();
   private pending = new Set<string>();
   private failed = new Set<string>();
@@ -179,13 +184,19 @@ export class BorderOverlay {
           const borders = stored
             .filter((border) => overlaps(border.bbox, bounds))
             .map((border) => ({
-              ...border,
+              level: border.level,
               lines: clipBorderLines(
                 border.lines.flatMap((line) =>
                   simplifyBorder(line, detailZoom),
                 ),
                 window,
-              ),
+              ).map((line) => {
+                // Typed world coordinates avoid one JS array object per vertex
+                // and repeated geographic projection on every draw frame.
+                const points = new Float64Array(line.length * 2);
+                line.forEach((p, i) => points.set(project(...p), i * 2));
+                return points;
+              }),
             }))
             .filter((border) => border.lines.length > 0);
           // Budget decoded coordinates conservatively; never evict a visible page
@@ -194,8 +205,7 @@ export class BorderOverlay {
             (n, border) =>
               n +
               256 +
-              border.id.length * 2 +
-              border.lines.reduce((m, line) => m + 64 + line.length * 64, 0),
+              border.lines.reduce((m, line) => m + 128 + line.byteLength, 0),
             0,
           );
           for (const [old, entry] of this.cache) {
@@ -238,10 +248,10 @@ export class BorderOverlay {
     for (const b of borders) {
       ctx.beginPath();
       for (const line of b.lines)
-        line.forEach((p, i) => {
-          const [x, y] = projectScreen(p, camera);
+        for (let i = 0; i < line.length; i += 2) {
+          const [x, y] = worldToScreen([line[i]!, line[i + 1]!], camera);
           i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-        });
+        }
       const country = b.level <= 2;
       ctx.setLineDash(country ? [] : b.level <= 4 ? [6, 4] : [2, 3]);
       ctx.globalAlpha = country ? 0.9 : 0.65;
