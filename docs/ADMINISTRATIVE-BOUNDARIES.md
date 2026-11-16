@@ -88,6 +88,15 @@ are counted as **map geometry**, including through the normal verified Hashtree
 reader; exact `boundaries/` reads remain feature/analysis reads. Source precedence
 and coverage clipping apply independently to borders.
 
+The live canvas cache further simplifies these display outlines to the current
+screen scale (an eighth pixel or less) and clips strokes to a buffered viewport
+in Mercator coordinates. Zoom changes and movement outside that buffer rebuild
+the cache from verified display blocks, restoring available detail without
+touching exact analysis geometry. This prevents regional views from retaining
+invisible close-up vertices and far-away outlines from intersecting pages.
+Regressions cover the memory failure, zoom refinement, panning and clipping
+without joining disconnected strokes.
+
 New boundary builds also produce display pages. To amend an existing archive
 without another PBF scan:
 
@@ -111,6 +120,26 @@ geometry; it does not read the planet PBF. Coastline provenance remains whatever
 the source archive declares, including a separate OSM coastline snapshot.
 `tests/border-display.test.ts` verifies selective display reads, source/hash
 preservation, date-line handling, validation, composition and disposal behavior.
+
+### World archive verification, 16 November 2026
+
+The existing OSM world visualization retained 761,971 administrative polygons,
+including 258 level-2 objects (not a count of sovereign countries). Adding border
+display reused that geometry and every existing payload; it did not read the
+planet again. The new immutable archive is 6,023,689,616 bytes. This first display
+index is not yet a compact multi-resolution shared-edge representation.
+
+Deriving the country-level OSM overview from the original world archive took
+36 seconds, with approximately 530 MiB peak memory, and produced 114,927,016
+bytes. Those measurements cover reuse of an already compiled archive, not a
+fresh planet import. The retained source fingerprint and separate coastline
+provenance remain in both manifests.
+
+Live HTTP browser checks covered country outlines at z0, regional outlines over
+central Europe at z5, local areas at z8, and panning beyond the cached viewport.
+The final suite passed 540 tests, with four environment-dependent checks skipped;
+TypeScript and client builds also passed. Native/FIPS client rendering was not
+retested for this opt-in display extension.
 
 ## Upgrade existing archives
 

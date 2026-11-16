@@ -17,7 +17,11 @@ import { AtlasReader, FileSource } from "../packages/format/src/reader";
 import { encodePackage, type InputBlock } from "../packages/format/src/writer";
 import { project, type Manifest } from "../packages/format/src/index";
 import { planComposition } from "../packages/renderer/src/composition-plan";
-import { BorderOverlay } from "../packages/renderer/src/borders";
+import {
+  BorderOverlay,
+  clipBorderLines,
+} from "../packages/renderer/src/borders";
+import { PAPER } from "../packages/renderer/src/style";
 import type { MapFeature } from "../packages/features/src/index";
 
 const area = (id: string, level: number, x = 0): MapFeature => ({
@@ -271,4 +275,136 @@ test("disabled or disposed overlays do not fetch; late reads cannot restart them
   overlay.update([0, 0, 1, 1], 4, true);
   expect(calls).toBe(1);
   expect(changed).toBe(0);
+});
+
+test("regional views retain screen-scale border detail and refine after zooming", async () => {
+  const pages = Array.from({ length: 90 }, (_, i) => ({
+    key: `boundary-display/16/0/${i}`,
+    level: 6,
+    bbox: [i * 2, 0, i * 2 + 1, 1],
+    count: 1,
+  }));
+  const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+  let reads = 0,
+    rawBytes = 0,
+    zoom = 5;
+  let view: [number, number, number, number] = [0, 0, 1, 1];
+  const errors: string[] = [];
+  const reader = {
+    index: { manifest },
+    block: async (key: string) => {
+      reads++;
+      if (key === BORDER_ROOT)
+        return encode({
+          schema: "boundary-display-v1",
+          count: pages.length,
+          pages,
+        });
+      const page = pages.find((p) => p.key === key)!;
+      const lines = [
+        Array.from({ length: 3000 }, (_, i) => [
+          page.bbox[0]! + i / 2999,
+          0.123456789 + (i % 2) * 0.0001,
+        ]),
+      ];
+      const bytes = encode({
+        schema: "boundary-lines-v1",
+        borders: [{ id: key, level: 6, bbox: page.bbox, lines }],
+      });
+      rawBytes += bytes.length;
+      return bytes;
+    },
+  } as unknown as AtlasReader;
+  const overlay = new BorderOverlay(
+    reader,
+    () => overlay.update(view, zoom, true),
+    (e) => errors.push(e),
+  );
+  const settle = async () => {
+    for (let i = 0; i < 2000 && overlay.loading; i++) await Promise.resolve();
+    expect(overlay.loading).toBe(0);
+  };
+  const vertices = () => {
+    let count = 0;
+    const noop = () => {};
+    const canvas = {
+      save: noop,
+      restore: noop,
+      beginPath: noop,
+      setLineDash: noop,
+      stroke: noop,
+      moveTo: () => count++,
+      lineTo: () => count++,
+    } as unknown as CanvasRenderingContext2D;
+    overlay.draw(
+      canvas,
+      {
+        center: [0.5, 0.5],
+        zoom,
+        width: 1000,
+        height: 800,
+        pitch: 0,
+        bearing: 0,
+      },
+      PAPER,
+    );
+    return count;
+  };
+  overlay.update(view, zoom, true);
+  await settle();
+  expect(reads).toBe(91);
+  expect(rawBytes * 3).toBeGreaterThan(24 * 1024 ** 2);
+  expect(errors).toEqual([]);
+  expect(vertices()).toBeLessThan(1000);
+  const nw = project(-0.1, 1.1),
+    se = project(1.1, -0.1);
+  view = [nw[0], nw[1], se[0], se[1]];
+  zoom = 12;
+  overlay.update(view, zoom, true);
+  await settle();
+  expect(reads).toBe(92);
+  expect(vertices()).toBeGreaterThan(1000);
+  expect(errors).toEqual([]);
+  const west = project(1.9, 1.1),
+    east = project(3.1, -0.1);
+  view = [west[0], west[1], east[0], east[1]];
+  overlay.update(view, zoom, true);
+  await settle();
+  expect(reads).toBe(93);
+  expect(vertices()).toBeGreaterThan(1000);
+  expect(errors).toEqual([]);
+  overlay.destroy();
+});
+
+test("viewport clipping preserves separate border strokes without joining outside segments", () => {
+  const nw = project(-1, 1),
+    se = project(1, -1);
+  const lines = clipBorderLines(
+    [
+      [
+        [-2, 0],
+        [2, 0],
+        [2, 2],
+        [-2, 2],
+        [-2, 0.5],
+        [2, 0.5],
+      ],
+    ],
+    [nw[0], nw[1], se[0], se[1]],
+  );
+  expect(lines).toHaveLength(2);
+  expect(lines[0]![0]![0]).toBeCloseTo(-1, 8);
+  expect(lines[0]!.at(-1)![0]).toBeCloseTo(1, 8);
+  expect(lines[1]![0]![1]).toBeCloseTo(0.5, 8);
+  expect(
+    lines
+      .flat()
+      .every(
+        ([x, y]) =>
+          x >= -1.00000001 &&
+          x <= 1.00000001 &&
+          y >= -1.00000001 &&
+          y <= 1.00000001,
+      ),
+  ).toBe(true);
 });
