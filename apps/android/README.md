@@ -43,7 +43,7 @@ TUN. On Nix, expose those packages' pkg-config directories and `LIBCLANG_PATH` i
 a separate build environment; do not reconfigure the running Atlas service.
 The supplied `native/shell.nix` keeps those C-library versions consistent:
 `nix-shell apps/android/native/shell.nix --run 'cargo build --manifest-path
-apps/android/native/Cargo.toml --release --locked --bin atlas-peer -j 1'`.
+apps/android/native/Cargo.toml --target-dir apps/android/native/target --release --locked --bin atlas-peer -j 1'`.
 Keep a GC root for the resulting build environment if deploying its binary.
 
 Start an entry peer and a separate map provider, using the host's **existing data
@@ -118,6 +118,12 @@ bun apps/android/scripts/export-map.ts data/liechtenstein.atlas apps/android/out
 cd apps/android
 cargo build --manifest-path native/Cargo.toml --locked --bins
 ```
+
+Cargo commands run from `apps/android` or `apps/android/native` use the module’s
+`.cargo/config.toml` and write to `apps/android/native/target`. When invoking its
+manifest from the Atlas repository root, also pass
+`--target-dir apps/android/native/target`. An explicit `CARGO_TARGET_DIR` still
+overrides config files; unset it when using scripts that expect these paths.
 
 The example requires an existing real Atlas file; replace the input path with
 one from your map library. Export reads the source without modifying it, and

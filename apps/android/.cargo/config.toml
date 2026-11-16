@@ -1,0 +1,4 @@
+# The isolated Android workspace and its test scripts use native/target.
+# Override the parent Atlas workspace target-dir when invoked from this module.
+[build]
+target-dir = "native/target"
