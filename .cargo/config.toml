@@ -1,0 +1,4 @@
+# Atlas scripts run binaries from <repo>/target/release, so keep builds here
+# even when a user-level config redirects target-dir elsewhere.
+[build]
+target-dir = "target"
